@@ -1,0 +1,13 @@
+# Build trees (always out-of-source, one per configuration)
+/build*/
+/cmake-build-*/
+
+# Pinned JUCE checkout (fetched locally, see README.md)
+/external/JUCE/
+
+# macOS / IDE noise
+.DS_Store
+.vscode/
+.idea/
+*.xcworkspace
+xcuserdata/

@@ -49,39 +49,47 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id::band1Frequency, versionHintE0 },
-        "Band 1 Frequency",
-        makeLogRange (limits::minFrequencyHz, limits::maxFrequencyHz),
-        static_cast<float> (limits::defaultFrequencyHz),
-        juce::AudioParameterFloatAttributes()
-            .withLabel ("Hz")
-            .withStringFromValueFunction (frequencyToText)
-            .withValueFromStringFunction (textToFrequency)));
+    // Order matters to hosts: band 1 first, in its E0 order, then bands 2..8.
+    for (int band = 0; band < numBands; ++band)
+    {
+        const auto& ids = bandIDs[(size_t) band];
+        const auto hint = band == 0 ? versionHintE0 : versionHintE1a;
+        const auto prefix = "Band " + juce::String (band + 1) + " ";
 
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id::band1Gain, versionHintE0 },
-        "Band 1 Gain",
-        juce::NormalisableRange<float> (static_cast<float> (limits::minGainDb),
-                                        static_cast<float> (limits::maxGainDb),
-                                        0.01f),
-        static_cast<float> (limits::defaultGainDb),
-        juce::AudioParameterFloatAttributes()
-            .withLabel ("dB")
-            .withStringFromValueFunction (gainToText)));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ids.frequency, hint },
+            prefix + "Frequency",
+            makeLogRange (limits::minFrequencyHz, limits::maxFrequencyHz),
+            static_cast<float> (defaultFrequencyHz[(size_t) band]),
+            juce::AudioParameterFloatAttributes()
+                .withLabel ("Hz")
+                .withStringFromValueFunction (frequencyToText)
+                .withValueFromStringFunction (textToFrequency)));
 
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { id::band1Q, versionHintE0 },
-        "Band 1 Q",
-        makeLogRange (limits::minQ, limits::maxQ),
-        static_cast<float> (limits::defaultQ),
-        juce::AudioParameterFloatAttributes()
-            .withStringFromValueFunction ([] (float q, int) { return juce::String (q, 2); })));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ids.gain, hint },
+            prefix + "Gain",
+            juce::NormalisableRange<float> (static_cast<float> (limits::minGainDb),
+                                            static_cast<float> (limits::maxGainDb),
+                                            0.01f),
+            static_cast<float> (limits::defaultGainDb),
+            juce::AudioParameterFloatAttributes()
+                .withLabel ("dB")
+                .withStringFromValueFunction (gainToText)));
 
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { id::band1Bypass, versionHintE0 },
-        "Band 1 Bypass",
-        false));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ids.q, hint },
+            prefix + "Q",
+            makeLogRange (limits::minQ, limits::maxQ),
+            static_cast<float> (limits::defaultQ),
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction ([] (float q, int) { return juce::String (q, 2); })));
+
+        layout.add (std::make_unique<juce::AudioParameterBool> (
+            juce::ParameterID { ids.bypass, hint },
+            prefix + "Bypass",
+            false));
+    }
 
     return layout;
 }

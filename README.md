@@ -4,9 +4,9 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: E0.** Base mínima verificable: una banda Bell completa
-(frecuencia, ganancia, Q, bypass), mono/estéreo, estado guardable, editor
-genérico de desarrollo y una batería de pruebas DSP que se ejecuta sin DAW.
+**Fase actual: E1a.** Ocho bandas Bell independientes en cascada (frecuencia,
+ganancia, Q y bypass por banda), mono/estéreo, estado v2 con migración de
+sesiones E0, editor genérico de desarrollo y 40 pruebas que se ejecutan sin DAW.
 
 ## Requisitos
 
@@ -38,12 +38,27 @@ cmake -S . -B build/release-universal -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_AR
 cmake --build build/release-universal -j8
 ```
 
-Ejecutable de pruebas con detalle por test (admite un filtro por nombre):
+Ejecutable de pruebas con detalle por test (admite un filtro por nombre, por
+ejemplo `dsp:`, `eq:`, `state:`, `rt:` o `perf:`). La prueba `perf:` solo se
+ejecuta en Release; en Debug aparece como SKIP:
 
 ```bash
 ./build/debug/labq8_tests_artefacts/Debug/labq8_tests
-./build/debug/labq8_tests_artefacts/Debug/labq8_tests "dsp:"
+./build/debug/labq8_tests_artefacts/Debug/labq8_tests "eq:"
 ```
+
+Banco de CPU (en Release; no forma parte de ctest):
+
+```bash
+./build/release-universal/labq8_bench
+```
+
+## Builds de referencia en este equipo
+
+| Directorio | Fuente | Uso |
+|---|---|---|
+| `build/debug`, `build/release-universal` | E0 (`dfcf25b`) | Referencia E0. No se recompila; los SHA-256 de sus binarios se verificaron sin cambios tras E1a |
+| `build/e1a-debug`, `build/e1a-release-universal` | E1a (árbol de trabajo) | Builds de E1a |
 
 ## Artefactos
 
@@ -67,4 +82,6 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): capas, decisiones DSP, tolerancias de las pruebas.
 - [docs/PARAMETER_SCHEMA.md](docs/PARAMETER_SCHEMA.md): IDs estables, rangos y estado.
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y propuesta para E1.
+- [docs/COMPATIBILITY_E0_E1A.md](docs/COMPATIBILITY_E0_E1A.md): compatibilidad de audio de sesiones E0 en E1a (`tests/compat/run_compat.sh`).
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y propuesta para E1b.
+- [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 usados en las pruebas de migración.

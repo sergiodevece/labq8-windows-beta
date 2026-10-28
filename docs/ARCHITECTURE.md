@@ -1,162 +1,244 @@
-# LABQ8: arquitectura (E0)
+# LABQ8: arquitectura (E1a)
 
 ## Capas
 
-| # | Capa | Responsabilidad | Estado E0 | Ubicación |
+| # | Capa | Responsabilidad | Estado E1a | Ubicación |
 |---|---|---|---|---|
-| 1 | Plugin Host Adapter | JUCE `AudioProcessor`, buses, parámetros → ajustes DSP, estado | Implementado | `src/plugin/`, `src/parameters/` |
-| 2 | EQ Core | Filtros paramétricos, suavizado, bypass | 1 banda Bell | `src/dsp/` |
+| 1 | Plugin Host Adapter | JUCE `AudioProcessor`, buses, parámetros → ajustes DSP, estado y migración | Implementado | `src/plugin/`, `src/parameters/` |
+| 2 | EQ Core | Filtros paramétricos, suavizado, bypass, cascada | 8 bandas Bell en serie | `src/dsp/` |
 | 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | No iniciado | — |
 | 4 | Analysis Engine | FFT, medición | No iniciado | — |
 | 5 | Intention Engine | Perfiles musicales, sugerencias | No iniciado | — |
 | 6 | UI Layer | Interfaz definitiva | Editor genérico de JUCE | (`GenericAudioProcessorEditor`) |
 
-Las capas 3–6 no tienen código ni clases vacías: solo se describen aquí y en
-[ROADMAP.md](ROADMAP.md).
+Las capas 3–6 no tienen código ni clases vacías.
 
 ### Reglas de dependencia
 
-- **EQ Core no depende de JUCE.** `labq8_dsp` es una biblioteca estática en
-  C++20 puro (`BiquadDesign`, `BellBand`, `BandLimits`). Se puede probar,
-  reutilizar en la variante de mastering o en otro host sin arrastrar JUCE.
-- **El Host Adapter no contiene DSP.** Lee los `std::atomic<float>` de los
-  parámetros, construye `BellSettings` y llama a `BellBand::setTargets` /
-  `process`. Nada más.
-- **La UI no toca el DSP.** Solo habla con el `AudioProcessorValueTreeState`.
-- Los rangos se definen una sola vez (`dsp/BandLimits.h`). La capa de
-  parámetros los expone al host y el DSP vuelve a limitarlos por su cuenta,
-  porque no debe fiarse de quien lo llame.
+- **EQ Core no depende de JUCE.** `labq8_dsp` (C++20 puro) contiene
+  `BandLimits`, `BiquadDesign`, `BellBand` y `EqCore`.
+- **El Host Adapter no contiene DSP.** Lee los `std::atomic<float>` de los 32
+  parámetros, construye un `BellSettings` por banda y llama a
+  `EqCore::setBandTargets` / `process`.
+- **La UI solo habla con el `AudioProcessorValueTreeState`.**
+- Los rangos se definen una vez (`dsp/BandLimits.h`). El DSP vuelve a
+  limitarlos porque no se fía de quien lo llama.
+- Los IDs y las frecuencias por defecto están en `parameters/ParameterIDs.h`.
+  La migración de estado está en `parameters/StateMigration.*`.
 
 ```
-Host/DAW ──► LabQ8AudioProcessor (adapter) ──► APVTS (parámetros + estado)
-                    │  readBand1Settings()           ▲
-                    ▼                                │
-              dsp::BellBand  (EQ Core, sin JUCE)   GenericAudioProcessorEditor
+Host/DAW ──► LabQ8AudioProcessor ──► APVTS (32 parámetros + estado v2)
+                │  pushParametersToCore()       ▲      ▲
+                ▼                               │      └─ migrateState() al restaurar
+          dsp::EqCore                  GenericAudioProcessorEditor
+            ├─ BellBand 1 ─► BellBand 2 ─► … ─► BellBand 8   (en serie, in-place)
 ```
 
-## EQ Core: decisiones
+## EQ Core
 
-### Filtro
+### `BellBand` (sin cambios desde E0)
 
-- Biquad IIR de fase mínima, diseño RBJ "Audio EQ Cookbook" (peaking).
-  Equivale exactamente a la transformada bilineal de
-  `H(s) = (s² + s·A/Q + 1) / (s² + s/(A·Q) + 1)`, con prewarping en f0 y
-  `A = 10^(dB/40)`. Las pruebas comparan contra ese prototipo analógico, una
-  derivación independiente del código de diseño.
-- Estructura **Transposed Direct Form II**, con coeficientes y estado en
-  `double` y E/S en `float`. Con un Bell a 20 Hz y 96 kHz los polos quedan muy
-  cerca de |z| = 1, y en `float` el ruido de redondeo sería audible.
-- A 0 dB los coeficientes cumplen b = a **bit a bit** (`b1` y `a1` salen de la
-  misma expresión y `A = 1` exacto), así que el filtro es una identidad exacta
-  con estado nulo. El bypass se apoya en esta propiedad.
+`src/dsp/BellBand.*`, `BiquadDesign.*` y `BandLimits.h` son idénticos a
+`dfcf25b`. Todo lo validado en E0 se mantiene:
 
-### Suavizado de parámetros (anti-clicks)
+- **Diseño:** RBJ peaking en TDF-II, coeficientes y estado en double, E/S en float.
+- **Suavizado:** rampas de 20 ms (log2 para frecuencia y Q, dB para la
+  ganancia). Los coeficientes se recalculan cada 16 muestras sobre un
+  contador absoluto.
+- **Idle:** una banda en bypass, o a 0 dB con el estado ya extinguido, deja
+  el buffer intacto (bit a bit) y no consume CPU.
+- **Protección:** las muestras no finitas entran como 0; el estado no finito
+  se reinicia; los valores menores de 1e-30 se ponen a cero; Nyquist a 0,49·fs.
 
-- Rampas lineales de 20 ms: frecuencia y Q en dominio log2 (paso perceptual
-  uniforme), ganancia en dB.
-- Los coeficientes se recalculan cada **16 muestras** mientras una rampa se
-  mueve. A 48 kHz son 60 pasos por rampa. Con todos los parámetros estables no
-  se recalcula nada.
-- La rejilla de actualización sigue un **contador absoluto de muestras**, no
-  el inicio de cada bloque. Por eso la salida es idéntica bit a bit con
-  cualquier tamaño de buffer (probado con 1, 7, 16, 64, 333, 512, 4096 y
-  tamaños aleatorios).
-- Los cambios de parámetro entran en vigor en el siguiente tick (≤ 16
-  muestras, 0,33 ms a 48 kHz).
+### `EqCore` (nuevo en E1a)
 
-### Bypass de banda
+- `std::array<BellBand, 8>`, de tamaño fijo y sin asignaciones (comprobado
+  con un contador de `operator new`, ver Pruebas).
+- **Cascada banda a banda sobre el bloque completo:** la banda 1 procesa todo
+  el bloque in-place, luego la 2, y así hasta la 8. Como cada banda solo ve
+  su propia secuencia de entrada, el resultado es bit a bit igual a una
+  cascada muestra a muestra, y conserva la independencia del tamaño de
+  bloque de cada banda (probado).
+- **Independencia de estado:** cada banda tiene su propio estado por canal,
+  sus rampas y su contador. Probado: la cascada de `EqCore` es idéntica bit
+  a bit a ocho `BellBand` independientes encadenadas a mano, y el estéreo es
+  idéntico a dos monos.
+- Entre bandas, la señal vuelve a float (E/S de cada `BellBand`). Esto
+  añade como mucho 8 redondeos de float32 (~−150 dBFS), muy por debajo de la
+  tolerancia de medida. Pasar la cascada completa a double es una optimización
+  posible, no una necesidad.
+- `magnitudeAt(f)` da la curva compuesta (producto de las 8 bandas) con los
+  coeficientes actuales. Servirá a la futura curva de la UI y ya se usa en
+  las pruebas.
 
-- El bypass lleva la ganancia efectiva a 0 dB con la misma rampa. Cuando la
-  rampa termina y el estado residual cae por debajo de 1e-9 (≈ −180 dBFS), la
-  banda pasa a **idle**: deja el buffer intacto (seco bit a bit) y no consume CPU.
-- Al reactivar, se arranca desde un estado nulo a 0 dB (identidad exacta) y la
-  ganancia sube en rampa, sin discontinuidad.
-- El bypass global del host usa el `processBlockBypassed` por defecto de JUCE
-  (copia directa, sin rampa). Ver riesgos.
+### Host Adapter: ganancia neutra exacta (corrección de un defecto de E0)
 
-### Seguridad en tiempo real
+El parámetro de ganancia del host ajusta su valor a una rejilla de 0,01 dB
+en float. En **arm64** esa operación (`-24 + k·0.01f`) se compila como FMA, y
+"0.00 dB" llega al DSP como **−5,364e-7 dB**. La consecuencia en E0 era que
+la banda nunca pasaba a idle con ganancia 0: no había transparencia bit a
+bit en el plugin real y se gastaba CPU. Las pruebas DSP de E0 no lo
+detectaron porque usaban 0.0 exacto. Lo detectan los fixtures reales de E0
+(`e0_default.bin`). En x86_64, sin FMA, el valor sí es 0 exacto.
 
-- Sin asignaciones, locks, E/S, logging ni excepciones en `process()`. El
-  estado tiene tamaño fijo (`std::array`, 2 canales).
-- Las muestras de entrada no finitas se tratan como 0 antes de entrar en el
-  filtro, así que el estado nunca se contamina. Si el estado llega a no ser
-  finito por cualquier otra vía, se reinicia. Los valores menores de 1e-30 se
-  ponen a cero (además de `ScopedNoDenormals` en el procesador).
-- Los parámetros NaN/Inf o fuera de rango se limitan; la frecuencia queda
-  además por debajo de 0,49·fs. Una fs inválida (≤ 8 kHz, > 768 kHz, NaN)
-  cae a 44,1 kHz.
-- Estabilidad: el diseño RBJ con Q > 0 y f0 < Nyquist siempre da polos dentro
-  del círculo unidad. Se comprueba el triángulo de estabilidad en toda la
-  rejilla de límites.
+Corrección: en `readBandSettings`, |ganancia| < 0,005 dB (media rejilla, es
+decir, todo lo que el host muestra como "0.00 dB") se trata como 0 exacto. La
+desviación de E0 frente a la identidad era de 2,98e-8 como máximo
+(inaudible). La compatibilidad de audio con sesiones E0, cuantificada caso
+por caso en las dos arquitecturas, está en
+[COMPATIBILITY_E0_E1A.md](COMPATIBILITY_E0_E1A.md). La prueba `processor: default and all-0 dB states are bit-exact
+transparent` falla si se quita la corrección (verificado por mutación).
 
-### Canales
+### Bit-exactitud entre arquitecturas
 
-- Bus principal mono→mono o estéreo→estéreo. Se rechazan mono→estéreo,
-  estéreo→mono, surround y bus deshabilitado.
-- Un estado independiente por canal y coeficientes compartidos (hasta que
-  llegue M/S).
+Las garantías bit a bit (bloques, canales, bypass, procesador frente a
+núcleo) valen **dentro de una misma arquitectura**. Entre arm64 y x86_64 hay
+diferencias del orden de un ulp, porque clang contrae `a*b + c` en FMA en
+arm64. Esto afecta tanto al DSP (en double, invisible tras convertir a float
+salvo casos raros) como al ajuste a rejilla de JUCE (en float, visible en el
+estado guardado). Las pruebas se ejecutan en las dos arquitecturas, y donde
+procede la tolerancia está justificada (1 ulp de 24 dB, ver
+`StateMigrationTests.cpp`). Si algún día hiciera falta reproducibilidad entre
+arquitecturas, habría que compilar el DSP con `-ffp-contract=off`, con su
+coste en rendimiento, no medido aún.
 
-## Estado
+## Estado y migración
 
-`AudioProcessorValueTreeState` serializado como XML binario de JUCE. Raíz
-`<LABQ8 labq8StateVersion="1">` con un hijo `PARAM id/value` por parámetro.
-Un estado corrupto, vacío o de otro plugin se ignora sin cambiar nada. Detalle
-en [PARAMETER_SCHEMA.md](PARAMETER_SCHEMA.md).
+Formato: XML binario de JUCE con raíz `<LABQ8 labq8StateVersion="2">` y un
+`PARAM id/value` por parámetro.
+
+| Versión | Fase | Contenido |
+|---|---|---|
+| 1 | E0 | `b1_*` (4 parámetros) |
+| 2 | E1a | `b1_*` … `b8_*` (32 parámetros) |
+
+`params::migrateState()` se ejecuta antes de `replaceState()`:
+
+1. Lee la versión del árbol (0 si falta).
+2. Aquí irán las transformaciones propias de cada versión. De la 1 a la 2
+   solo se añaden parámetros.
+3. Para cada parámetro del procesador **ausente** en el árbol, añade un
+   `PARAM` con su **valor por defecto explícito**.
+4. Escribe `labq8StateVersion = 2`.
+
+**Por qué hace falta (corrige lo que documenté en E0):** sin migración, JUCE
+9.0.3 sí acaba asignando el valor por defecto a un parámetro ausente (vía
+`valueTreeChildAdded`). Pero según la historia de la instancia, el estado que
+se vuelve a guardar contiene `<PARAM id="b2_freq"/>` **sin valor** o con
+valor explícito. Así, la misma sesión E0 produce estados distintos según la
+instancia que la cargue. En E0 escribí que JUCE "deja el valor actual"; la
+prueba empírica muestra que no es así en este caso, pero el estado sí era no
+determinista. Con la migración, cualquier instancia que cargue la misma
+sesión E0 produce bytes idénticos.
+
+- Un estado corrupto, vacío o con otra raíz se ignora.
+- Un `PARAM` con un ID desconocido (por ejemplo de una versión futura) se
+  **conserva** en el árbol, pero no crea parámetros. No es destructivo.
+- Un estado sin propiedad de versión se migra como si fuera v1.
+
+## Rendimiento
+
+Banco `labq8_bench` (Release, sin JUCE): 8 bandas en estéreo, ruido blanco
+con semillas fijas, 10 s de audio por pasada, mediana de 7 pasadas tras 1 de
+calentamiento, un solo hilo. Equipo: Apple M5 (Mac17,4), macOS 26.5.
+
+| Escenario | 44,1 kHz | 48 kHz | 96 kHz | ns/frame estéreo |
+|---|---|---|---|---|
+| idle (8 bandas a 0 dB) | 0,01–0,02 % | 0,01 % | 0,02 % | ~2–5 |
+| estático (8 bandas activas) | 0,11–0,16 % | 0,11–0,17 % | 0,25–0,35 % | ~24–35 |
+| automatización (8 bandas en rampa continua) | 0,16–0,18 % | 0,19–0,21 % | 0,37–0,41 % | ~38–44 |
+
+Porcentaje de un núcleo con bloques de 32, 64 y 512 muestras. Entre dos
+ejecuciones completas la variación fue de hasta ±20 %, porque la máquina
+estaba compartida con otras compilaciones; las cifras sirven como orden de
+magnitud. El slice x86_64 bajo Rosetta da como peor caso un 0,57 % a 96 kHz,
+solo como indicación (Rosetta no representa un Intel nativo).
+
+La prueba `perf:` (solo en Release) exige menos del 5 % de un núcleo en el
+peor caso (96 kHz, bloques de 64, 8 bandas en rampa). Hay unas 12 veces de
+margen sobre lo medido: está pensada para detectar regresiones graves, no
+variaciones finas.
+
+## Compatibilidad macOS
+
+| | arm64 | x86_64 |
+|---|---|---|
+| Mínimo que soporta JUCE 9.0.3 (README de JUCE) | 11.0 (no hay macOS arm64 anterior) | 10.11 |
+| Objetivo actual de LABQ8 (`CMAKE_OSX_DEPLOYMENT_TARGET`) | 11.0 | 11.0 |
+| `minos` verificado con `vtool` en AU, VST3, tests y bench (E0 y E1a) | 11.0 | 11.0 |
+| SDK usado | macOS 26.5 | macOS 26.5 |
+
+**Decisión: se mantiene 11.0 para los dos slices.** El código no usa nada de
+la biblioteca estándar que exija un macOS más moderno, y JUCE permitiría
+bajar el slice Intel hasta 10.11. No lo bajo porque:
+
+1. arm64 no puede bajar de 11.0, y un objetivo único simplifica el binario
+   universal (CMake aplica un único `CMAKE_OSX_DEPLOYMENT_TARGET`; separarlos
+   requiere flags por arquitectura).
+2. No hay forma de probar aquí en macOS 10.x, y no voy a declarar un soporte
+   que no se ha probado.
+3. Logic Pro actual exige un macOS muy posterior a 11, así que el público
+   objetivo no gana nada bajándolo.
+
+Si en el futuro se quiere dar soporte a Intel con macOS 10.13–10.15, será una
+decisión de producto con su propia ronda de pruebas en hardware real.
 
 ## Pruebas
 
-Un solo ejecutable, `labq8_tests` (consola JUCE + harness propio, sin
-dependencias externas), registrado en CTest. Se divide en:
+Un solo ejecutable, `labq8_tests` (consola JUCE + harness propio), registrado
+en CTest, con 40 pruebas:
 
-- `dsp:` pruebas del EQ Core directamente, a 44,1, 48 y 96 kHz.
-- `processor:` pruebas del adaptador sin cabeza: layout, estado, buses,
-  equivalencia bit a bit con el EQ Core, automatización y creación del editor.
+| Prefijo | Nº | Qué cubre |
+|---|---|---|
+| `dsp:` | 11 | E0, `BellBand` (archivo sin cambios) |
+| `processor:` (E0) | 7 | E0, adaptador (un único cambio: nº de parámetros de 4 a 32) |
+| `eq:` | 10 | E1a: respuesta individual, compuesta, transparencia, bypass individual, automatización simultánea y aleatoria, independencia, bloques, NaN, extremos apilados |
+| `processor:` (E1a) | 5 | Layout de 8 bandas, transparencia por defecto, procesador = núcleo, bloques del host, automatización de varias bandas |
+| `state:` | 4 | Migración con estados E0 reales, sonido igual a E0, round-trip v2, parciales/desconocidos |
+| `rt:` | 2 | Contador de asignaciones (autotest) y cero asignaciones en `process`/`processBlock` |
+| `perf:` | 1 | Presupuesto de CPU (solo Release; en Debug se informa como SKIP, nunca como PASS) |
 
 ### Tolerancias y por qué
 
 | Tolerancia | Uso | Justificación |
 |---|---|---|
-| Exacta (bit a bit) | 0 dB, bypass, mono vs estéreo, tamaños de bloque, procesador vs core, NaN ≡ 0 | Son propiedades estructurales: cualquier diferencia indica un error |
-| 1e-4 dB | Respuesta de los coeficientes frente al prototipo analógico | Cálculo en double; el error observado es ~1e-12 dB, así que el margen solo cubre redondeo de `tan`/`cos` cerca de Nyquist |
-| 0,01 dB | Senoides medidas con E/S float32 (ajuste por mínimos cuadrados) | El redondeo float aporta < 1e-5 dB; 0,01 dB está unas 10 veces por debajo de la menor diferencia audible de EQ (~0,1 dB) |
-| 0,02 dB | Ganancia del procesador medida por RMS | El periodo parcial en la ventana RMS acota el error a ~0,01 dB |
-| ≥ 20 dB de reducción | Clicks: máximo de la 4.ª diferencia frente a un control sin suavizado | La 4.ª diferencia atenúa un seno de 200 Hz ~70 dB y conserva las discontinuidades. Se exige además que el control sí produzca click (sensibilidad); comprobado desactivando el suavizado, con lo que el test falla |
-| Cola < 1e-5 · pico | Decaimiento de la respuesta al impulso en los límites | Se mide en 2× el tiempo de 12 constantes del polo más lento (incluye polos sobreamortiguados) |
-| Pico < 100 | Automatización aleatoria cada 32 muestras | Entrada de 0,5 de pico con +24 dB como máximo da ~8; llegar a 100 indicaría inestabilidad |
+| Exacta (bit a bit) | 0 dB, bypass, mono/estéreo, bloques, procesador = núcleo, cascada = 8 bandas sueltas, NaN ≡ 0, migración determinista | Propiedades estructurales dentro de una arquitectura |
+| 1e-4 dB | Respuesta de coeficientes frente al prototipo analógico (también la suma de 8 bandas) | Cálculo en double; el error observado es ~1e-12 dB |
+| 0,01 dB | Senoides medidas con E/S float32 (1 a 8 bandas) | Redondeo float < 1e-5 dB por etapa, 10 veces por debajo de lo audible |
+| 0,02 dB | Ganancia del procesador por RMS | Periodo parcial en la ventana |
+| ≥ 20 dB de reducción | Clicks (4.ª diferencia) frente a un control sin suavizado | Validado por mutación en E0 |
+| Cola < 1e-5·pico | Respuesta al impulso. 1 banda: 2× el tiempo de 12τ; 8 bandas iguales apiladas: 4×, porque 8 polos repetidos decaen como t⁷e^(−t/τ) | |
+| 5e-7 × máx(1, \|v\|, 24) | Valores b1 restaurados desde fixtures (escritos en arm64) | Unos pocos ulp: absorbe la diferencia FMA arm64/x86_64; para la ganancia la escala es ulp(24) ≈ 1,9e-6 |
+| < 5 % de un núcleo | Peor caso de CPU | Unas 12 veces por encima de lo medido |
+
+### Verificación de sensibilidad (mutaciones)
+
+| Mutación | Resultado |
+|---|---|
+| Suavizado desactivado (E0) | Falla el test de clicks (9 comprobaciones) |
+| Sin `migrateState()` | Falla `state: genuine E0 states…` en 6 comprobaciones (el estado depende de la historia y hay PARAM sin valor) |
+| Sin la corrección de 0 dB | Falla `processor: default and all-0 dB states…` en arm64 (6 comprobaciones) |
+
+En todos los casos se restauró después el archivo original (comprobado con `cmp`).
 
 ## Riesgos técnicos conocidos
 
 1. **Sin `auval` ni validación en DAW.** `auval` solo valida componentes
-   registrados en el sistema, y la regla de E0 prohíbe instalarlos. El VST3 sí
-   se cargó en el build (el `juce_vst3_helper` genera `moduleinfo.json`
-   cargando el binario). Hay que validar con `auval` y pluginval en una
-   ubicación aislada en cuanto se autorice la instalación.
-2. **Bypass del host sin rampa.** JUCE copia la entrada directamente y el
-   cambio puede producir un click. Solución: exponer un parámetro de bypass
-   global con rampa vía `getBypassParameter()` (propuesto para E1).
-3. **Estado parcial en versiones futuras.** Al restaurar un estado sin algún
-   parámetro (p. ej. una sesión E0 cargada en E1, sin las bandas 2–8), JUCE
-   deja ese parámetro con su **valor actual**, no con el predeterminado. E1
-   debe reiniciar a sus valores por defecto los parámetros ausentes antes de
-   `replaceState`, usando `labq8StateVersion`.
-4. **Cramping cerca de Nyquist.** El Bell bilineal se estrecha y deforma
-   cerca de fs/2 (a 44,1 kHz, una banda en 18–20 kHz no tiene la forma de su
-   equivalente analógico). Es inherente a la fase mínima con bilineal y está
-   probado como "correcto según el diseño". Si se quiere una curva fiel en la
-   parte alta, habrá que evaluar oversampling o diseño por ajuste de magnitud
-   (tipo Vicanek) en una fase posterior.
-5. **Coste de recálculo.** `designBell` usa `pow`/`sin`/`cos` cada 16
-   muestras por banda mientras hay rampa. Con 8 bandas en automatización
-   simultánea sigue siendo bajo, pero conviene medirlo en E1.
-6. **Latencia de parámetro ≤ 16 muestras.** La automatización no tiene
-   precisión de muestra. Es aceptable para EQ y habrá que revisarlo si la
-   dinámica necesita más precisión.
-7. **Nombre de compañía inconsistente en la marca.** En otros proyectos
-   VitaPlug aparecen tanto "VitaPlug" como "VITAPLUG" con el mismo código
-   `Vtpl`. LABQ8 usa "VitaPlug". Conviene unificarlo en todo el bundle.
-8. **Toolchain.** Se compila con Command Line Tools y Makefiles, sin Xcode.
-   La firma, el notarizado y el empaquetado necesitarán Xcode o `codesign` con
-   identidad de desarrollador.
-9. **`getTailLengthSeconds() = 0`.** Con Q alto y graves, la cola IIR real
-   puede durar segundos. Algunos hosts cortan el procesamiento en silencio y
-   eso puede truncarla. Hay que valorar si reportar una cola en función de Q y f0.
+   instalados, y la instalación sigue prohibida. El VST3 se carga en el build
+   (lo hace `juce_vst3_helper`).
+2. **Bypass del host sin rampa.** JUCE copia la entrada directamente. Está
+   previsto en E1 (`master_bypass` con `getBypassParameter()`), fuera de E1a.
+3. **Bit-exactitud solo dentro de cada arquitectura** (FMA). Ver arriba.
+4. **Cramping cerca de Nyquist** (inherente al Bell bilineal de fase mínima).
+5. **Latencia de parámetro ≤ 16 muestras.**
+6. **`getTailLengthSeconds() = 0`.** Con 8 bandas de Q alto apiladas, la cola
+   real puede durar segundos.
+7. **Compañía "VitaPlug" frente a "VITAPLUG"** en otros proyectos del bundle.
+8. **Toolchain sin Xcode** (firma y notarizado pendientes).
+9. **El contador de asignaciones solo ve `operator new`**, no `malloc`
+   directo ni asignaciones del sistema. El código propio no usa `malloc`.
+   Además, en Release clang puede eliminar pares `new`/`delete` no
+   observables; por eso el autotest fuerza que el puntero escape.
+10. **Variabilidad de las medidas de CPU** (±20 %) en una máquina compartida.
+    Para comparar entre fases hacen falta condiciones controladas (máquina
+    en reposo, misma alimentación).

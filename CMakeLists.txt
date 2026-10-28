@@ -31,7 +31,8 @@ add_subdirectory("${LABQ8_JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
 # EQ Core: pure C++ DSP, no JUCE dependency
 add_library(labq8_dsp STATIC
     src/dsp/BiquadDesign.cpp
-    src/dsp/BellBand.cpp)
+    src/dsp/BellBand.cpp
+    src/dsp/EqCore.cpp)
 
 target_include_directories(labq8_dsp PUBLIC src)
 target_compile_features(labq8_dsp PUBLIC cxx_std_20)
@@ -39,7 +40,8 @@ target_compile_options(labq8_dsp PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wcon
 
 set(LABQ8_HOST_ADAPTER_SOURCES
     src/plugin/PluginProcessor.cpp
-    src/parameters/ParameterLayout.cpp)
+    src/parameters/ParameterLayout.cpp
+    src/parameters/StateMigration.cpp)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -95,13 +97,19 @@ if(LABQ8_BUILD_TESTS)
         tests/TestMain.cpp
         tests/DspTests.cpp
         tests/ProcessorTests.cpp
+        tests/EqCoreTests.cpp
+        tests/ProcessorEqTests.cpp
+        tests/StateMigrationTests.cpp
+        tests/RealtimeTests.cpp
+        tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 
     target_include_directories(labq8_tests PRIVATE tests)
 
     target_compile_definitions(labq8_tests PRIVATE
         JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0)
+        JUCE_USE_CURL=0
+        LABQ8_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 
     target_link_libraries(labq8_tests
         PRIVATE
@@ -112,4 +120,8 @@ if(LABQ8_BUILD_TESTS)
             juce::juce_recommended_warning_flags)
 
     add_test(NAME labq8_tests COMMAND labq8_tests)
+
+    # CPU benchmark (JUCE-free). Not part of ctest: run it explicitly, in Release.
+    add_executable(labq8_bench tests/bench/EqBenchmark.cpp)
+    target_link_libraries(labq8_bench PRIVATE labq8_dsp)
 endif()

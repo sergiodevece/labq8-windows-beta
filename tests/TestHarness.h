@@ -14,6 +14,8 @@ struct Context
 {
     int checks = 0;
     std::vector<std::string> failures;
+    std::vector<std::string> notes;   // printed under the result (measurements)
+    std::string skipReason;           // non-empty: test did not run, never a PASS
 
     void check (bool condition, const std::string& message, const char* file, int line)
     {
@@ -26,6 +28,9 @@ struct Context
             failures.push_back (os.str());
         }
     }
+
+    void note (const std::string& message) { notes.push_back (message); }
+    void skip (const std::string& reason) { skipReason = reason; }
 };
 
 struct TestCase

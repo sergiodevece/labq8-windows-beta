@@ -13,7 +13,7 @@ int main (int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     const std::string filter = argc > 1 ? argv[1] : "";
-    int run = 0, failed = 0, checks = 0;
+    int run = 0, failed = 0, skipped = 0, checks = 0;
 
     for (const auto& test : labq8::test::registry())
     {
@@ -28,11 +28,7 @@ int main (int argc, char** argv)
         ++run;
         checks += ctx.checks;
 
-        if (ctx.failures.empty())
-        {
-            std::printf ("[PASS] %s  (%d checks, %.0f ms)\n", test.name.c_str(), ctx.checks, ms);
-        }
-        else
+        if (! ctx.failures.empty())
         {
             ++failed;
             std::printf ("[FAIL] %s  (%zu of %d checks failed)\n", test.name.c_str(), ctx.failures.size(), ctx.checks);
@@ -43,8 +39,21 @@ int main (int argc, char** argv)
             if (ctx.failures.size() > 10)
                 std::printf ("       ... %zu more\n", ctx.failures.size() - 10);
         }
+        else if (! ctx.skipReason.empty())
+        {
+            ++skipped;
+            std::printf ("[SKIP] %s  (%s)\n", test.name.c_str(), ctx.skipReason.c_str());
+        }
+        else
+        {
+            std::printf ("[PASS] %s  (%d checks, %.0f ms)\n", test.name.c_str(), ctx.checks, ms);
+        }
+
+        for (const auto& n : ctx.notes)
+            std::printf ("       · %s\n", n.c_str());
     }
 
-    std::printf ("\n%d tests, %d failed, %d checks\n", run, failed, checks);
+    std::printf ("\n%d tests, %d passed, %d failed, %d skipped, %d checks\n",
+                 run, run - failed - skipped, failed, skipped, checks);
     return (run > 0 && failed == 0) ? 0 : 1;
 }

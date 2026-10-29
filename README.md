@@ -4,11 +4,12 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: E2c.1** (parámetros públicos de la dinámica sobre E2b, `5623dc5`). Ocho bandas independientes en
+**Fase actual: UI-1** (interfaz del diseño aprobado sobre E2c.1, `3041019`). Ocho bandas independientes en
 cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
 Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
 cambiar de tipo, bypass por banda, estado v4 compatible con sesiones E0, E1a,
-E1b y E2b, editor genérico de desarrollo y 107 pruebas que se ejecutan sin DAW.
+E1b y E2b, la interfaz del diseño aprobado (UI-1) y 118 pruebas que se ejecutan
+sin DAW.
 E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
 guardado. E2a/E2b añaden el motor dinámico (ocho secciones independientes en
 el núcleo DSP, solo para Bells, detección sobre la entrada común y estéreo
@@ -79,11 +80,12 @@ Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
 | `build/e1b1-debug`, `build/e1b1-release-universal` | E1b.1 (`5e889ec`) | Referencia E1b.1. No se recompila |
 | `build/e2a-debug`, `build/e2a-release-universal` | E2a (`111acab`) | Referencia E2a. No se recompila |
 | `build/e2b-debug`, `build/e2b-release-universal` | E2b (`5623dc5`) | Referencia E2b. No se recompila |
-| `build/e2c1-debug`, `build/e2c1-release-universal` | E2c.1 (árbol de trabajo) | Builds de E2c.1 |
+| `build/e2c1-debug`, `build/e2c1-release-universal` | E2c.1 (`3041019`) | Referencia E2c.1. No se recompila |
+| `build/ui1-debug`, `build/ui1-release-universal` | UI-1 (árbol de trabajo) | Builds de UI-1 |
 
 Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
 tras E1b, los de E0, E1a y E1b tras E1b.1, los de E0 a E1b.1 tras E2a, y los
-de E0 a E2a tras E2b, y los de E0 a E2b tras E2c.1.
+de E0 a E2a tras E2b, los de E0 a E2b tras E2c.1, y los de E0 a E2c.1 tras UI-1.
 
 Comprobación de compatibilidad de audio con versiones anteriores (compila la
 versión base desde git en `build/compat/`):
@@ -121,5 +123,6 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 - [docs/DYNAMICS_E2B.md](docs/DYNAMICS_E2B.md): motor dinámico de ocho bandas (señal original común, estéreo enlazado, tipos, medidas, propuesta para E2c y shelves dinámicos).
 - [docs/DYNAMICS_E2C1.md](docs/DYNAMICS_E2C1.md): parámetros públicos de la dinámica, riesgos y propuesta de detector para E2c.2.
 - [docs/design/README.md](docs/design/README.md): diseño gráfico aprobado APPROVED_01 (congelado).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E2c.1.
+- [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 (arquitectura, assets derivados, controles, desviaciones pendientes de aprobación).
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-1.
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

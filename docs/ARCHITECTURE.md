@@ -9,7 +9,7 @@
 | 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | Ocho secciones en `EqCore` (E2b), con parámetros públicos desde E2c.1 ([DYNAMICS_E2A.md](DYNAMICS_E2A.md), [DYNAMICS_E2B.md](DYNAMICS_E2B.md)) | `src/dsp/Dynamic*`, `EqCore` |
 | 4 | Analysis Engine | FFT, medición | No iniciado | — |
 | 5 | Intention Engine | Perfiles musicales, sugerencias | No iniciado | — |
-| 6 | UI Layer | Interfaz definitiva | Editor genérico de JUCE | (`GenericAudioProcessorEditor`) |
+| 6 | UI Layer | Interfaz definitiva | UI-1: diseño aprobado APPROVED_01 con panel compartido ([UI_IMPLEMENTATION.md](UI_IMPLEMENTATION.md)) | `src/ui/`, `assets/ui/` |
 
 Las capas 3–6 no tienen código ni clases vacías.
 
@@ -403,7 +403,7 @@ actual no lo necesita).
 
 ## Pruebas
 
-107 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
+118 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
 x86_64:
 
 | Prefijo / archivo | Nº | Qué cubre |
@@ -417,6 +417,7 @@ x86_64:
 | `filter:` (E1b) | 5 | A, B, C, D: los seis tipos frente al prototipo analógico; significado de f0, ganancia y Q; límites y Nyquist; senoides medidas; tabla de sobreoscilación |
 | `band:`, `crossfade:`, `type changes:`, `multi:` (E1b) | 15 | E–M: Bell = BellBand; transparencia de Bell/shelves; Cut y Notch activos a 0 dB; bypass por tipo; estructura y convexidad del crossfade; duración; política; clicks frente a cambio abrupto; cancelación de fase; cambios rápidos; bloques; NaN; estéreo; cascada mixta; automatización por tipo |
 | `e1b processor:`, `state:`, `rt:`, `perf:` (E1b) | 8 | Layout y hints; procesador = núcleo con tipos; automatización de tipo independiente del bloque; ganancia conservada; estados E1a reales; sonido idéntico a E1a; round-trip v3 y tipos inválidos; sin asignaciones con cambios de tipo; CPU del peor caso |
+| `ui ...:` (UI-1, [EditorTests.cpp](../tests/EditorTests.cpp)) | 11 | Formatos y ejes (±24 dB); respuesta dibujada = núcleo; abrir/cerrar, tamaño y zonas de clic; selección de banda sin efectos; ediciones solo en la banda seleccionada; automatización; audio idéntico con el editor; estado; controles inactivos; bypass desde el indicador; Dynamic EQ deshabilitado fuera de Bell |
 | `e2c ...:` (E2c.1, [ProcessorDynamicTests.cpp](../tests/ProcessorDynamicTests.cpp)) | 9 | 80 parámetros: orden, IDs, hints y valores por defecto; round-trip v4 (y deriva de guardar/cargar); migración de todos los estados anteriores con dinámica apagada y sonido estático; ocho bandas automatizadas por separado = núcleo; independencia del bloque del host; enable durante la reproducción; solo Bell; transparencia; sin asignaciones ni NaN; CPU del procesador |
 | `dyn8:` (E2b, [EqCoreDynamicTests.cpp](../tests/EqCoreDynamicTests.cpp)) | 11 | Ocho Bells dinámicas, detectores independientes sobre la entrada común, banda dinámica entre estáticas, automatización y bloques, attack/release por banda, estéreo enlazado y panorámica, cambios de tipo, enable/bypass, extremos, varias bandas modulando, CPU |
 | `dyn ...:` (E2a, [DynamicTests.cpp](../tests/DynamicTests.cpp)) | 12 | Detector (precisión en f0, rechazo, ruido), ley y rango, ataque/release, transitorios, reposo y dinámica apagada = banda estática bit a bit, señales > 0 dBFS y NaN/Inf, automatización rápida, bloques, clicks de modulación y estabilidad variable en el tiempo, enlace estéreo, CPU |

@@ -2,6 +2,7 @@
 
 #include "parameters/ParameterIDs.h"
 #include "parameters/ParameterLayout.h"
+#include "ui/LabQ8Editor.h"
 
 #include <cmath>
 
@@ -120,8 +121,8 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 juce::AudioProcessorEditor* LabQ8AudioProcessor::createEditor()
 {
-    // Development-only editor that lists the parameters.
-    return new juce::GenericAudioProcessorEditor (*this);
+    // UI-1: the approved design (docs/design/LABQ8_UI_DESIGN_APPROVED_01.png).
+    return new ui::LabQ8Editor (*this);
 }
 
 void LabQ8AudioProcessor::getStateInformation (juce::MemoryBlock& destData)

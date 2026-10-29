@@ -45,7 +45,20 @@ target_compile_options(labq8_dsp PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wcon
 set(LABQ8_HOST_ADAPTER_SOURCES
     src/plugin/PluginProcessor.cpp
     src/parameters/ParameterLayout.cpp
-    src/parameters/StateMigration.cpp)
+    src/parameters/StateMigration.cpp
+    src/ui/LabQ8Editor.cpp
+    src/ui/UiModel.cpp)
+
+# UI-1 implementation assets, derived from the approved design by
+# labq8_ui_assetgen (docs/UI_IMPLEMENTATION.md). The master PNG itself is
+# never embedded or modified.
+juce_add_binary_data(labq8_ui_assets
+    HEADER_NAME LabQ8Assets.h
+    NAMESPACE LabQ8Assets
+    SOURCES
+        assets/ui/background.png
+        assets/ui/dynamic_switch_on.png
+        assets/ui/dynamic_switch_off.png)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -80,6 +93,7 @@ target_compile_definitions(LABQ8
 target_link_libraries(LABQ8
     PRIVATE
         labq8_dsp
+        labq8_ui_assets
         juce::juce_audio_processors
     PUBLIC
         juce::juce_recommended_config_flags
@@ -112,6 +126,7 @@ if(LABQ8_BUILD_TESTS)
         tests/DynamicTests.cpp
         tests/EqCoreDynamicTests.cpp
         tests/ProcessorDynamicTests.cpp
+        tests/EditorTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 
@@ -125,6 +140,7 @@ if(LABQ8_BUILD_TESTS)
     target_link_libraries(labq8_tests
         PRIVATE
             labq8_dsp
+            labq8_ui_assets
             juce::juce_audio_processors
         PUBLIC
             juce::juce_recommended_config_flags
@@ -135,6 +151,22 @@ if(LABQ8_BUILD_TESTS)
     # CPU benchmark (JUCE-free). Not part of ctest: run it explicitly, in Release.
     add_executable(labq8_bench tests/bench/EqBenchmark.cpp)
     target_link_libraries(labq8_bench PRIVATE labq8_dsp)
+
+    # UI-1 asset generator: derives assets/ui/*.png from the approved design
+    # (docs/design/, never modified). Run it explicitly; see docs/UI_IMPLEMENTATION.md.
+    juce_add_console_app(labq8_ui_assetgen PRODUCT_NAME "labq8_ui_assetgen")
+    target_sources(labq8_ui_assetgen PRIVATE tools/ui/GenerateUiAssets.cpp)
+    target_include_directories(labq8_ui_assetgen PRIVATE src)
+    target_compile_definitions(labq8_ui_assetgen PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(labq8_ui_assetgen PRIVATE juce::juce_gui_basics juce::juce_recommended_config_flags)
+
+    # UI-1 snapshot: renders the real editor offscreen and compares it with the
+    # approved design (docs/UI_IMPLEMENTATION.md).
+    juce_add_console_app(labq8_ui_snapshot PRODUCT_NAME "labq8_ui_snapshot")
+    target_sources(labq8_ui_snapshot PRIVATE tools/ui/UiSnapshot.cpp ${LABQ8_HOST_ADAPTER_SOURCES})
+    target_include_directories(labq8_ui_snapshot PRIVATE src)
+    target_compile_definitions(labq8_ui_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(labq8_ui_snapshot PRIVATE labq8_dsp labq8_ui_assets juce::juce_audio_processors juce::juce_recommended_config_flags)
 
     # Shelf and cut response sweep (E1b.1). Not part of ctest: run it explicitly.
     add_executable(labq8_sweep tests/bench/ResonanceSweep.cpp)

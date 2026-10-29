@@ -48,6 +48,12 @@ public:
 
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return parameters; }
 
+    // Band shown by the editor's shared panel (message thread only). Kept
+    // here so it survives closing and reopening the editor; not a parameter,
+    // not saved, no effect on audio.
+    int getUiSelectedBand() const noexcept { return uiSelectedBand; }
+    void setUiSelectedBand (int band) noexcept { uiSelectedBand = band; }
+
 private:
     struct BandParameters
     {
@@ -75,6 +81,7 @@ private:
     std::array<BandParameters, dsp::EqCore::numBands> bandParameters;
     std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
     dsp::EqCore eq;
+    int uiSelectedBand = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

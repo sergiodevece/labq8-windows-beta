@@ -15,6 +15,7 @@ inline constexpr int numBands = 8;
 inline constexpr int versionHintE0  = 1;
 inline constexpr int versionHintE1a = 2;
 inline constexpr int versionHintE1b = 3;
+inline constexpr int versionHintE2c = 4;
 
 struct BandIDs
 {
@@ -37,9 +38,38 @@ inline constexpr std::array<BandIDs, numBands> bandIDs { {
     { "b8_freq", "b8_gain", "b8_q", "b8_bypass", "b8_type" },
 } };
 
+// E2c.1: dynamics of each band (DSP: dsp::DynamicSection). Same rules.
+struct DynamicIDs
+{
+    const char* enabled;
+    const char* threshold;
+    const char* range;
+    const char* attack;
+    const char* release;
+};
+
+inline constexpr std::array<DynamicIDs, numBands> dynamicIDs { {
+    { "b1_dyn_on", "b1_threshold", "b1_range", "b1_attack", "b1_release" },
+    { "b2_dyn_on", "b2_threshold", "b2_range", "b2_attack", "b2_release" },
+    { "b3_dyn_on", "b3_threshold", "b3_range", "b3_attack", "b3_release" },
+    { "b4_dyn_on", "b4_threshold", "b4_range", "b4_attack", "b4_release" },
+    { "b5_dyn_on", "b5_threshold", "b5_range", "b5_attack", "b5_release" },
+    { "b6_dyn_on", "b6_threshold", "b6_range", "b6_attack", "b6_release" },
+    { "b7_dyn_on", "b7_threshold", "b7_range", "b7_attack", "b7_release" },
+    { "b8_dyn_on", "b8_threshold", "b8_range", "b8_attack", "b8_release" },
+} };
+
+// Defaults of the public dynamic parameters (ranges: dsp::dynamics::limits).
+inline constexpr double defaultThresholdDb = -20.0;
+inline constexpr double defaultRangeDb     = 6.0;
+inline constexpr double defaultAttackMs    = 10.0;
+inline constexpr double defaultReleaseMs   = 100.0;
+
 // Host order: the 32 E0/E1a parameters keep indices 0..31 (b1..b8, each
-// freq, gain, q, bypass); the 8 E1b type parameters follow as 32..39.
-inline constexpr int numParameters = 5 * numBands;
+// freq, gain, q, bypass); the 8 E1b type parameters follow as 32..39; the
+// 40 E2c.1 dynamic parameters follow as 40..79 (b1..b8, each dyn_on,
+// threshold, range, attack, release).
+inline constexpr int numParameters = 10 * numBands;
 
 // b{n}_type choices. The index of each name is dsp::FilterType and is FROZEN.
 inline constexpr std::array<const char*, 6> filterTypeNames {

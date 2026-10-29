@@ -33,6 +33,13 @@ LabQ8AudioProcessor::LabQ8AudioProcessor()
                                  rawParameter (parameters, ids.q),
                                  rawParameter (parameters, ids.bypass),
                                  rawParameter (parameters, ids.type) };
+
+        const auto& dyn = params::dynamicIDs[band];
+        dynamicParameters[band] = { rawParameter (parameters, dyn.enabled),
+                                    rawParameter (parameters, dyn.threshold),
+                                    rawParameter (parameters, dyn.range),
+                                    rawParameter (parameters, dyn.attack),
+                                    rawParameter (parameters, dyn.release) };
     }
 }
 
@@ -65,10 +72,26 @@ dsp::BandSettings LabQ8AudioProcessor::readBandSettings (const BandParameters& b
     return s;
 }
 
+dsp::DynamicSettings LabQ8AudioProcessor::readDynamicSettings (const DynamicParameters& d) noexcept
+{
+    // Each section receives only its own band's parameters. Threshold and
+    // range are smoothed (20 ms) and the enable fades (20 ms) inside the DSP.
+    dsp::DynamicSettings s;
+    s.enabled     = d.enabled->load (std::memory_order_relaxed) >= 0.5f;
+    s.thresholdDb = d.threshold->load (std::memory_order_relaxed);
+    s.rangeDb     = d.range->load (std::memory_order_relaxed);
+    s.attackMs    = d.attack->load (std::memory_order_relaxed);
+    s.releaseMs   = d.release->load (std::memory_order_relaxed);
+    return s;
+}
+
 void LabQ8AudioProcessor::pushParametersToCore() noexcept
 {
     for (size_t band = 0; band < bandParameters.size(); ++band)
+    {
         eq.setBandTargets (static_cast<int> (band), readBandSettings (bandParameters[band]));
+        eq.setBandDynamics (static_cast<int> (band), readDynamicSettings (dynamicParameters[band]));
+    }
 }
 
 void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)

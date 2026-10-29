@@ -1,6 +1,6 @@
 // Audio compatibility harness: an older plugin version ("base", e.g. E0 at
-// dfcf25b, E1a at 9095401, E1b at 1e8db0b, E1b.1 at 5e889ec or E2a at
-// 111acab) against the current sources ("new").
+// dfcf25b, E1a at 9095401, E1b at 1e8db0b, E1b.1 at 5e889ec, E2a at 111acab
+// or E2b at 5623dc5) against the current sources ("new").
 //
 // Compiled twice (LABQ8_COMPAT_SIDE "base" / "new"). Every case is a session
 // of the base version:

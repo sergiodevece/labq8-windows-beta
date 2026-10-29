@@ -8,8 +8,10 @@ namespace labq8::params
 //   1  E0   band 1 only (b1_*)
 //   2  E1a  bands 1..8 (b1_* .. b8_*)
 //   3  E1b  + b1_type .. b8_type (older states load every band as Bell)
+//   4  E2c.1 + b{n}_dyn_on, _threshold, _range, _attack, _release (older
+//            states load with dynamics off and the default dynamic settings)
 inline constexpr const char* stateVersionProperty = "labq8StateVersion";
-inline constexpr int currentStateVersion = 3;
+inline constexpr int currentStateVersion = 4;
 
 // Brings a restored state tree up to currentStateVersion, in place, before it
 // is handed to AudioProcessorValueTreeState::replaceState().

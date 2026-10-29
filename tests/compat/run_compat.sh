@@ -9,7 +9,8 @@
 #   tests/compat/run_compat.sh e1b   # E1b (1e8db0b): strict except where a shelf/cut is above its Q limit (E1b.1)
 #   tests/compat/run_compat.sh e1b1  # E1b.1 (5e889ec): strict, any difference fails
 #   tests/compat/run_compat.sh e2a   # E2a (111acab): strict, any difference fails
-#   tests/compat/run_compat.sh       # all five
+#   tests/compat/run_compat.sh e2b   # E2b (5623dc5): strict, any difference fails
+#   tests/compat/run_compat.sh       # all six
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -49,7 +50,8 @@ case "${1:-all}" in
     e1b) run_base e1b 1e8db0b "--strict --qlimit" ;;
     e1b1) run_base e1b1 5e889ec --strict ;;
     e2a) run_base e2a 111acab --strict ;;
-    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict ;;
-    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|all]"; exit 2 ;;
+    e2b) run_base e2b 5623dc5 --strict ;;
+    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict; run_base e2b 5623dc5 --strict ;;
+    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|e2b|all]"; exit 2 ;;
 esac
 exit $status

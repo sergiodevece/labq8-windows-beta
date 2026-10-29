@@ -6,15 +6,17 @@
    estado asociados a la cadena del ID.
 2. Un ID retirado no se reutiliza para otro significado.
 3. *Version hint* de JUCE: cada parámetro conserva el de la fase que lo
-   introdujo (E0 = 1, E1a = 2, E1b = 3). AU lo usa para ordenar los parámetros.
+   introdujo (E0 = 1, E1a = 2, E1b = 3, E2c.1 = 4). AU lo usa para ordenar
+   los parámetros.
 4. Los rangos solo se amplían con migración. Nunca se recortan.
 5. IDs y frecuencias por defecto: `src/parameters/ParameterIDs.h`. Rangos:
    `src/dsp/BandLimits.h`. Están escritos literalmente, sin construir cadenas,
    para que se puedan buscar con grep.
 6. **El orden de host se mantiene:** las cuatro `b1_*` ocupan los índices 0–3
    en el mismo orden que en E0, las bandas 2–8 los índices 4–31 (como en
-   E1a), y los ocho `b{n}_type` de E1b van a continuación (32–39). Los
-   parámetros nuevos siempre se añaden al final.
+   E1a), los ocho `b{n}_type` de E1b van a continuación (32–39) y los 40
+   parámetros dinámicos de E2c.1 ocupan los índices 40–79. Los parámetros
+   nuevos siempre se añaden al final.
 
 ## Convención
 
@@ -46,6 +48,56 @@ adaptador trata |ganancia| < 0,005 dB como 0 exacto (ver ARCHITECTURE.md).
   guardado vuelve a usar Q 18.
 - Detalles, medidas y propuesta de UI en
   [ARCHITECTURE.md](ARCHITECTURE.md#q-guardado-y-q-efectivo-e1b1).
+
+### Dinámica por banda (E2c.1, version hint 4, índices 40–79)
+
+Cinco parámetros por banda, en este orden y en bloques por banda: b1 ocupa
+los índices 40–44, b2 los 45–49 … y b8 los 75–79.
+
+| Índice | ID | Nombre | Tipo | Rango | Unidad | Por defecto | Mapeo 0..1 |
+|---|---|---|---|---|---|---|---|
+| 40 + 5(n−1) | `b{n}_dyn_on` | Band n Dynamic EQ | bool | off / on | — | **off** | — |
+| 41 + 5(n−1) | `b{n}_threshold` | Band n Threshold | float | −80 … +24 | dBFS de seno | −20 | lineal, paso 0,1 dB |
+| 42 + 5(n−1) | `b{n}_range` | Band n Range | float | 0 … 24 | dB | 6 | lineal, paso 0,1 dB |
+| 43 + 5(n−1) | `b{n}_attack` | Band n Attack | float | 0,5 … 500 | ms | 10 | logarítmico, rejilla 0,01 ms |
+| 44 + 5(n−1) | `b{n}_release` | Band n Release | float | 5 … 5000 | ms | 100 | logarítmico, rejilla 0,1 ms |
+
+- **Rangos:** son los rangos validados del DSP (`dsp::dynamics::limits`), sin
+  cambios.
+- **Unidad del umbral:** el nivel del detector en dBFS de seno. Un seno de
+  amplitud A en f0 lee 20·log10(A). Ver
+  [DYNAMICS_E2A.md](DYNAMICS_E2A.md#1-arquitectura-del-detector).
+- **Dónde actúa:** solo en bandas **Bell** sin bypass. En los demás tipos y
+  con bypass, la dinámica no actúa y la reducción se desvanece en 20 ms.
+- **Suavizado:**
+  - Threshold y Range: rampas de 20 ms en el DSP;
+  - Dynamic EQ: fundido de 20 ms;
+  - Attack y Release: cambian solo una velocidad, así que se aplican en el
+    siguiente tick.
+- **Por qué hay rejilla en Attack y Release:** con un mapeo logarítmico en
+  float, guardar y cargar movía el valor un ulp en cada ciclo. Con la rejilla,
+  el valor queda fijo y el estado se vuelve a guardar idéntico byte a byte.
+  - Frequency y Q, congelados desde E0, tienen ese mismo ulp de deriva en
+    ~4 % de los valores (118 de 3200 en la prueba). Es inaudible (1e-7
+    relativo) y no se toca, porque cambiar su mapeo afectaría a la
+    automatización guardada.
+
+### Diferencias con el diseño gráfico APPROVED_01 (pendientes para la fase de interfaz)
+
+`docs/design/LABQ8_UI_DESIGN_APPROVED_01.png` sigue congelado. Sus escalas
+son ilustrativas; los rangos públicos reales son estos:
+
+| Control | Escala en la imagen | Rango público real | Qué habrá que resolver en la interfaz |
+|---|---|---|---|
+| GAIN | −18 … +18 | −24 … +24 dB (E0) | Rótulos de la escala o extensión visual |
+| Q | 0,1 … 10 | 0,1 … 18 (E0; efectivo por tipo, E1b.1) | Ídem; además, mostrar el Q efectivo |
+| THRESHOLD | −60 … 0 | −80 … +24 dBFS | Rótulos de la escala |
+| RANGE | 0 … 24 | 0 … 24 dB | Coinciden |
+| ATTACK | 0,1 … 200 | 0,5 … 500 ms | Rótulos (el DSP no baja de 0,5 ms por decisión de producto) |
+| RELEASE | 10 … 2000 | 5 … 5000 ms | Rótulos de la escala |
+
+Cualquier cambio de los rótulos de la imagen requiere aprobación expresa
+(regla 10 del registro de diseño).
 
 ### Tipos de filtro (`b{n}_type`): índices congelados
 
@@ -106,31 +158,32 @@ adaptador trata |ganancia| < 0,005 dB como 0 exacto (ver ARCHITECTURE.md).
 | `master_bypass` | bool (con rampa, `getBypassParameter`) | | off | por decidir |
 | `b{n}_place` | choice | Stereo, Left, Right, Mid, Side | Stereo | Fase M/S |
 | `proc_mode` | choice | Stereo, Mid/Side | Stereo | Fase M/S |
-| `b{n}_dyn_on`, `_thresh`, `_range`, `_attack`, `_release`, `_sc` | | ver ROADMAP | | Fase dinámica |
+| `b{n}_sc` (sidechain externo) | | | | por decidir |
 
 Los perfiles del Intention Engine no serán parámetros de host: se guardarán
 como propiedades del estado.
 
-## Estado guardado (v3)
+## Estado guardado (v4)
 
 ```xml
-<LABQ8 labq8StateVersion="3">
+<LABQ8 labq8StateVersion="4">
+  <PARAM id="b1_attack" value="10.0"/>
   <PARAM id="b1_bypass" value="0.0"/>
+  <PARAM id="b1_dyn_on" value="0.0"/>
   <PARAM id="b1_freq" value="1000.0"/>
-  ...
-  <PARAM id="b1_type" value="0.0"/>
   ...
   <PARAM id="b8_type" value="0.0"/>
 </LABQ8>
 ```
 
-(Serializado con `copyXmlToBinary`; 40 `PARAM`.)
+(Serializado con `copyXmlToBinary`; 80 `PARAM`.)
 
 | Situación al restaurar | Resultado |
 |---|---|
-| Estado v1 (E0) | b1 se restaura; b2–b8 y los ocho tipos reciben su valor por defecto **explícito** (tipo Bell); se vuelve a guardar como v3 con 40 valores. El resultado es idéntico byte a byte en cualquier instancia (probado con estados E0 reales) |
-| Estado v2 (E1a) | Las 32 entradas se restauran; los ocho `b{n}_type` reciben Bell explícito; se vuelve a guardar como v3. Es determinista y suena idéntico bit a bit a E1a (probado con estados E1a reales) |
-| Estado v3 con parámetros ausentes | Los ausentes reciben su valor por defecto explícito |
+| Estado v1 (E0) | b1 se restaura; b2–b8, los ocho tipos y los 40 dinámicos reciben su valor por defecto **explícito** (tipo Bell, dinámica apagada); se vuelve a guardar como v4 con 80 valores. El resultado es idéntico byte a byte en cualquier instancia (probado con estados E0 reales) |
+| Estado v2 (E1a) | Las 32 entradas se restauran; tipos y dinámica reciben su valor por defecto explícito; se vuelve a guardar como v4 (probado con estados E1a reales) |
+| Estado v3 (E1b, E1b.1, E2a, E2b: mismo formato) | Las 40 entradas se restauran; los 40 dinámicos reciben su valor por defecto explícito (apagados) y la sesión suena exactamente como la ruta estática (probado con estados reales de E1b y E2b) |
+| Estado v4 con parámetros ausentes | Los ausentes reciben su valor por defecto explícito |
 | Sin `labq8StateVersion` | Se migra como si fuera v1 |
 | `PARAM` con ID desconocido | Se conserva en el árbol y no crea parámetros |
 | Corrupto, vacío o con otra raíz | Se ignora y no cambia nada |

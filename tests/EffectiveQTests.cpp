@@ -477,7 +477,7 @@ LQ_TEST ("state: genuine E1b sessions keep their stored Q; inside the limits not
             const auto stored = (float) param->getDoubleAttribute ("value");
             restored += std::abs (getParam (p, id.toRawUTF8()) - stored) <= 5.0e-7f * std::max (24.0f, std::abs (stored)) ? 1 : 0;
         }
-        LQ_CHECK (restored == params::numParameters, str (fixture, ": ", restored, " of 40 parameters restored"));
+        LQ_CHECK (restored == 40, str (fixture, ": ", restored, " of the 40 E1b parameters restored"));
 
         for (int b = 0; b < params::numBands; ++b)
         {

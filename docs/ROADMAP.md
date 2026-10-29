@@ -9,8 +9,10 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | **E1b** | Seis topologías por banda (Bell, Low/High Shelf, Low/High Cut 12 dB/oct, Notch), crossfade lineal de 20 ms entre tipos, bypass por topología, estado v3 | Cerrada (`1e8db0b`) |
 | **E1b.1** | Control de resonancias: Q efectivo máximo 1 en shelves y 2 en cortes (Q guardado intacto), barridos de respuesta, estabilidad y headroom | Cerrada (`5e889ec`) |
 | **E2a** | Prototipo DSP de una banda Bell dinámica (detector, ley de reducción, balística), sin parámetros públicos nuevos; ruta estática intacta | Cerrada (`111acab`) |
-| **E2b** | Motor dinámico de ocho bandas en `EqCore`: secciones independientes, detección sobre la señal original común, estéreo enlazado por máximo; solo DSP y pruebas, sin parámetros públicos | Entregada para revisión |
-| E2c | Parámetros públicos de dinámica (estado v4), detección estéreo no enlazada / M/S | — |
+| **E2b** | Motor dinámico de ocho bandas en `EqCore`: secciones independientes, detección sobre la señal original común, estéreo enlazado por máximo; solo DSP y pruebas, sin parámetros públicos | Cerrada (`5623dc5`) |
+| **E2c.1** | Parámetros públicos de dinámica (40 nuevos, version hint 4, índices 40–79, rangos del DSP validado) y estado v4 con migración | Entregada para revisión |
+| E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
+| E2c (resto) | Detección estéreo no enlazada / M/S | — |
 | E3 | Validación de formatos (auval, pluginval, Logic) en entorno aislado, empaquetado y firma | — |
 | E4 | M/S y colocación L/R/M/S por banda | — |
 | E5 | Analysis Engine: FFT fuera del hilo de audio (FIFO lock-free) | — |
@@ -18,9 +20,11 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | E7 | Intention Engine: perfiles como sugerencias | — |
 | E8 | Variante de mastering | — |
 
-## Pendiente tras E2b (no iniciado, sin fase asignada)
+## Pendiente tras E2c.1 (no iniciado, sin fase asignada)
 
 - Mostrar el Q efectivo en la UI definitiva (propuesta en ARCHITECTURE.md).
+- Resolver en la fase de interfaz las escalas de APPROVED_01 frente a los
+  rangos públicos (PARAMETER_SCHEMA.md).
 - Pendientes seleccionables para los cortes (`b{n}_slope`), `out_gain` y
   `master_bypass` con rampa.
 - Precalentar la ruta nueva en los crossfades (reduciría el transitorio de

@@ -111,6 +111,7 @@ if(LABQ8_BUILD_TESTS)
         tests/EffectiveQTests.cpp
         tests/DynamicTests.cpp
         tests/EqCoreDynamicTests.cpp
+        tests/ProcessorDynamicTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

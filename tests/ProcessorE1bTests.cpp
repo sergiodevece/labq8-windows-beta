@@ -112,7 +112,7 @@ LQ_TEST ("e1b processor: b1..b8_type appended after the 32 E1a parameters, hint 
 {
     LabQ8AudioProcessor p;
     const auto& all = p.getParameters();
-    LQ_CHECK (all.size() == params::numParameters && params::numParameters == 40, str ("parameter count ", all.size()));
+    LQ_CHECK (all.size() == params::numParameters && params::numParameters == 80, str ("parameter count ", all.size()));
 
     // Host indices 0..31: exactly the E1a order and hints.
     int index = 0;
@@ -283,8 +283,9 @@ LQ_TEST ("state: genuine E1a states load as eight Bells with their values, deter
         const auto a = save (fresh), b = save (used);
         LQ_CHECK (a == b, str (file, ": migrated state depends on instance history"));
         const auto migrated = juce::AudioProcessor::getXmlFromBinary (a.getData(), (int) a.getSize());
-        LQ_CHECK (migrated != nullptr && migrated->getIntAttribute (params::stateVersionProperty) == 3 && migrated->getNumChildElements() == 40,
-                  "re-saved state is v3 with 40 parameters");
+        LQ_CHECK (migrated != nullptr && migrated->getIntAttribute (params::stateVersionProperty) == params::currentStateVersion
+                  && migrated->getNumChildElements() == params::numParameters,
+                  "re-saved state is the current version with every parameter");
         bool allValues = migrated != nullptr;
         if (migrated != nullptr)
             for (auto* child : migrated->getChildIterator())

@@ -58,11 +58,22 @@ private:
         std::atomic<float>* type = nullptr;
     };
 
+    struct DynamicParameters
+    {
+        std::atomic<float>* enabled = nullptr;
+        std::atomic<float>* threshold = nullptr;
+        std::atomic<float>* range = nullptr;
+        std::atomic<float>* attack = nullptr;
+        std::atomic<float>* release = nullptr;
+    };
+
     dsp::BandSettings readBandSettings (const BandParameters& band) const noexcept;
+    static dsp::DynamicSettings readDynamicSettings (const DynamicParameters& dynamics) noexcept;
     void pushParametersToCore() noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
     std::array<BandParameters, dsp::EqCore::numBands> bandParameters;
+    std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
     dsp::EqCore eq;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)

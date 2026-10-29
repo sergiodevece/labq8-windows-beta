@@ -1,4 +1,4 @@
-# LABQ8: arquitectura (E1b, E1b.1 y motor dinámico E2a/E2b)
+# LABQ8: arquitectura (E1b, E1b.1 y motor dinámico E2a–E2c.1)
 
 ## Capas
 
@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | 1 | Plugin Host Adapter | JUCE `AudioProcessor`, buses, parámetros → ajustes DSP, estado y migración | Implementado | `src/plugin/`, `src/parameters/` |
 | 2 | EQ Core | Filtros, suavizado, crossfades de tipo, bypass, cascada | 8 bandas × 6 topologías | `src/dsp/` |
-| 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | Ocho secciones en `EqCore` (E2b), solo DSP y pruebas, sin parámetros públicos ([DYNAMICS_E2A.md](DYNAMICS_E2A.md), [DYNAMICS_E2B.md](DYNAMICS_E2B.md)) | `src/dsp/Dynamic*`, `EqCore` |
+| 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | Ocho secciones en `EqCore` (E2b), con parámetros públicos desde E2c.1 ([DYNAMICS_E2A.md](DYNAMICS_E2A.md), [DYNAMICS_E2B.md](DYNAMICS_E2B.md)) | `src/dsp/Dynamic*`, `EqCore` |
 | 4 | Analysis Engine | FFT, medición | No iniciado | — |
 | 5 | Intention Engine | Perfiles musicales, sugerencias | No iniciado | — |
 | 6 | UI Layer | Interfaz definitiva | Editor genérico de JUCE | (`GenericAudioProcessorEditor`) |
@@ -288,7 +288,14 @@ arm64 y x86_64 hay diferencias del orden de un ulp, porque clang contrae
 `a*b + c` en FMA en arm64. Todas las pruebas se ejecutan en las dos
 arquitecturas.
 
-## Motor dinámico (E2a, E2b)
+## Motor dinámico (E2a, E2b, E2c.1)
+
+**E2c.1** publica la dinámica: 40 parámetros (`b{n}_dyn_on`, `_threshold`,
+`_range`, `_attack`, `_release`), version hint 4, índices 40–79 y estado v4.
+Detalles en [DYNAMICS_E2C1.md](DYNAMICS_E2C1.md) y
+[PARAMETER_SCHEMA.md](PARAMETER_SCHEMA.md).
+
+
 
 **E2b** integra ocho `DynamicSection` en `EqCore`: una por banda, cada una con
 su propio detector y sus ajustes, y activa solo en Bells sin bypass. Detalles
@@ -396,7 +403,7 @@ actual no lo necesita).
 
 ## Pruebas
 
-98 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
+107 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
 x86_64:
 
 | Prefijo / archivo | Nº | Qué cubre |
@@ -410,6 +417,7 @@ x86_64:
 | `filter:` (E1b) | 5 | A, B, C, D: los seis tipos frente al prototipo analógico; significado de f0, ganancia y Q; límites y Nyquist; senoides medidas; tabla de sobreoscilación |
 | `band:`, `crossfade:`, `type changes:`, `multi:` (E1b) | 15 | E–M: Bell = BellBand; transparencia de Bell/shelves; Cut y Notch activos a 0 dB; bypass por tipo; estructura y convexidad del crossfade; duración; política; clicks frente a cambio abrupto; cancelación de fase; cambios rápidos; bloques; NaN; estéreo; cascada mixta; automatización por tipo |
 | `e1b processor:`, `state:`, `rt:`, `perf:` (E1b) | 8 | Layout y hints; procesador = núcleo con tipos; automatización de tipo independiente del bloque; ganancia conservada; estados E1a reales; sonido idéntico a E1a; round-trip v3 y tipos inválidos; sin asignaciones con cambios de tipo; CPU del peor caso |
+| `e2c ...:` (E2c.1, [ProcessorDynamicTests.cpp](../tests/ProcessorDynamicTests.cpp)) | 9 | 80 parámetros: orden, IDs, hints y valores por defecto; round-trip v4 (y deriva de guardar/cargar); migración de todos los estados anteriores con dinámica apagada y sonido estático; ocho bandas automatizadas por separado = núcleo; independencia del bloque del host; enable durante la reproducción; solo Bell; transparencia; sin asignaciones ni NaN; CPU del procesador |
 | `dyn8:` (E2b, [EqCoreDynamicTests.cpp](../tests/EqCoreDynamicTests.cpp)) | 11 | Ocho Bells dinámicas, detectores independientes sobre la entrada común, banda dinámica entre estáticas, automatización y bloques, attack/release por banda, estéreo enlazado y panorámica, cambios de tipo, enable/bypass, extremos, varias bandas modulando, CPU |
 | `dyn ...:` (E2a, [DynamicTests.cpp](../tests/DynamicTests.cpp)) | 12 | Detector (precisión en f0, rechazo, ruido), ley y rango, ataque/release, transitorios, reposo y dinámica apagada = banda estática bit a bit, señales > 0 dBFS y NaN/Inf, automatización rápida, bloques, clicks de modulación y estabilidad variable en el tiempo, enlace estéreo, CPU |
 | `q limit:`, `state:` (E1b.1, [EffectiveQTests.cpp](../tests/EffectiveQTests.cpp)) | 7 | Función de Q efectivo por tipo; sobreoscilación y resonancia con Q guardado 18 en extremos de f0 y fs; headroom (L1 y entrada de peor caso); automatización por encima del límite inaudible y cruce del límite = rampa normal (bit a bit); Q efectivo por ruta en cambios de tipo; procesador y estado conservan el Q guardado; estados E1b reales |

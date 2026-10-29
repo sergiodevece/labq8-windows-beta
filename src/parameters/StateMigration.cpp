@@ -16,8 +16,9 @@ int migrateState (juce::ValueTree& tree, const juce::AudioProcessorValueTreeStat
     const int foundVersion = tree.getProperty (stateVersionProperty, 0);
 
     // Version-specific transformations (renames, range changes) go here,
-    // keyed on foundVersion. 1 -> 2 and 2 -> 3 only add parameters, handled
-    // below: b{n}_type defaults to Bell, which is exactly what v1/v2 played.
+    // keyed on foundVersion. 1 -> 2, 2 -> 3 and 3 -> 4 only add parameters,
+    // handled below: b{n}_type defaults to Bell and b{n}_dyn_on to off, which
+    // is exactly what v1..v3 played.
 
     for (auto* p : state.processor.getParameters())
     {

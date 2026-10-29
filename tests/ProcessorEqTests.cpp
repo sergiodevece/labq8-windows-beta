@@ -80,7 +80,7 @@ LQ_TEST ("processor: 8-band layout keeps E0 IDs and adds b2..b8 with version hin
 {
     LabQ8AudioProcessor p;
     const auto& all = p.getParameters();
-    LQ_CHECK (all.size() == 40, str ("parameter count ", all.size())); // 32 in E1a; E1b appends 8 types
+    LQ_CHECK (all.size() == 80, str ("parameter count ", all.size())); // 32 in E1a; E1b appends 8 types, E2c.1 40 dynamics
 
     // E0 parameters keep their IDs, order (host indices 0..3) and hint.
     const char* e0[] = { "b1_freq", "b1_gain", "b1_q", "b1_bypass" };

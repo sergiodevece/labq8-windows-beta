@@ -1,0 +1,44 @@
+// Writes a genuine E2b (5623dc5) plugin state to disk, for the E2c.1 v3 -> v4
+// migration fixtures. E1b.1, E2a and E2b save the same v3 format as E1b.
+#include "plugin/PluginProcessor.h"
+#include "parameters/ParameterIDs.h"
+
+static void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float v)
+{
+    auto* param = p.getValueTreeState().getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (v));
+}
+
+static void dump (labq8::LabQ8AudioProcessor& p, const juce::File& dir, const char* name)
+{
+    juce::MemoryBlock block;
+    p.getStateInformation (block);
+    dir.getChildFile (juce::String (name) + ".bin").replaceWithData (block.getData(), block.getSize());
+    auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+    dir.getChildFile (juce::String (name) + ".xml").replaceWithText (xml->toString());
+}
+
+int main (int, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::File dir { juce::String { argv[1] } };
+    dir.createDirectory();
+
+    // Every band distinct, all six types, band 6 bypassed.
+    labq8::LabQ8AudioProcessor p;
+    const int types[]    = { 0, 1, 0, 3, 0, 5, 2, 4 };
+    const float freqs[]  = { 900.0f, 70.0f, 180.0f, 30.0f, 3300.0f, 6000.0f, 9500.0f, 17000.0f };
+    const float gains[]  = { -5.5f, 3.0f, 4.25f, 0.0f, -8.0f, 0.0f, 2.5f, 0.0f };
+    const float qs[]     = { 3.0f, 0.8f, 1.6f, 1.5f, 6.0f, 10.0f, 0.7f, 0.9f };
+    for (int b = 0; b < 8; ++b)
+    {
+        const auto& ids = labq8::params::bandIDs[(size_t) b];
+        setParam (p, ids.type, (float) types[b]);
+        setParam (p, ids.frequency, freqs[b]);
+        setParam (p, ids.gain, gains[b]);
+        setParam (p, ids.q, qs[b]);
+        setParam (p, ids.bypass, b == 5 ? 1.0f : 0.0f);
+    }
+    dump (p, dir, "e2b_custom");
+    return 0;
+}

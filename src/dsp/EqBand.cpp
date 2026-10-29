@@ -6,45 +6,6 @@
 namespace labq8::dsp
 {
 //==============================================================================
-// Same ramp as BellBand (kept private there: BellBand is the frozen E0 reference).
-void EqBand::LinearRamp::snap (double value) noexcept
-{
-    current = target = value;
-    step = 0.0;
-    remainingTicks = 0;
-}
-
-void EqBand::LinearRamp::setTarget (double value, int ticks) noexcept
-{
-    if (value == target)
-        return;
-
-    target = value;
-
-    if (ticks <= 0)
-    {
-        snap (value);
-        return;
-    }
-
-    step = (target - current) / ticks;
-    remainingTicks = ticks;
-}
-
-bool EqBand::LinearRamp::tick() noexcept
-{
-    if (remainingTicks <= 0)
-        return false;
-
-    if (--remainingTicks == 0)
-        current = target;
-    else
-        current += step;
-
-    return true;
-}
-
-//==============================================================================
 EqBand::EqBand() noexcept
 {
     prepare (sampleRate, maxChannels);
@@ -76,6 +37,21 @@ std::optional<FilterType> EqBand::getFadingFilter() const noexcept
 
 double EqBand::getCurrentFrequencyHz() const noexcept { return std::exp2 (paths[(size_t) active].log2Frequency.current); }
 double EqBand::getCurrentQ() const noexcept { return std::exp2 (paths[(size_t) active].log2Q.current); }
+
+void EqBand::setGainModulationDb (double modulationDb) noexcept
+{
+    if (! std::isfinite (modulationDb))
+        modulationDb = 0.0;
+
+    gainModulationDb = modulationDb;
+
+    // A modulated gain topology is no longer an identity; it is picked up at
+    // the next control tick (tickPath).
+    if (modulationDb != 0.0)
+        for (auto& path : paths)
+            if (isGainKind (path.kind))
+                path.idle = false;
+}
 
 bool EqBand::isIdle() const noexcept
 {
@@ -135,10 +111,11 @@ void EqBand::applyTargets (Path& path, bool snap) noexcept
 void EqBand::initialisePath (Path& path, int kind) noexcept
 {
     path.kind = kind;
+    path.interpolating = false;
     applyTargets (path, true);
     path.states.fill ({});
     updateCoefficients (path);
-    path.idle = kind == dryKind || (isGainKind (kind) && path.gainDb.current == 0.0);
+    path.idle = kind == dryKind || (isGainKind (kind) && path.gainDb.current == 0.0 && gainModulationDb == 0.0);
 }
 
 void EqBand::updateCoefficients (Path& path) const noexcept
@@ -149,8 +126,14 @@ void EqBand::updateCoefficients (Path& path) const noexcept
         return;
     }
 
+    // Gain modulation (E2a) only acts on gain topologies. With no modulation
+    // the gain passed to the designer is exactly the E1b.1 one.
+    const auto modulation = isGainKind (path.kind) ? gainModulationDb : 0.0;
+    path.appliedModulationDb = modulation;
+
     path.coefficients = designFilter (filterTypeFromIndex (path.kind), sampleRate,
-                                      std::exp2 (path.log2Frequency.current), path.gainDb.current,
+                                      std::exp2 (path.log2Frequency.current),
+                                      modulation == 0.0 ? path.gainDb.current : path.gainDb.current + modulation,
                                       std::exp2 (path.log2Q.current));
 }
 
@@ -164,8 +147,24 @@ void EqBand::tickPath (Path& path) noexcept
     if (path.kind == dryKind)
         return;
 
-    if (frequencyMoving || gainMoving || qMoving)
+    const bool modulationMoving = isGainKind (path.kind) && path.appliedModulationDb != gainModulationDb;
+
+    path.interpolating = false;
+
+    if (frequencyMoving || gainMoving || qMoving || modulationMoving)
+    {
+        const auto previous = path.coefficients;
         updateCoefficients (path);
+
+        // A modulation change is spread over this tick, sample by sample
+        // (see interpolatedCoefficients). Without modulation changes the
+        // coefficients still switch at the tick, exactly as in E1b.1.
+        if (modulationMoving && ! path.idle)
+        {
+            path.interpolationStart = previous;
+            path.interpolating = true;
+        }
+    }
 
     bool residual = false;
 
@@ -181,7 +180,8 @@ void EqBand::tickPath (Path& path) noexcept
     }
 
     // Only gain topologies are neutral at 0 dB; cuts and notch never go idle.
-    if (isGainKind (path.kind) && ! path.idle && path.gainDb.isSettled() && path.gainDb.current == 0.0 && ! residual)
+    if (isGainKind (path.kind) && ! path.idle && path.gainDb.isSettled() && path.gainDb.current == 0.0
+        && gainModulationDb == 0.0 && ! path.interpolating && ! residual)
     {
         path.states.fill ({});
         path.idle = true;
@@ -278,12 +278,50 @@ void EqBand::processSegment (const Path& path, float* data, int numSamples, Chan
     state.s2 = s2;
 }
 
-double EqBand::step (const Path& path, double x, ChannelState& state) noexcept
+BiquadCoefficients EqBand::interpolatedCoefficients (const Path& path, int indexInTick) noexcept
+{
+    // Linear interpolation from the coefficients in force at the end of the
+    // previous tick to this tick's design, reached exactly on the last sample.
+    // The stability triangle is convex, so every intermediate set is stable.
+    if (! path.interpolating || indexInTick >= updateIntervalSamples - 1)
+        return path.coefficients;
+
+    const auto w = static_cast<double> (indexInTick + 1) / updateIntervalSamples;
+    const auto& a = path.interpolationStart;
+    const auto& b = path.coefficients;
+    return { a.b0 + w * (b.b0 - a.b0), a.b1 + w * (b.b1 - a.b1), a.b2 + w * (b.b2 - a.b2),
+             a.a1 + w * (b.a1 - a.a1), a.a2 + w * (b.a2 - a.a2) };
+}
+
+void EqBand::processSegmentInterpolated (const Path& path, float* data, int numSamples, int firstIndex, ChannelState& state) noexcept
+{
+    auto s1 = state.s1;
+    auto s2 = state.s2;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        double x = data[i];
+
+        if (! std::isfinite (x))
+            x = 0.0;
+
+        const auto c = interpolatedCoefficients (path, firstIndex + i);
+        const auto y = c.b0 * x + s1;
+        s1 = c.b1 * x - c.a1 * y + s2;
+        s2 = c.b2 * x - c.a2 * y;
+        data[i] = static_cast<float> (y);
+    }
+
+    state.s1 = s1;
+    state.s2 = s2;
+}
+
+double EqBand::step (const Path& path, double x, ChannelState& state, int indexInTick) noexcept
 {
     if (path.kind == dryKind || path.idle)
         return x;
 
-    const auto& c = path.coefficients;
+    const auto c = path.interpolating ? interpolatedCoefficients (path, indexInTick) : path.coefficients;
     const auto y = c.b0 * x + state.s1;
     state.s1 = c.b1 * x - c.a1 * y + state.s2;
     state.s2 = c.b2 * x - c.a2 * y;
@@ -308,6 +346,7 @@ void EqBand::process (float* const* channels, int numChannels, int numSamples) n
         }
 
         auto n = std::min (samplesUntilTick, numSamples - position);
+        const auto indexInTick = updateIntervalSamples - samplesUntilTick;
 
         if (fading)
         {
@@ -331,8 +370,8 @@ void EqBand::process (float* const* channels, int numChannels, int numSamples) n
                     if (! std::isfinite (x))
                         x = 0.0;
 
-                    const auto yIn = step (incoming, x, inState);
-                    const auto yOut = step (outgoing, x, outState);
+                    const auto yIn = step (incoming, x, inState, indexInTick + i);
+                    const auto yOut = step (outgoing, x, outState, indexInTick + i);
                     const auto w = static_cast<double> (fadePosition + i + 1) / fadeLength;
                     data[i] = static_cast<float> (yOut + w * (yIn - yOut));
                 }
@@ -350,7 +389,13 @@ void EqBand::process (float* const* channels, int numChannels, int numSamples) n
             if (path.kind != dryKind && ! path.idle)
                 for (int ch = 0; ch < activeChannels; ++ch)
                     if (channels[ch] != nullptr)
-                        processSegment (path, channels[ch] + position, n, paths[(size_t) active].states[(size_t) ch]);
+                    {
+                        auto& state = paths[(size_t) active].states[(size_t) ch];
+                        if (path.interpolating)
+                            processSegmentInterpolated (path, channels[ch] + position, n, indexInTick, state);
+                        else
+                            processSegment (path, channels[ch] + position, n, state);
+                    }
         }
 
         samplesUntilTick -= n;

@@ -4,13 +4,15 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: E1b.1** (sobre E1b, `1e8db0b`). Ocho bandas independientes en
+**Fase actual: E2a** (prototipo dinámico sobre E1b.1, `5e889ec`). Ocho bandas independientes en
 cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
 Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
 cambiar de tipo, bypass por banda, estado v3 compatible con sesiones E0, E1a
-y E1b, editor genérico de desarrollo y 75 pruebas que se ejecutan sin DAW.
+y E1b, editor genérico de desarrollo y 87 pruebas que se ejecutan sin DAW.
 E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
-guardado.
+guardado. E2a añade un prototipo DSP de Bell dinámica (detector, ley de
+reducción, balística) disponible solo para pruebas: el plugin no tiene
+parámetros nuevos y su sonido no cambia.
 
 ## Requisitos
 
@@ -54,7 +56,8 @@ ejecuta en Release; en Debug aparece como SKIP:
 Banco de CPU (en Release; no forma parte de ctest):
 
 ```bash
-./build/release-universal/labq8_bench
+./build/release-universal/labq8_bench          # 8 bandas (E1a/E1b)
+./build/release-universal/labq8_bench --e2a    # una banda dinámica (E2a)
 ```
 
 Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
@@ -71,10 +74,11 @@ Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
 | `build/debug`, `build/release-universal` | E0 (`dfcf25b`) | Referencia E0. No se recompila |
 | `build/e1a-debug`, `build/e1a-release-universal` | E1a (`9095401`) | Referencia E1a. No se recompila |
 | `build/e1b-debug`, `build/e1b-release-universal` | E1b (`1e8db0b`) | Referencia E1b. No se recompila |
-| `build/e1b1-debug`, `build/e1b1-release-universal` | E1b.1 (árbol de trabajo) | Builds de E1b.1 |
+| `build/e1b1-debug`, `build/e1b1-release-universal` | E1b.1 (`5e889ec`) | Referencia E1b.1. No se recompila |
+| `build/e2a-debug`, `build/e2a-release-universal` | E2a (árbol de trabajo) | Builds de E2a |
 
 Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
-tras E1b, y los de E0, E1a y E1b tras E1b.1.
+tras E1b, los de E0, E1a y E1b tras E1b.1, y los de E0 a E1b.1 tras E2a.
 
 Comprobación de compatibilidad de audio con versiones anteriores (compila la
 versión base desde git en `build/compat/`):
@@ -108,5 +112,6 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 - [docs/COMPATIBILITY_E0_E1A.md](docs/COMPATIBILITY_E0_E1A.md): compatibilidad de audio de sesiones E0 en E1a.
 - [docs/COMPATIBILITY_E1B.md](docs/COMPATIBILITY_E1B.md): compatibilidad de audio de sesiones E0 y E1a en E1b (`tests/compat/run_compat.sh`).
 - [docs/COMPATIBILITY_E1B1.md](docs/COMPATIBILITY_E1B1.md): compatibilidad de audio de sesiones E0, E1a y E1b con el Q efectivo de E1b.1.
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E1b.1.
+- [docs/DYNAMICS_E2A.md](docs/DYNAMICS_E2A.md): prototipo de Bell dinámica (detector, ley, balística, medidas, plan para ocho bandas y estéreo).
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E2a.
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

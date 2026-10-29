@@ -45,6 +45,12 @@ BiquadCoefficients designLowCut (double sampleRate, double frequencyHz, double q
 BiquadCoefficients designHighCut (double sampleRate, double frequencyHz, double q) noexcept;
 BiquadCoefficients designNotch (double sampleRate, double frequencyHz, double q) noexcept;
 
+// Detection band-pass for the dynamic engine (E2a): RBJ band-pass with
+// constant 0 dB peak gain, bilinear of H(s) = (s/Q) / (s^2 + s/Q + 1)
+// prewarped at f0, so |H(f0)| == 1 for every f0 and Q. Not an audio
+// topology (it is not in FilterType). Inputs are clamped like designBell.
+BiquadCoefficients designBandPass (double sampleRate, double frequencyHz, double q) noexcept;
+
 // Dispatches to the design for `type` (gainDb ignored where it does not apply).
 BiquadCoefficients designFilter (FilterType type, double sampleRate, double frequencyHz, double gainDb, double q) noexcept;
 

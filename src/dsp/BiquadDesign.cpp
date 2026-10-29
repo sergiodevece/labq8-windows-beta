@@ -154,6 +154,14 @@ BiquadCoefficients designNotch (double sampleRate, double frequencyHz, double q)
                       1.0 + d.alpha, -2.0 * d.cosW0, 1.0 - d.alpha);
 }
 
+BiquadCoefficients designBandPass (double sampleRate, double frequencyHz, double q) noexcept
+{
+    const auto d = prepareDesign (sampleRate, frequencyHz, 0.0, q);
+
+    return normalise (d.alpha, 0.0, -d.alpha,
+                      1.0 + d.alpha, -2.0 * d.cosW0, 1.0 - d.alpha);
+}
+
 BiquadCoefficients designFilter (FilterType type, double sampleRate, double frequencyHz, double gainDb, double q) noexcept
 {
     switch (type)

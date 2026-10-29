@@ -3,6 +3,7 @@
 #include "dsp/BellBand.h"
 #include "dsp/BiquadDesign.h"
 #include "dsp/FilterTypes.h"
+#include "dsp/LinearRamp.h"
 
 #include <array>
 #include <optional>
@@ -36,6 +37,16 @@ struct BandSettings
 // range. The limit applies to the target, so a change of effective Q (stored
 // Q crossing the limit, or a type change) is smoothed like any Q change, and
 // moving the stored Q above the limit changes nothing at all.
+//
+// Gain modulation (E2a). setGainModulationDb() adds a dB offset to the gain
+// of gain topologies (Bell, shelves) from the next control tick. The caller
+// (the dynamic engine) supplies an already smoothed control signal on the
+// tick grid; a change is spread over the tick by interpolating the biquad
+// coefficients linearly, sample by sample, from the previous design to the
+// new one (no 16-sample staircase). The total gain is still clamped to
+// [-24, +24] dB by the designer. With modulation 0 (the default, and the
+// only value the plugin uses) nothing is interpolated and the band is
+// exactly the E1b.1 band.
 //
 // Type changes. Changing the path kind starts a linear crossfade of
 // crossfadeTimeSeconds (rounded to whole samples) from the old path to a new
@@ -76,6 +87,10 @@ public:
     void setTargets (const BandSettings& settings) noexcept;
     void setTargets (const BellSettings& s) noexcept { setTargets (BandSettings { s.frequencyHz, s.gainDb, s.q, s.bypassed, FilterType::bell }); }
 
+    // Real-time safe. Takes effect at the next control tick; not reset by prepare().
+    void setGainModulationDb (double modulationDb) noexcept;
+    double getGainModulationDb() const noexcept { return gainModulationDb; }
+
     // Real-time safe, in place.
     void process (float* const* channels, int numChannels, int numSamples) noexcept;
 
@@ -103,17 +118,6 @@ public:
 private:
     static constexpr int dryKind = -1; // path kinds: 0..5 = FilterType, -1 = dry
 
-    struct LinearRamp
-    {
-        double current = 0.0, target = 0.0, step = 0.0;
-        int remainingTicks = 0;
-
-        void snap (double value) noexcept;
-        void setTarget (double value, int ticks) noexcept;
-        bool tick() noexcept;
-        bool isSettled() const noexcept { return remainingTicks == 0; }
-    };
-
     struct ChannelState
     {
         double s1 = 0.0, s2 = 0.0;
@@ -125,6 +129,9 @@ private:
         LinearRamp log2Frequency, gainDb, log2Q;
         BiquadCoefficients coefficients;
         std::array<ChannelState, maxChannels> states {};
+        double appliedModulationDb = 0.0;
+        BiquadCoefficients interpolationStart;
+        bool interpolating = false; // this tick spreads a modulation change over its samples
         bool idle = true;
     };
 
@@ -140,7 +147,9 @@ private:
     void finishCrossfade() noexcept;
 
     static void processSegment (const Path& path, float* data, int numSamples, ChannelState& state) noexcept;
-    static double step (const Path& path, double x, ChannelState& state) noexcept;
+    static void processSegmentInterpolated (const Path& path, float* data, int numSamples, int firstIndex, ChannelState& state) noexcept;
+    static BiquadCoefficients interpolatedCoefficients (const Path& path, int indexInTick) noexcept;
+    static double step (const Path& path, double x, ChannelState& state, int indexInTick) noexcept;
 
     BandSettings requested;
     std::array<Path, 2> paths {};
@@ -148,6 +157,7 @@ private:
     bool fading = false;
     int fadePosition = 0, fadeLength = 1;
     std::optional<int> pendingKind;
+    double gainModulationDb = 0.0;
 
     double sampleRate = 44100.0;
     int numPreparedChannels = maxChannels;

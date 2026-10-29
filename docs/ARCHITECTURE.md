@@ -1,4 +1,4 @@
-# LABQ8: arquitectura (E1b, con E1b.1)
+# LABQ8: arquitectura (E1b, E1b.1 y prototipo dinámico E2a)
 
 ## Capas
 
@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | 1 | Plugin Host Adapter | JUCE `AudioProcessor`, buses, parámetros → ajustes DSP, estado y migración | Implementado | `src/plugin/`, `src/parameters/` |
 | 2 | EQ Core | Filtros, suavizado, crossfades de tipo, bypass, cascada | 8 bandas × 6 topologías | `src/dsp/` |
-| 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | No iniciado | — |
+| 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | Prototipo E2a de una Bell, solo DSP y pruebas ([DYNAMICS_E2A.md](DYNAMICS_E2A.md)) | `src/dsp/Dynamic*` |
 | 4 | Analysis Engine | FFT, medición | No iniciado | — |
 | 5 | Intention Engine | Perfiles musicales, sugerencias | No iniciado | — |
 | 6 | UI Layer | Interfaz definitiva | Editor genérico de JUCE | (`GenericAudioProcessorEditor`) |
@@ -288,6 +288,23 @@ arm64 y x86_64 hay diferencias del orden de un ulp, porque clang contrae
 `a*b + c` en FMA en arm64. Todas las pruebas se ejecutan en las dos
 arquitecturas.
 
+## Motor dinámico (prototipo E2a)
+
+Diseño completo, medidas y plan para E2b en [DYNAMICS_E2A.md](DYNAMICS_E2A.md).
+
+- **Qué hay:** `DynamicBellBand` = `EqBand` (Bell) + `DynamicDetector` (dos paso
+  banda RBJ en f0/Q y RMS con ventana de 0,5/f0, en dBFS de seno) + ley con
+  rodilla de 6 dB, pendiente 1 y tope en Range + balística de ataque y release.
+- **Sin parámetros públicos:** el plugin no usa el motor todavía.
+- **Cambio en `EqBand`:** `setGainModulationDb()` desplaza la ganancia de las
+  topologías con ganancia. Cuando la modulación cambia, los coeficientes se
+  interpolan linealmente muestra a muestra dentro del tick.
+- **Ruta estática intacta:** con modulación 0 (siempre en el plugin) no se
+  interpola nada y `EqBand` es el de E1b.1 bit a bit. Lo verifica el arnés de
+  compatibilidad estricto frente a `5e889ec`.
+- **Refactor sin cambios de comportamiento:** `LinearRamp` sale de `EqBand` a
+  su propio archivo para compartirla. Es la misma aritmética.
+
 ## Estado y migración
 
 | Versión | Fase | Contenido |
@@ -366,7 +383,7 @@ actual no lo necesita).
 
 ## Pruebas
 
-75 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
+87 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
 x86_64:
 
 | Prefijo / archivo | Nº | Qué cubre |
@@ -380,6 +397,7 @@ x86_64:
 | `filter:` (E1b) | 5 | A, B, C, D: los seis tipos frente al prototipo analógico; significado de f0, ganancia y Q; límites y Nyquist; senoides medidas; tabla de sobreoscilación |
 | `band:`, `crossfade:`, `type changes:`, `multi:` (E1b) | 15 | E–M: Bell = BellBand; transparencia de Bell/shelves; Cut y Notch activos a 0 dB; bypass por tipo; estructura y convexidad del crossfade; duración; política; clicks frente a cambio abrupto; cancelación de fase; cambios rápidos; bloques; NaN; estéreo; cascada mixta; automatización por tipo |
 | `e1b processor:`, `state:`, `rt:`, `perf:` (E1b) | 8 | Layout y hints; procesador = núcleo con tipos; automatización de tipo independiente del bloque; ganancia conservada; estados E1a reales; sonido idéntico a E1a; round-trip v3 y tipos inválidos; sin asignaciones con cambios de tipo; CPU del peor caso |
+| `dyn ...:` (E2a, [DynamicTests.cpp](../tests/DynamicTests.cpp)) | 12 | Detector (precisión en f0, rechazo, ruido), ley y rango, ataque/release, transitorios, reposo y dinámica apagada = banda estática bit a bit, señales > 0 dBFS y NaN/Inf, automatización rápida, bloques, clicks de modulación y estabilidad variable en el tiempo, enlace estéreo, CPU |
 | `q limit:`, `state:` (E1b.1, [EffectiveQTests.cpp](../tests/EffectiveQTests.cpp)) | 7 | Función de Q efectivo por tipo; sobreoscilación y resonancia con Q guardado 18 en extremos de f0 y fs; headroom (L1 y entrada de peor caso); automatización por encima del límite inaudible y cruce del límite = rampa normal (bit a bit); Q efectivo por ruta en cambios de tipo; procesador y estado conservan el Q guardado; estados E1b reales |
 
 En E1b.1 cambian dos pruebas E1b: "measured sine response" y "automation

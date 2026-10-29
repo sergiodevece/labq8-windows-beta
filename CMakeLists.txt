@@ -33,7 +33,9 @@ add_library(labq8_dsp STATIC
     src/dsp/BiquadDesign.cpp
     src/dsp/BellBand.cpp
     src/dsp/EqBand.cpp
-    src/dsp/EqCore.cpp)
+    src/dsp/EqCore.cpp
+    src/dsp/DynamicDetector.cpp
+    src/dsp/DynamicBellBand.cpp)
 
 target_include_directories(labq8_dsp PUBLIC src)
 target_compile_features(labq8_dsp PUBLIC cxx_std_20)
@@ -106,6 +108,7 @@ if(LABQ8_BUILD_TESTS)
         tests/EqBandTests.cpp
         tests/ProcessorE1bTests.cpp
         tests/EffectiveQTests.cpp
+        tests/DynamicTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

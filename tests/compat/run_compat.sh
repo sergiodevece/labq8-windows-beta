@@ -7,7 +7,8 @@
 #   tests/compat/run_compat.sh e0    # E0  (dfcf25b): differences allowed only at nominal 0 dB
 #   tests/compat/run_compat.sh e1a   # E1a (9095401): strict, any difference fails
 #   tests/compat/run_compat.sh e1b   # E1b (1e8db0b): strict except where a shelf/cut is above its Q limit (E1b.1)
-#   tests/compat/run_compat.sh       # all three
+#   tests/compat/run_compat.sh e1b1  # E1b.1 (5e889ec): strict, any difference fails
+#   tests/compat/run_compat.sh       # all four
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -45,7 +46,8 @@ case "${1:-all}" in
     e0)  run_base e0 dfcf25b "" ;;
     e1a) run_base e1a 9095401 --strict ;;
     e1b) run_base e1b 1e8db0b "--strict --qlimit" ;;
-    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit" ;;
-    *)   echo "usage: $0 [e0|e1a|e1b|all]"; exit 2 ;;
+    e1b1) run_base e1b1 5e889ec --strict ;;
+    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict ;;
+    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|all]"; exit 2 ;;
 esac
 exit $status

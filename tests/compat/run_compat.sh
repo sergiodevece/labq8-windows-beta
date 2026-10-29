@@ -1,35 +1,49 @@
 #!/bin/sh
-# E0 <-> E1a audio compatibility check.
-# Builds the E0 plugin code (exported from commit dfcf25b) and the current
-# code into build/compat (git-ignored), renders every E0 session through both,
-# and compares them sample by sample on each architecture.
+# Audio compatibility check: sessions of an older version, rendered by that
+# version and by the current sources, compared sample by sample on arm64 and
+# x86_64. Everything goes to build/compat/<base>/ (git-ignored).
 #
-# Usage: tests/compat/run_compat.sh            (from the repository root)
+# Usage (from the repository root):
+#   tests/compat/run_compat.sh e0    # E0  (dfcf25b): differences allowed only at nominal 0 dB
+#   tests/compat/run_compat.sh e1a   # E1a (9095401): strict, any difference fails
+#   tests/compat/run_compat.sh       # both
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-WORK="$ROOT/build/compat"
-E0_COMMIT=dfcf25b
 
-rm -rf "$WORK/e0src" "$WORK/out"
-mkdir -p "$WORK/e0src" "$WORK/out"
-git -C "$ROOT" archive "$E0_COMMIT" src | tar -x -C "$WORK/e0src"
+run_base() {
+    NAME=$1 COMMIT=$2 STRICT=$3
+    WORK="$ROOT/build/compat/$NAME"
+    rm -rf "$WORK/src" "$WORK/out"
+    mkdir -p "$WORK/src" "$WORK/out"
+    git -C "$ROOT" archive "$COMMIT" src | tar -x -C "$WORK/src"
 
-cmake -S "$ROOT/tests/compat" -B "$WORK/cmake" -G "Unix Makefiles" \
-      -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
-      -DE0_SRC_DIR="$WORK/e0src/src" > /dev/null
-cmake --build "$WORK/cmake" -j8 > /dev/null
+    cmake -S "$ROOT/tests/compat" -B "$WORK/cmake" -G "Unix Makefiles" \
+          -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" \
+          -DBASE_SRC_DIR="$WORK/src/src" > /dev/null
+    cmake --build "$WORK/cmake" -j8 > /dev/null
 
-E0="$WORK/cmake/compat_e0_artefacts/Release/compat_e0"
-E1A="$WORK/cmake/compat_e1a_artefacts/Release/compat_e1a"
+    BASE="$WORK/cmake/compat_base_artefacts/Release/compat_base"
+    NEW="$WORK/cmake/compat_new_artefacts/Release/compat_new"
+
+    for ARCH in arm64 x86_64; do
+        OUT="$WORK/out/$ARCH"
+        arch -$ARCH "$BASE" render "$OUT/base" "$OUT/base" "$ROOT/tests/fixtures" > /dev/null
+        arch -$ARCH "$NEW" render "$OUT/base" "$OUT/new" > /dev/null
+        echo ""
+        echo "=== $ARCH: $NAME ($COMMIT) sessions, $NAME vs current; 12 configs per case (44.1/48/96 kHz x mono/stereo x 64/512 blocks), 2 s each"
+        if ! arch -$ARCH "$NEW" compare "$OUT/base" "$OUT/new" $STRICT > "$OUT/report.txt"; then
+            status=1
+        fi
+        grep -v "^JUCE v" "$OUT/report.txt"
+    done
+}
 
 status=0
-for ARCH in arm64 x86_64; do
-    OUT="$WORK/out/$ARCH"
-    arch -$ARCH "$E0" render "$OUT/e0" "$OUT/e0" "$ROOT/tests/fixtures"
-    arch -$ARCH "$E1A" render "$OUT/e0" "$OUT/e1a"
-    echo ""
-    echo "=== $ARCH: E0 ($E0_COMMIT) vs E1a, 12 configs per case (44.1/48/96 kHz x mono/stereo x 64/512 blocks), 2 s each"
-    arch -$ARCH "$E1A" compare "$OUT/e0" "$OUT/e1a" || status=1
-done
+case "${1:-all}" in
+    e0)  run_base e0 dfcf25b "" ;;
+    e1a) run_base e1a 9095401 --strict ;;
+    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict ;;
+    *)   echo "usage: $0 [e0|e1a|all]"; exit 2 ;;
+esac
 exit $status

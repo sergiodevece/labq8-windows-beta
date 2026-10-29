@@ -1,0 +1,55 @@
+// Writes genuine E1a (9095401) plugin states to disk, for E1b migration fixtures.
+#include "plugin/PluginProcessor.h"
+#include "parameters/ParameterIDs.h"
+
+static void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float v)
+{
+    auto* param = p.getValueTreeState().getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (v));
+}
+
+static void dump (labq8::LabQ8AudioProcessor& p, const juce::File& dir, const char* name)
+{
+    juce::MemoryBlock block;
+    p.getStateInformation (block);
+    dir.getChildFile (juce::String (name) + ".bin").replaceWithData (block.getData(), block.getSize());
+    auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+    dir.getChildFile (juce::String (name) + ".xml").replaceWithText (xml->toString());
+}
+
+int main (int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::File dir { juce::String { argv[1] } };
+    const juce::File e0Custom { juce::String { argv[2] } };
+    dir.createDirectory();
+
+    { labq8::LabQ8AudioProcessor p; dump (p, dir, "e1a_default"); }
+
+    {
+        // Every band distinct; bands 3 and 7 bypassed.
+        labq8::LabQ8AudioProcessor p;
+        const float freqs[] = { 3150.0f, 45.0f, 120.0f, 300.0f, 2200.0f, 4700.0f, 9000.0f, 15000.0f };
+        const float gains[] = { -7.25f, 4.0f, -3.5f, 2.0f, -6.0f, 5.5f, 9.0f, -12.0f };
+        const float qs[]    = { 4.5f, 0.7f, 1.4f, 2.0f, 3.0f, 0.5f, 6.0f, 1.0f };
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto& ids = labq8::params::bandIDs[(size_t) b];
+            setParam (p, ids.frequency, freqs[b]);
+            setParam (p, ids.gain, gains[b]);
+            setParam (p, ids.q, qs[b]);
+            setParam (p, ids.bypass, (b == 2 || b == 6) ? 1.0f : 0.0f);
+        }
+        dump (p, dir, "e1a_custom");
+    }
+
+    {
+        // An E0 session opened in E1a and saved again (migrated v1 -> v2).
+        labq8::LabQ8AudioProcessor p;
+        juce::MemoryBlock e0;
+        e0Custom.loadFileAsData (e0);
+        p.setStateInformation (e0.getData(), (int) e0.getSize());
+        dump (p, dir, "e1a_from_e0_custom");
+    }
+    return 0;
+}

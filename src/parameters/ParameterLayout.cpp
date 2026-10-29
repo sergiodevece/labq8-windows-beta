@@ -1,6 +1,7 @@
 #include "parameters/ParameterLayout.h"
 
 #include "dsp/BandLimits.h"
+#include "dsp/FilterTypes.h"
 #include "parameters/ParameterIDs.h"
 
 #include <cmath>
@@ -90,6 +91,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
             prefix + "Bypass",
             false));
     }
+
+    // E1b: one type per band, appended after all E0/E1a parameters.
+    static_assert (filterTypeNames.size() == dsp::numFilterTypes);
+    juce::StringArray typeNames;
+    for (const auto* name : filterTypeNames)
+        typeNames.add (name);
+
+    for (int band = 0; band < numBands; ++band)
+        layout.add (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { bandIDs[(size_t) band].type, versionHintE1b },
+            "Band " + juce::String (band + 1) + " Type",
+            typeNames,
+            static_cast<int> (dsp::FilterType::bell)));
 
     return layout;
 }

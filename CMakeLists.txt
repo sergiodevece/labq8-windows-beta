@@ -32,6 +32,7 @@ add_subdirectory("${LABQ8_JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
 add_library(labq8_dsp STATIC
     src/dsp/BiquadDesign.cpp
     src/dsp/BellBand.cpp
+    src/dsp/EqBand.cpp
     src/dsp/EqCore.cpp)
 
 target_include_directories(labq8_dsp PUBLIC src)
@@ -101,6 +102,9 @@ if(LABQ8_BUILD_TESTS)
         tests/ProcessorEqTests.cpp
         tests/StateMigrationTests.cpp
         tests/RealtimeTests.cpp
+        tests/FilterDesignTests.cpp
+        tests/EqBandTests.cpp
+        tests/ProcessorE1bTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

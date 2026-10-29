@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dsp/FilterTypes.h"
+
 // Pure C++ biquad design helpers. No JUCE dependency, no allocation,
 // safe to call from the audio thread.
 
@@ -27,6 +29,24 @@ double clampQ (double q) noexcept;
 // the centre frequency, with A = 10^(gainDb/40). Inputs are clamped first.
 // At gainDb == 0 the result is exactly an identity filter (b == a).
 BiquadCoefficients designBell (double sampleRate, double frequencyHz, double gainDb, double q) noexcept;
+
+// The remaining designs are also from the RBJ cookbook, i.e. bilinear
+// transforms prewarped at f0 of these analog prototypes (A = 10^(gainDb/40)):
+//   low shelf   A * (s^2 + s*sqrt(A)/Q + A) / (A*s^2 + s*sqrt(A)/Q + 1)
+//   high shelf  A * (A*s^2 + s*sqrt(A)/Q + 1) / (s^2 + s*sqrt(A)/Q + A)
+//   low cut     s^2 / (s^2 + s/Q + 1)          (2nd-order high-pass, 12 dB/oct)
+//   high cut    1 / (s^2 + s/Q + 1)            (2nd-order low-pass, 12 dB/oct)
+//   notch       (s^2 + 1) / (s^2 + s/Q + 1)
+// Inputs are clamped exactly like designBell. Shelves at 0 dB are an exact
+// identity (b == a); cuts and notch ignore gain.
+BiquadCoefficients designLowShelf (double sampleRate, double frequencyHz, double gainDb, double q) noexcept;
+BiquadCoefficients designHighShelf (double sampleRate, double frequencyHz, double gainDb, double q) noexcept;
+BiquadCoefficients designLowCut (double sampleRate, double frequencyHz, double q) noexcept;
+BiquadCoefficients designHighCut (double sampleRate, double frequencyHz, double q) noexcept;
+BiquadCoefficients designNotch (double sampleRate, double frequencyHz, double q) noexcept;
+
+// Dispatches to the design for `type` (gainDb ignored where it does not apply).
+BiquadCoefficients designFilter (FilterType type, double sampleRate, double frequencyHz, double gainDb, double q) noexcept;
 
 // |H(e^jw)| evaluated at frequencyHz. Used by tests now and by the future
 // curve display / analysis engine.

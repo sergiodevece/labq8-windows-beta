@@ -4,9 +4,11 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: E1a.** Ocho bandas Bell independientes en cascada (frecuencia,
-ganancia, Q y bypass por banda), mono/estéreo, estado v2 con migración de
-sesiones E0, editor genérico de desarrollo y 40 pruebas que se ejecutan sin DAW.
+**Fase actual: E1b.** Ocho bandas independientes en cascada, cada una con
+seis topologías seleccionables (Bell, Low Shelf, High Shelf, Low Cut y High
+Cut de 12 dB/oct, Notch), crossfade sin clicks al cambiar de tipo, bypass por
+banda, estado v3 compatible con sesiones E0 y E1a, editor genérico de
+desarrollo y 68 pruebas que se ejecutan sin DAW.
 
 ## Requisitos
 
@@ -57,8 +59,18 @@ Banco de CPU (en Release; no forma parte de ctest):
 
 | Directorio | Fuente | Uso |
 |---|---|---|
-| `build/debug`, `build/release-universal` | E0 (`dfcf25b`) | Referencia E0. No se recompila; los SHA-256 de sus binarios se verificaron sin cambios tras E1a |
-| `build/e1a-debug`, `build/e1a-release-universal` | E1a (árbol de trabajo) | Builds de E1a |
+| `build/debug`, `build/release-universal` | E0 (`dfcf25b`) | Referencia E0. No se recompila |
+| `build/e1a-debug`, `build/e1a-release-universal` | E1a (`9095401`) | Referencia E1a. No se recompila |
+| `build/e1b-debug`, `build/e1b-release-universal` | E1b (árbol de trabajo) | Builds de E1b |
+
+Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios tras E1b.
+
+Comprobación de compatibilidad de audio con versiones anteriores (compila la
+versión base desde git en `build/compat/`):
+
+```bash
+tests/compat/run_compat.sh all
+```
 
 ## Artefactos
 
@@ -82,6 +94,7 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): capas, decisiones DSP, tolerancias de las pruebas.
 - [docs/PARAMETER_SCHEMA.md](docs/PARAMETER_SCHEMA.md): IDs estables, rangos y estado.
-- [docs/COMPATIBILITY_E0_E1A.md](docs/COMPATIBILITY_E0_E1A.md): compatibilidad de audio de sesiones E0 en E1a (`tests/compat/run_compat.sh`).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y propuesta para E1b.
-- [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 usados en las pruebas de migración.
+- [docs/COMPATIBILITY_E0_E1A.md](docs/COMPATIBILITY_E0_E1A.md): compatibilidad de audio de sesiones E0 en E1a.
+- [docs/COMPATIBILITY_E1B.md](docs/COMPATIBILITY_E1B.md): compatibilidad de audio de sesiones E0 y E1a en E1b (`tests/compat/run_compat.sh`).
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E1b.
+- [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

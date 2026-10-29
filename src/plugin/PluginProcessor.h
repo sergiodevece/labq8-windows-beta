@@ -55,9 +55,10 @@ private:
         std::atomic<float>* gain = nullptr;
         std::atomic<float>* q = nullptr;
         std::atomic<float>* bypass = nullptr;
+        std::atomic<float>* type = nullptr;
     };
 
-    dsp::BellSettings readBandSettings (const BandParameters& band) const noexcept;
+    dsp::BandSettings readBandSettings (const BandParameters& band) const noexcept;
     void pushParametersToCore() noexcept;
 
     juce::AudioProcessorValueTreeState parameters;

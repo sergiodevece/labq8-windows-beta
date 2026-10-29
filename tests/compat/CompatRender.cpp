@@ -1,17 +1,23 @@
-// E0 <-> E1a audio compatibility harness.
+// Audio compatibility harness: an older plugin version ("base", e.g. E0 at
+// dfcf25b or E1a at 9095401) against the current sources ("new").
 //
-// Compiled twice: against the E0 sources (dfcf25b, LABQ8_COMPAT_SIDE "e0")
-// and against the current sources ("e1a"). Every case is an E0 session:
+// Compiled twice (LABQ8_COMPAT_SIDE "base" / "new"). Every case is a session
+// of the base version:
 //
-//   e0  mode: builds each session's state with the E0 plugin (or takes a
-//             genuine E0 fixture), saves it, reopens it in a fresh E0
-//             instance and renders audio with scripted host automation.
-//   e1a mode: opens the same saved E0 state in a fresh E1a instance and
-//             renders with the identical automation.
-//   compare : sample-by-sample comparison of the two renders.
+//   base mode: builds each session's state with the base plugin (or takes a
+//              genuine fixture), saves it, reopens it in a fresh base
+//              instance and renders audio with scripted host automation.
+//   new mode : opens the same saved state in a fresh current instance and
+//              renders with the identical automation.
+//   compare  : sample-by-sample comparison of the two renders. Without
+//              --strict, differences are allowed only in configurations that
+//              passed through nominal 0 dB on band 1 (the documented E0
+//              -> E1a change); with --strict every difference fails.
 //
-// Usage: compat_<side> render <e0_dir> <out_dir> [fixtures_dir]
-//        compat_<side> compare <e0_out> <e1a_out>
+// Cases that need eight bands are skipped when the base has only one.
+//
+// Usage: compat_<side> render <base_dir> <out_dir> [fixtures_dir]
+//        compat_<side> compare <base_out> <new_out> [--strict]
 
 #include "plugin/PluginProcessor.h"
 
@@ -41,9 +47,10 @@ using Automation = std::function<void (labq8::LabQ8AudioProcessor&, double t)>;
 struct Case
 {
     std::string name;
-    std::string fixture; // genuine E0 state file, or empty
+    std::string fixture; // genuine state file, or empty
     Settings initial;
     Automation automate; // called before every block, t = block start (s)
+    bool needsEightBands = false;
 };
 
 void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float value)
@@ -122,7 +129,41 @@ std::vector<Case> cases()
              setParam (p, "b1_bypass", u (rng) < 0.1f ? 1.0f : 0.0f);
          });
 
+    // Eight-band sessions (E1a and later bases only).
+    auto add8 = [&] (std::string name, std::string fixture, Automation a = {})
+    { c.push_back ({ std::move (name), std::move (fixture), {}, std::move (a), true }); };
+
+    add8 ("fixture_e1a_default", "e1a_default.bin");
+    add8 ("fixture_e1a_custom", "e1a_custom.bin");
+    add8 ("fixture_e1a_from_e0_custom", "e1a_from_e0_custom.bin");
+
+    add8 ("auto_8band_random", "e1a_custom.bin",
+          [] (labq8::LabQ8AudioProcessor& p, double t)
+          {
+              std::mt19937 rng ((unsigned) std::llround (t * 1.0e6) + 7u);
+              std::uniform_real_distribution<float> u (0.0f, 1.0f);
+              const int band = (int) (u (rng) * 7.999f) + 1;
+              const auto prefix = "b" + std::to_string (band) + "_";
+              setParam (p, (prefix + "freq").c_str(), 20.0f * std::pow (1000.0f, u (rng)));
+              setParam (p, (prefix + "gain").c_str(), -24.0f + 48.0f * u (rng));
+              setParam (p, (prefix + "q").c_str(), 0.1f * std::pow (180.0f, u (rng)));
+              setParam (p, (prefix + "bypass").c_str(), u (rng) < 0.15f ? 1.0f : 0.0f);
+          });
+
+    add8 ("auto_8band_bypass_toggles", "e1a_custom.bin",
+          [] (labq8::LabQ8AudioProcessor& p, double t)
+          {
+              for (int band = 1; band <= 8; ++band)
+                  setParam (p, ("b" + std::to_string (band) + "_bypass").c_str(),
+                            ((int) std::floor (t / (0.1 + 0.02 * band)) % 2) ? 1.0f : 0.0f);
+          });
+
     return c;
+}
+
+bool hasEightBands (labq8::LabQ8AudioProcessor& p)
+{
+    return p.getValueTreeState().getParameter ("b8_freq") != nullptr;
 }
 
 struct Config
@@ -175,18 +216,24 @@ bool loadState (labq8::LabQ8AudioProcessor& p, const juce::File& f)
     return true;
 }
 
-int render (const juce::File& e0Dir, const juce::File& outDir, const juce::File& fixtures)
+int render (const juce::File& baseDir, const juce::File& outDir, const juce::File& fixtures)
 {
     const std::string side = LABQ8_COMPAT_SIDE;
     outDir.createDirectory();
 
     for (const auto& k : cases())
     {
-        const auto stateFile = e0Dir.getChildFile (k.name + ".state");
+        const auto stateFile = baseDir.getChildFile (k.name + ".state");
 
-        if (side == "e0") // the E0 plugin creates the session
+        if (side == "base") // the base plugin creates the session
         {
             labq8::LabQ8AudioProcessor author;
+            if (k.needsEightBands && ! hasEightBands (author))
+            {
+                stateFile.deleteFile();
+                continue;
+            }
+
             if (! k.fixture.empty())
             {
                 if (! loadState (author, fixtures.getChildFile (k.fixture)))
@@ -201,6 +248,9 @@ int render (const juce::File& e0Dir, const juce::File& outDir, const juce::File&
             author.getStateInformation (state);
             stateFile.replaceWithData (state.getData(), state.getSize());
         }
+
+        if (! stateFile.existsAsFile()) // case not supported by the base version
+            continue;
 
         for (const auto& c : configs())
         {
@@ -266,7 +316,7 @@ std::vector<float> readFloats (const juce::File& f)
 
 // Every difference must come from a config that passed through nominal 0 dB;
 // anything else is reported as UNEXPECTED and fails the run.
-int compare (const juce::File& a, const juce::File& b)
+int compare (const juce::File& a, const juce::File& b, bool strict)
 {
     std::printf ("%-27s %6s %6s %9s %10s %8s %9s %9s  %s\n",
                  "case", "ident", "0dB", "diff smp", "max|diff|", "dBFS", "lastDiff", "settle", "verdict");
@@ -274,6 +324,9 @@ int compare (const juce::File& a, const juce::File& b)
 
     for (const auto& k : cases())
     {
+        if (! a.getChildFile (k.name + ".state").existsAsFile())
+            continue; // not available in this base version
+
         int identical = 0, total = 0, zeroConfigs = 0, unexpected = 0;
         long long differing = 0;
         double maxDiff = 0.0, lastDiffSeconds = 0.0, maxSettle = 0.0;
@@ -319,7 +372,7 @@ int compare (const juce::File& a, const juce::File& b)
             {
                 lastDiffSeconds = std::max (lastDiffSeconds, configLastDiff);
                 maxSettle = std::max (maxSettle, configLastDiff - lastZeroEnd); // time to converge after leaving 0 dB
-                if (! passedZero)
+                if (strict || ! passedZero)
                     ++unexpected;
             }
 
@@ -335,7 +388,8 @@ int compare (const juce::File& a, const juce::File& b)
                      unexpected > 0 ? "UNEXPECTED" : (differing > 0 ? "deliberate (0 dB)" : "bit-identical"));
     }
 
-    std::printf ("%s\n", failures == 0 ? "RESULT: OK (all differences explained by nominal 0 dB)" : "RESULT: FAIL");
+    std::printf ("%s\n", failures == 0 ? (strict ? "RESULT: OK (strict: no differences)" : "RESULT: OK (all differences explained by nominal 0 dB)")
+                                        : "RESULT: FAIL");
     return failures == 0 ? 0 : 1;
 }
 } // namespace
@@ -350,7 +404,8 @@ int main (int argc, char** argv)
                        argc > 4 ? juce::File (juce::String (argv[4])) : juce::File());
 
     if (mode == "compare" && argc >= 4)
-        return compare (juce::File (juce::String (argv[2])), juce::File (juce::String (argv[3])));
+        return compare (juce::File (juce::String (argv[2])), juce::File (juce::String (argv[3])),
+                        argc > 4 && juce::String (argv[4]) == "--strict");
 
     std::fprintf (stderr, "usage: render <e0_dir> <out_dir> [fixtures] | compare <e0_out> <e1a_out>\n");
     return 2;

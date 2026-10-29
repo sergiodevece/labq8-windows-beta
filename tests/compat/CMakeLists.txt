@@ -1,5 +1,6 @@
-# E0 <-> E1a audio compatibility harness. Not part of the main build: run
-# tests/compat/run_compat.sh, which exports the E0 sources from git first.
+# Audio compatibility harness (an older version against the current sources).
+# Not part of the main build: run tests/compat/run_compat.sh, which exports
+# the base version's sources from git first.
 cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 project(LABQ8_COMPAT VERSION 0.0.1 LANGUAGES C CXX)
@@ -9,10 +10,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(LABQ8_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(LABQ8_JUCE_DIR "${LABQ8_ROOT}/external/JUCE" CACHE PATH "JUCE 9.0.3")
-set(E0_SRC_DIR "" CACHE PATH "Exported E0 'src' directory (git archive dfcf25b src)")
+set(BASE_SRC_DIR "" CACHE PATH "Exported base 'src' directory (git archive <commit> src)")
 
-if(NOT EXISTS "${E0_SRC_DIR}/plugin/PluginProcessor.cpp")
-    message(FATAL_ERROR "Set E0_SRC_DIR to the exported E0 src directory")
+if(NOT EXISTS "${BASE_SRC_DIR}/plugin/PluginProcessor.cpp")
+    message(FATAL_ERROR "Set BASE_SRC_DIR to the exported base src directory")
 endif()
 
 add_subdirectory("${LABQ8_JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
@@ -27,5 +28,5 @@ function(labq8_compat_target name side src_dir)
     target_link_libraries(${name} PRIVATE juce::juce_audio_processors juce::juce_recommended_config_flags)
 endfunction()
 
-labq8_compat_target(compat_e0 e0 "${E0_SRC_DIR}")
-labq8_compat_target(compat_e1a e1a "${LABQ8_ROOT}/src")
+labq8_compat_target(compat_base base "${BASE_SRC_DIR}")
+labq8_compat_target(compat_new new "${LABQ8_ROOT}/src")

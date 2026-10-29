@@ -69,8 +69,9 @@ bool setLayout (LabQ8AudioProcessor& p, const juce::AudioChannelSet& in, const j
 LQ_TEST ("processor: parameter layout exposes stable IDs, ranges and defaults")
 {
     LabQ8AudioProcessor p;
-    // E1a: was 4 in E0 (band 1 only); now 4 per band. Band 1 checks below are unchanged.
-    LQ_CHECK (p.getParameters().size() == 4 * labq8::params::numBands, str ("expected 32 parameters, got ", p.getParameters().size()));
+    // Was 4 in E0 (band 1 only), 32 in E1a (4 per band), 40 in E1b (+ b1..b8_type).
+    // Band 1 checks below are unchanged.
+    LQ_CHECK (p.getParameters().size() == 40, str ("expected 40 parameters, got ", p.getParameters().size()));
 
     struct Expected { const char* id; float lo, hi, def; };
     const Expected expected[] = {

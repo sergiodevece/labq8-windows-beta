@@ -16,6 +16,12 @@ void EqCore::reset() noexcept
         band.reset();
 }
 
+void EqCore::setBandTargets (int bandIndex, const BandSettings& settings) noexcept
+{
+    if (bandIndex >= 0 && bandIndex < numBands)
+        bands[(size_t) bandIndex].setTargets (settings);
+}
+
 void EqCore::setBandTargets (int bandIndex, const BellSettings& settings) noexcept
 {
     if (bandIndex >= 0 && bandIndex < numBands)
@@ -28,14 +34,14 @@ void EqCore::process (float* const* channels, int numChannels, int numSamples) n
         band.process (channels, numChannels, numSamples);
 }
 
-const BellBand& EqCore::getBand (int bandIndex) const noexcept
+const EqBand& EqCore::getBand (int bandIndex) const noexcept
 {
     return bands[(size_t) std::clamp (bandIndex, 0, numBands - 1)];
 }
 
 bool EqCore::isIdle() const noexcept
 {
-    return std::all_of (bands.begin(), bands.end(), [] (const BellBand& b) { return b.isIdle(); });
+    return std::all_of (bands.begin(), bands.end(), [] (const EqBand& b) { return b.isIdle(); });
 }
 
 double EqCore::magnitudeAt (double frequencyHz) const noexcept

@@ -31,7 +31,8 @@ LabQ8AudioProcessor::LabQ8AudioProcessor()
         bandParameters[band] = { rawParameter (parameters, ids.frequency),
                                  rawParameter (parameters, ids.gain),
                                  rawParameter (parameters, ids.q),
-                                 rawParameter (parameters, ids.bypass) };
+                                 rawParameter (parameters, ids.bypass),
+                                 rawParameter (parameters, ids.type) };
     }
 }
 
@@ -45,14 +46,14 @@ bool LabQ8AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
     return layouts.getMainInputChannelSet() == out;
 }
 
-dsp::BellSettings LabQ8AudioProcessor::readBandSettings (const BandParameters& band) const noexcept
+dsp::BandSettings LabQ8AudioProcessor::readBandSettings (const BandParameters& band) const noexcept
 {
     // The host gain parameter snaps to a 0.01 dB grid in float, so "0.00 dB"
     // arrives as about -5.4e-7 dB. Anything that displays as 0.00 dB is made
     // exactly 0 so the band can go idle (bit-exact, no CPU).
     constexpr double neutralGainDb = 0.005;
 
-    dsp::BellSettings s;
+    dsp::BandSettings s;
     s.frequencyHz = band.frequency->load (std::memory_order_relaxed);
     s.gainDb      = band.gain->load (std::memory_order_relaxed);
     if (std::abs (s.gainDb) < neutralGainDb)
@@ -60,6 +61,7 @@ dsp::BellSettings LabQ8AudioProcessor::readBandSettings (const BandParameters& b
 
     s.q           = band.q->load (std::memory_order_relaxed);
     s.bypassed    = band.bypass->load (std::memory_order_relaxed) >= 0.5f;
+    s.type        = dsp::filterTypeFromIndex (static_cast<int> (std::lround (band.type->load (std::memory_order_relaxed))));
     return s;
 }
 

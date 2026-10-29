@@ -1,4 +1,4 @@
-# LABQ8: arquitectura (E1b)
+# LABQ8: arquitectura (E1b, con E1b.1)
 
 ## Capas
 
@@ -89,7 +89,7 @@ valor por defecto).
 
 ### Significado de frecuencia, ganancia y Q por topología
 
-| Tipo | Frecuencia | Ganancia | Q (rango 0,1–18 para todos) |
+| Tipo | Frecuencia | Ganancia | Q (guardado: 0,1–18 para todos; efectivo: ver "Q guardado y Q efectivo") |
 |---|---|---|---|
 | Bell | centro; \|H(f0)\| = ganancia | sí | ancho de banda RBJ (bordes a ganancia/2 en dB) |
 | Low Shelf | punto medio: \|H(f0)\| = ganancia/2 dB para cualquier Q; DC = ganancia; Nyquist = 0 dB | sí | pendiente o resonancia de la transición. Q = 0,7071 equivale a la pendiente S = 1 de RBJ (la más pronunciada sin sobreoscilación). Por encima hay sobreoscilación: ver la tabla de abajo |
@@ -107,25 +107,98 @@ dan polos dentro del círculo unidad. Está comprobado en la rejilla completa
 de tipos, f0, Q, ganancia y fs, incluido el límite de 0,49·fs a 32 kHz, con
 respuesta al impulso que decae y entradas no válidas.
 
-**Rango efectivo de Q (propuesta abierta, no aplicada):** con el rango
-compartido de 0,1 a 18, un shelf de +12 dB con Q alto sobreoscila mucho
-(medido a 48 kHz):
+### Q guardado y Q efectivo (E1b.1)
 
-| Q | Low Shelf +12 dB: recorrido | Cut: pico de resonancia |
+**El Q que guarda el parámetro y el Q que usa el filtro pueden ser distintos.**
+`b{n}_q` conserva su rango de 0,1 a 18 para todos los tipos (IDs, rango,
+orden y hints sin cambios), y el estado guarda siempre el valor del usuario.
+Cada banda diseña con `effectiveQ(tipo, Q guardado)`
+([FilterTypes.h](../src/dsp/FilterTypes.h)):
+
+| Tipo | Q efectivo máximo | Peor caso en ese límite (cualquier f0, fs y ganancia) |
 |---|---|---|
-| 0,1 | +0,19 … +11,94 dB | 0 dB (\|H(f0)\| −20 dB) |
-| 0,5 | 0,00 … +12,00 | 0 (−6,02) |
-| 0,7071 | 0,00 … +12,00 | 0 (−3,01) |
-| 1 | −0,78 … +12,78 | +1,25 |
-| 2 | −4,58 … +16,58 | +6,30 |
-| 4 | −9,83 … +21,83 | +12,11 |
-| 18 | **−22,6 … +34,6** | **+25,1** |
+| Bell | 18 (sin límite nuevo) | — |
+| Low / High Shelf | **1** | sobreoscilación fuera de las mesetas ≤ **1,12 dB** a ±24 dB (0,44 dB a ±6 dB) |
+| Low / High Cut | **2** | pico de resonancia **6,30 dB** (Q²/√(Q²−¼)) |
+| Notch | 18 (sin límite nuevo) | — |
 
-Es estable pero musicalmente extremo. Propuesta: limitar el Q efectivo en el
-DSP a [0,1; 2] para los shelves y a [0,1; 10] para los cortes, sin tocar el
-valor guardado (el estado conserva lo que el usuario puso), y mostrarlo en la
-UI. **No lo he aplicado:** cambiaría el sonido de valores ya admitidos y es
-una decisión de producto.
+- **Regla:** Q efectivo = mín(Q guardado, límite·(1 + 10⁻⁶)). Por debajo del
+  límite se usa el Q guardado bit a bit, así que Bell y Notch no cambian nada y
+  los shelves y cortes por debajo de su límite suenan exactamente como en E1b.
+- **La tolerancia de 1 ppm** existe porque el host guarda Q en float sobre un
+  rango logarítmico: un "2,00" queda guardado como 2,0000002384. Sin ella, las
+  sesiones E1b con un corte justo en Q 2 cambiarían en una fracción de ppm.
+  La función sigue siendo continua y monótona.
+- **El límite actúa sobre el objetivo de la rampa**, no sobre el valor
+  suavizado. Por eso:
+  - mover el Q guardado por encima del límite no cambia nada (salida
+    idéntica bit a bit, comprobado con automatización aleatoria);
+  - cruzar el límite (18 → 0,3) da exactamente la rampa de 20 ms de límite →
+    0,3 que ya validaba E1b (comprobado bit a bit en las dos direcciones);
+  - en un cambio de tipo, cada ruta usa el Q efectivo de su propio tipo: Bell
+    Q 18 → Low Shelf diseña con Q 1, y volver a Bell recupera Q 18.
+- **Lo que se ve desde fuera:** el host y la UI genérica muestran el Q
+  guardado. `EqBand::getCurrentQ()` devuelve el efectivo. Sin UI propia, la
+  única pista audible de la limitación es que subir Q por encima del límite
+  deja de cambiar el sonido.
+
+**Barridos** (`labq8_sweep`, [ResonanceSweep.cpp](../tests/bench/ResonanceSweep.cpp)):
+
+- **Cobertura:** las fórmulas RBJ son la bilineal del prototipo analógico con
+  prewarp en f0, así que la respuesta solo depende de f0/fs. El barrido
+  recorre f0/fs de 20/768 000 a 0,49, cada punto diseñado con un par (f0, fs)
+  admitido real. Eso cubre todas las frecuencias y frecuencias de muestreo.
+- **Precisión:** la sobreoscilación digital coincide con la analógica (Q 1:
+  2,7e-5 dB), luego **depende solo de ganancia y Q**.
+
+| Q | Shelf ±6 dB | Shelf ±12 dB | Shelf ±24 dB | Cut: pico |
+|---|---|---|---|---|
+| 0,7071 | 0 | 0 | 0 | 0 dB |
+| 1 | 0,44 | 0,78 | **1,12** | 1,25 |
+| 1,5 | 1,64 | 2,76 | 3,70 | 4,03 |
+| 2 | 2,87 | 4,58 | 5,88 | **6,30** |
+| 5 | 8,60 | 11,66 | 13,48 | 14,02 |
+| 18 (E1b) | 19,12 | 22,61 | 24,55 | 25,11 |
+
+**Estabilidad:** son 48 000 diseños por tipo (Q de 0,1 a 18, ganancia −24/0/+24
+y 400 puntos de f0/fs). Ninguno es inestable ni tiene coeficientes no finitos;
+el radio de polo máximo es 0,9999989.
+
+**Headroom:** la tabla da la norma L1 de la respuesta al impulso, es decir, la
+ganancia máxima posible de pico a pico para cualquier entrada |x| ≤ 1. Es el
+peor caso de una señal adversaria; una señal musical queda muy por debajo.
+
+| Diseño | Q 0,7071 | Límite | Q 18 (E1b) |
+|---|---|---|---|
+| Low Shelf +24 dB | 30,3 dB | 31,6 dB | 51,0 dB |
+| High Shelf +24 dB | 30,8 | 31,9 | 51,0 |
+| Low Shelf −24 dB | 6,8 | 7,9 | 27,0 |
+| High Shelf −24 dB | 6,3 | 7,6 | 27,0 |
+| Low Cut | 7,7 | 11,7 | 27,6 |
+| High Cut | 7,4 | 11,6 | 27,6 |
+| Bell +24 dB, Q 18 (referencia) | — | 26,0 | — |
+
+- **Shelves:** el límite añade como mucho 1,3 dB al peor caso de la Q sin
+  sobreoscilación, y le quita 19–20 dB al de E1b.
+- **Cortes:** el límite cuesta unos 4 dB sobre Butterworth y ahorra 16 dB.
+- **Pruebas:** comprueban los dos valores con Q guardado 18, en extremos de f0 y
+  fs, y con la entrada de ±1 que alcanza la cota (salida finita e igual a L1).
+
+**Propuesta para la UI futura (no implementada):**
+
+- **Mando de Q:** sigue mostrando y editando el Q guardado, para que el usuario
+  no pierda su valor al cambiar de tipo.
+- **Cuando Q guardado > Q efectivo:**
+  - la lectura muestra los dos valores, "Q 4,00 → 1,00", con el efectivo en
+    el color de acento y el guardado atenuado;
+  - el anillo del mando marca el tramo por encima del límite con un rayado o
+    un color apagado, de modo que se ve dónde deja de actuar;
+  - un tooltip lo explica: "Low Shelf: Q efectivo máx. 1 (evita
+    sobreoscilación). El valor guardado se recupera al cambiar a Bell".
+- **Curva de respuesta:** se dibuja siempre con el Q efectivo (la del DSP), así
+  que la pantalla y el sonido coinciden.
+- **API:** la UI obtendría el valor con `dsp::effectiveQ(type, q)` (función
+  pura, sin acceso al hilo de audio).
 
 ### Crossfades entre tipos
 
@@ -268,6 +341,21 @@ de un núcleo:
   regresiones graves, no variaciones finas. No he fijado un objetivo más
   estricto porque la variación de la máquina compartida (±20 %) lo haría poco fiable.
 
+**E1b.1:** el Q efectivo es una comparación por llamada a `setTargets`, no por
+muestra. En una ejecución intercalada (E1b, E1b.1, E1b, E1b.1) a 96 kHz, en % de
+un núcleo:
+
+| Escenario | E1b | E1b.1 |
+|---|---|---|
+| mixed | 0,31–0,40 | 0,31–0,42 |
+| bypass | 0,026–0,035 | 0,027–0,038 |
+| typechange | 0,34–0,43 | 0,35–0,44 |
+| xfade-all | 0,78–0,85 | 0,78–0,80 |
+
+Hay paridad dentro de la variación de la máquina. El mismo binario E1b mide
+ahora 0,78–0,85 en xfade-all, frente a 0,70–0,75 en la sesión de E1b: la
+variación entre sesiones es mayor que cualquier diferencia entre versiones.
+
 ## Compatibilidad macOS (sin cambios desde E1a)
 
 Objetivo 11.0 en arm64 y x86_64 (`minos 11.0` verificado con `vtool` en el
@@ -278,7 +366,7 @@ actual no lo necesita).
 
 ## Pruebas
 
-68 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
+75 pruebas en `labq8_tests` (CTest), en Debug, en Release arm64 y en Release
 x86_64:
 
 | Prefijo / archivo | Nº | Qué cubre |
@@ -292,6 +380,11 @@ x86_64:
 | `filter:` (E1b) | 5 | A, B, C, D: los seis tipos frente al prototipo analógico; significado de f0, ganancia y Q; límites y Nyquist; senoides medidas; tabla de sobreoscilación |
 | `band:`, `crossfade:`, `type changes:`, `multi:` (E1b) | 15 | E–M: Bell = BellBand; transparencia de Bell/shelves; Cut y Notch activos a 0 dB; bypass por tipo; estructura y convexidad del crossfade; duración; política; clicks frente a cambio abrupto; cancelación de fase; cambios rápidos; bloques; NaN; estéreo; cascada mixta; automatización por tipo |
 | `e1b processor:`, `state:`, `rt:`, `perf:` (E1b) | 8 | Layout y hints; procesador = núcleo con tipos; automatización de tipo independiente del bloque; ganancia conservada; estados E1a reales; sonido idéntico a E1a; round-trip v3 y tipos inválidos; sin asignaciones con cambios de tipo; CPU del peor caso |
+| `q limit:`, `state:` (E1b.1, [EffectiveQTests.cpp](../tests/EffectiveQTests.cpp)) | 7 | Función de Q efectivo por tipo; sobreoscilación y resonancia con Q guardado 18 en extremos de f0 y fs; headroom (L1 y entrada de peor caso); automatización por encima del límite inaudible y cruce del límite = rampa normal (bit a bit); Q efectivo por ruta en cambios de tipo; procesador y estado conservan el Q guardado; estados E1b reales |
+
+En E1b.1 cambian dos pruebas E1b: "measured sine response" y "automation
+ramps every topology like Bell" usaban Q 2 en los shelves y ahora esperan su Q
+efectivo (`effectiveQ`). No cambia nada más de esas pruebas.
 
 **Mutaciones verificadas en E1b** (se restauró el archivo después y se
 comprobó con `cmp`):
@@ -302,6 +395,16 @@ comprobó con `cmp`):
 | Ley de igual potencia | estructura/convexidad: 120/240 |
 | Cut y Notch tratados como neutros a 0 dB | "Cut and Notch stay active": 36/54 |
 | Sin reversión (siempre pendiente) | política: 5/13 |
+
+**Mutaciones verificadas en E1b.1** (Debug, archivos restaurados y comprobados
+con `cmp`):
+
+| Mutación | Pruebas que fallan |
+|---|---|
+| Sin límite (Q guardado directo) | 8 pruebas (6 de E1b.1 y las 2 de E1b ajustadas) |
+| Límite aplicado al Q suavizado y no al objetivo de la rampa | 5, entre ellas "crossing it ramps like any Q change": 24/40 |
+| Sin la tolerancia de 1 ppm | función de Q efectivo y estados E1b reales |
+| Límite de cortes 10 (la propuesta de E1b) | 4: función, resonancia, headroom, estados E1b |
 
 Siguen vigentes las mutaciones de E0/E1a (suavizado, migración, 0 dB).
 
@@ -326,7 +429,10 @@ Siguen vigentes las mutaciones de E0/E1a (suavizado, migración, 0 dB).
 2. **Cancelación de fase en fades entre topologías en contrafase** (Cut ↔ Cut,
    Shelf ↔ Cut): caídas transitorias de hasta −26 dB en algunas frecuencias.
    Es inherente a cualquier crossfade entre filtros distintos.
-3. **Q alto en shelves y cortes:** propuesta de rango efectivo abierta (ver arriba).
+3. **Q alto en shelves y cortes:** resuelto en E1b.1 con el Q efectivo (shelves
+   1, cortes 2). Las sesiones E1b con shelves por encima de Q 1 o cortes por
+   encima de Q 2 suenan distinto (ver [COMPATIBILITY_E1B1.md](COMPATIBILITY_E1B1.md)).
+   El límite no se ve hasta que exista la UI propia.
 4. **Sin `auval` ni validación en DAW** (la instalación sigue prohibida).
 5. **Bypass del host sin rampa** (`processBlockBypassed` de JUCE). El bypass
    global y el Output Gain quedan fuera de E1b.

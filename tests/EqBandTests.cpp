@@ -785,6 +785,7 @@ LQ_TEST ("band: frequency, Q and gain automation ramps every topology like Bell 
             LQ_CHECK (! band.isCrossfading(), "parameter automation must not crossfade");
 
             const auto expectedTicks = std::lround (EqBand::rampTimeSeconds * fs / EqBand::updateIntervalSamples);
+            const auto qTo = effectiveQ (type, to.q); // E1b.1: shelves are limited to Q 1
             long arrived = -1;
             bool monotonic = true;
             double lastF = band.getCurrentFrequencyHz(), lastQ = band.getCurrentQ();
@@ -796,7 +797,7 @@ LQ_TEST ("band: frequency, Q and gain automation ramps every topology like Bell 
                 monotonic = monotonic && f >= lastF && q >= lastQ;
                 lastF = f;
                 lastQ = q;
-                if (arrived < 0 && std::abs (f - 2000.0) < 1e-9 * 2000.0 && std::abs (q - 2.0) < 1e-9 * 2.0 && band.getCurrentGainDb() == -9.0)
+                if (arrived < 0 && std::abs (f - 2000.0) < 1e-9 * 2000.0 && std::abs (q - qTo) < 1e-9 * qTo && band.getCurrentGainDb() == -9.0)
                     arrived = t + 1;
             }
             LQ_CHECK (monotonic && arrived == expectedTicks, str (name (type), " ramp arrived after ", arrived, " (expected ", expectedTicks, "), fs=", fs));
@@ -805,7 +806,7 @@ LQ_TEST ("band: frequency, Q and gain automation ramps every topology like Bell 
             for (int k = 0; k < 30; ++k)
             {
                 const auto f = 20.0 * std::pow (0.45 * fs / 20.0, k / 29.0);
-                const auto expected = std::abs (analogResponse (type, f, 2000.0, -9.0, 2.0, fs));
+                const auto expected = std::abs (analogResponse (type, f, 2000.0, -9.0, qTo, fs));
                 const auto got = magnitudeAt (band.getCoefficients(), f, fs);
                 ok = ok && (expected > 1e-3 ? std::abs (db (got) - db (expected)) < designTolDb : std::abs (got - expected) < 1e-8);
             }

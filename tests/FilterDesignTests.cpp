@@ -161,7 +161,8 @@ LQ_TEST ("filter: measured sine response through EqBand matches the design (floa
                 {
                     if (f > 0.45 * fs)
                         continue;
-                    const auto expected = std::abs (analogResponse (type, f, f0, s.gainDb, s.q, fs));
+                    // E1b.1: the band designs with the effective Q of its type (shelves: 1).
+                    const auto expected = std::abs (analogResponse (type, f, f0, s.gainDb, effectiveQ (type, s.q), fs));
                     const auto got = measureBandDb (fs, s, f);
 
                     if (type == FilterType::notch && f == f0)

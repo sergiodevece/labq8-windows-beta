@@ -105,6 +105,7 @@ if(LABQ8_BUILD_TESTS)
         tests/FilterDesignTests.cpp
         tests/EqBandTests.cpp
         tests/ProcessorE1bTests.cpp
+        tests/EffectiveQTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 
@@ -128,4 +129,9 @@ if(LABQ8_BUILD_TESTS)
     # CPU benchmark (JUCE-free). Not part of ctest: run it explicitly, in Release.
     add_executable(labq8_bench tests/bench/EqBenchmark.cpp)
     target_link_libraries(labq8_bench PRIVATE labq8_dsp)
+
+    # Shelf and cut response sweep (E1b.1). Not part of ctest: run it explicitly.
+    add_executable(labq8_sweep tests/bench/ResonanceSweep.cpp)
+    target_include_directories(labq8_sweep PRIVATE tests)
+    target_link_libraries(labq8_sweep PRIVATE labq8_dsp)
 endif()

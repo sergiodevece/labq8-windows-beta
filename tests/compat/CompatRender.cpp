@@ -1,5 +1,6 @@
 // Audio compatibility harness: an older plugin version ("base", e.g. E0 at
-// dfcf25b or E1a at 9095401) against the current sources ("new").
+// dfcf25b, E1a at 9095401 or E1b at 1e8db0b) against the current sources
+// ("new").
 //
 // Compiled twice (LABQ8_COMPAT_SIDE "base" / "new"). Every case is a session
 // of the base version:
@@ -10,14 +11,17 @@
 //   new mode : opens the same saved state in a fresh current instance and
 //              renders with the identical automation.
 //   compare  : sample-by-sample comparison of the two renders. Without
-//              --strict, differences are allowed only in configurations that
+//              --strict, differences are allowed in configurations that
 //              passed through nominal 0 dB on band 1 (the documented E0
-//              -> E1a change); with --strict every difference fails.
+//              -> E1a change). With --qlimit, also in configurations where a
+//              shelf had Q > 1 or a cut Q > 2 (the documented E1b -> E1b.1
+//              effective-Q limit). Any other difference fails.
 //
-// Cases that need eight bands are skipped when the base has only one.
+// Cases that need eight bands are skipped when the base has only one, and
+// cases that need filter types when the base has none (before E1b).
 //
 // Usage: compat_<side> render <base_dir> <out_dir> [fixtures_dir]
-//        compat_<side> compare <base_out> <new_out> [--strict]
+//        compat_<side> compare <base_out> <new_out> [--strict] [--qlimit]
 
 #include "plugin/PluginProcessor.h"
 
@@ -51,6 +55,7 @@ struct Case
     Settings initial;
     Automation automate; // called before every block, t = block start (s)
     bool needsEightBands = false;
+    bool needsTypes = false;
 };
 
 void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float value)
@@ -158,12 +163,79 @@ std::vector<Case> cases()
                             ((int) std::floor (t / (0.1 + 0.02 * band)) % 2) ? 1.0f : 0.0f);
           });
 
+    // Typed sessions (E1b and later bases only): genuine E1b states and
+    // automation of types and Q, inside and across the E1b.1 Q limits.
+    auto addTyped = [&] (std::string name, std::string fixture, Automation a = {})
+    { c.push_back ({ std::move (name), std::move (fixture), {}, std::move (a), true, true }); };
+
+    addTyped ("fixture_e1b_within_limits", "e1b_within_limits.bin");
+    addTyped ("fixture_e1b_high_q", "e1b_high_q.bin");
+
+    addTyped ("auto_types_random_q_le_limit", "e1b_within_limits.bin",
+              [] (labq8::LabQ8AudioProcessor& p, double t)
+              {
+                  // Random types and settings, Q never above the shelf limit.
+                  std::mt19937 rng ((unsigned) std::llround (t * 1.0e6) + 11u);
+                  std::uniform_real_distribution<float> u (0.0f, 1.0f);
+                  const auto prefix = "b" + std::to_string ((int) (u (rng) * 7.999f) + 1) + "_";
+                  setParam (p, (prefix + "type").c_str(), (float) (int) (u (rng) * 5.999f));
+                  setParam (p, (prefix + "freq").c_str(), 20.0f * std::pow (1000.0f, u (rng)));
+                  setParam (p, (prefix + "gain").c_str(), -24.0f + 48.0f * u (rng));
+                  setParam (p, (prefix + "q").c_str(), 0.1f * std::pow (10.0f, u (rng)));
+                  setParam (p, (prefix + "bypass").c_str(), u (rng) < 0.1f ? 1.0f : 0.0f);
+              });
+
+    addTyped ("auto_types_random_any_q", "e1b_high_q.bin",
+              [] (labq8::LabQ8AudioProcessor& p, double t)
+              {
+                  std::mt19937 rng ((unsigned) std::llround (t * 1.0e6) + 13u);
+                  std::uniform_real_distribution<float> u (0.0f, 1.0f);
+                  const auto prefix = "b" + std::to_string ((int) (u (rng) * 7.999f) + 1) + "_";
+                  setParam (p, (prefix + "type").c_str(), (float) (int) (u (rng) * 5.999f));
+                  setParam (p, (prefix + "freq").c_str(), 20.0f * std::pow (1000.0f, u (rng)));
+                  setParam (p, (prefix + "gain").c_str(), -24.0f + 48.0f * u (rng));
+                  setParam (p, (prefix + "q").c_str(), 0.1f * std::pow (180.0f, u (rng)));
+                  setParam (p, (prefix + "bypass").c_str(), u (rng) < 0.1f ? 1.0f : 0.0f);
+              });
+
+    addTyped ("auto_q_sweep_shelf_and_cut", "e1b_within_limits.bin",
+              [] (labq8::LabQ8AudioProcessor& p, double t)
+              {
+                  // Q 0.1 -> 18 over the render on a low shelf (b1) and a high cut (b4).
+                  const auto q = (float) (0.1 * std::pow (180.0, t / 2.0));
+                  setParam (p, "b1_q", q);
+                  setParam (p, "b4_q", q);
+              });
+
     return c;
 }
 
 bool hasEightBands (labq8::LabQ8AudioProcessor& p)
 {
     return p.getValueTreeState().getParameter ("b8_freq") != nullptr;
+}
+
+bool hasTypes (labq8::LabQ8AudioProcessor& p)
+{
+    return p.getValueTreeState().getParameter ("b1_type") != nullptr;
+}
+
+// True when some band is a shelf with Q above 1 or a cut with Q above 2 (the
+// E1b.1 limits, + 1 ppm). Written out here: the base sources do not have them.
+bool aboveQLimit (labq8::LabQ8AudioProcessor& p)
+{
+    if (! hasTypes (p))
+        return false;
+
+    for (int band = 1; band <= 8; ++band)
+    {
+        const auto prefix = "b" + std::to_string (band) + "_";
+        const auto type = (int) std::lround (getParam (p, (prefix + "type").c_str()));
+        const auto q = (double) getParam (p, (prefix + "q").c_str());
+        if (((type == 1 || type == 2) && q > 1.000001) || ((type == 3 || type == 4) && q > 2.000002))
+            return true;
+    }
+    return false;
 }
 
 struct Config
@@ -228,7 +300,7 @@ int render (const juce::File& baseDir, const juce::File& outDir, const juce::Fil
         if (side == "base") // the base plugin creates the session
         {
             labq8::LabQ8AudioProcessor author;
-            if (k.needsEightBands && ! hasEightBands (author))
+            if ((k.needsEightBands && ! hasEightBands (author)) || (k.needsTypes && ! hasTypes (author)))
             {
                 stateFile.deleteFile();
                 continue;
@@ -267,7 +339,7 @@ int render (const juce::File& baseDir, const juce::File& outDir, const juce::Fil
             p.prepareToPlay (c.fs, c.block);
             auto audio = makeInput (c);
             juce::MidiBuffer midi;
-            int nominalZeroBlocks = 0;
+            int nominalZeroBlocks = 0, qLimitBlocks = 0;
             double lastNominalZeroEnd = 0.0;
 
             for (int pos = 0; pos < audio.getNumSamples(); pos += c.block)
@@ -284,12 +356,15 @@ int render (const juce::File& baseDir, const juce::File& outDir, const juce::Fil
                     lastNominalZeroEnd = (pos + n) / c.fs;
                 }
 
+                qLimitBlocks += aboveQLimit (p) ? 1 : 0;
+
                 juce::AudioBuffer<float> view (audio.getArrayOfWritePointers(), c.channels, pos, n);
                 p.processBlock (view, midi);
             }
 
             outDir.getChildFile (k.name + "__" + tag (c) + ".zero")
                 .replaceWithText (juce::String (nominalZeroBlocks) + " " + juce::String (lastNominalZeroEnd, 9));
+            outDir.getChildFile (k.name + "__" + tag (c) + ".qlim").replaceWithText (juce::String (qLimitBlocks));
 
             juce::FileOutputStream out (outDir.getChildFile (k.name + "__" + tag (c) + ".f32"));
             out.setPosition (0);
@@ -314,12 +389,13 @@ std::vector<float> readFloats (const juce::File& f)
     return v;
 }
 
-// Every difference must come from a config that passed through nominal 0 dB;
-// anything else is reported as UNEXPECTED and fails the run.
-int compare (const juce::File& a, const juce::File& b, bool strict)
+// Every difference must come from a config that passed through nominal 0 dB
+// (unless strict) or, with qLimit, from one where a shelf or cut was above
+// its Q limit; anything else is reported as UNEXPECTED and fails the run.
+int compare (const juce::File& a, const juce::File& b, bool strict, bool qLimit)
 {
-    std::printf ("%-27s %6s %6s %9s %10s %8s %9s %9s  %s\n",
-                 "case", "ident", "0dB", "diff smp", "max|diff|", "dBFS", "lastDiff", "settle", "verdict");
+    std::printf ("%-29s %6s %6s %6s %9s %10s %8s %9s %9s  %s\n",
+                 "case", "ident", "0dB", "Qlim", "diff smp", "max|diff|", "dBFS", "lastDiff", "settle", "verdict");
     int failures = 0;
 
     for (const auto& k : cases())
@@ -327,7 +403,8 @@ int compare (const juce::File& a, const juce::File& b, bool strict)
         if (! a.getChildFile (k.name + ".state").existsAsFile())
             continue; // not available in this base version
 
-        int identical = 0, total = 0, zeroConfigs = 0, unexpected = 0;
+        int identical = 0, total = 0, zeroConfigs = 0, qLimitConfigs = 0, unexpected = 0;
+        bool qLimitDiff = false;
         long long differing = 0;
         double maxDiff = 0.0, lastDiffSeconds = 0.0, maxSettle = 0.0;
 
@@ -341,6 +418,8 @@ int compare (const juce::File& a, const juce::File& b, bool strict)
             const bool passedZero = zero.size() == 2 && zero[0].getIntValue() > 0;
             const auto lastZeroEnd = zero.size() == 2 ? zero[1].getDoubleValue() : 0.0;
             zeroConfigs += passedZero ? 1 : 0;
+            const bool passedQLimit = a.getChildFile (name + ".qlim").loadFileAsString().getIntValue() > 0;
+            qLimitConfigs += passedQLimit ? 1 : 0;
 
             if (x.empty() || x.size() != y.size())
             {
@@ -371,8 +450,12 @@ int compare (const juce::File& a, const juce::File& b, bool strict)
             if (d > 0)
             {
                 lastDiffSeconds = std::max (lastDiffSeconds, configLastDiff);
-                maxSettle = std::max (maxSettle, configLastDiff - lastZeroEnd); // time to converge after leaving 0 dB
-                if (strict || ! passedZero)
+                const bool allowedZero = ! strict && passedZero;
+                const bool allowedQLimit = qLimit && passedQLimit;
+                if (allowedZero)
+                    maxSettle = std::max (maxSettle, configLastDiff - lastZeroEnd); // time to converge after leaving 0 dB
+                qLimitDiff = qLimitDiff || allowedQLimit;
+                if (! allowedZero && ! allowedQLimit)
                     ++unexpected;
             }
 
@@ -381,15 +464,17 @@ int compare (const juce::File& a, const juce::File& b, bool strict)
         }
 
         failures += unexpected;
-        std::printf ("%-27s %2d/%-3d %2d/%-3d %9lld %10.3g %8s %8.3fs %8.3fs  %s\n", k.name.c_str(), identical, total,
-                     zeroConfigs, total, differing, maxDiff,
+        std::printf ("%-29s %2d/%-3d %2d/%-3d %2d/%-3d %9lld %10.3g %8s %8.3fs %8.3fs  %s\n", k.name.c_str(), identical, total,
+                     zeroConfigs, total, qLimitConfigs, total, differing, maxDiff,
                      maxDiff > 0.0 ? juce::String (20.0 * std::log10 (maxDiff), 1).toRawUTF8() : "-",
                      lastDiffSeconds, std::max (0.0, maxSettle),
-                     unexpected > 0 ? "UNEXPECTED" : (differing > 0 ? "deliberate (0 dB)" : "bit-identical"));
+                     unexpected > 0 ? "UNEXPECTED" : (differing == 0 ? "bit-identical" : (qLimitDiff ? "deliberate (Q limit)" : "deliberate (0 dB)")));
     }
 
-    std::printf ("%s\n", failures == 0 ? (strict ? "RESULT: OK (strict: no differences)" : "RESULT: OK (all differences explained by nominal 0 dB)")
-                                        : "RESULT: FAIL");
+    const char* ok = qLimit ? (strict ? "RESULT: OK (strict: differences only where a shelf/cut was above its Q limit)"
+                                      : "RESULT: OK (all differences explained by nominal 0 dB or the Q limit)")
+                            : (strict ? "RESULT: OK (strict: no differences)" : "RESULT: OK (all differences explained by nominal 0 dB)");
+    std::printf ("%s\n", failures == 0 ? ok : "RESULT: FAIL");
     return failures == 0 ? 0 : 1;
 }
 } // namespace
@@ -404,9 +489,16 @@ int main (int argc, char** argv)
                        argc > 4 ? juce::File (juce::String (argv[4])) : juce::File());
 
     if (mode == "compare" && argc >= 4)
-        return compare (juce::File (juce::String (argv[2])), juce::File (juce::String (argv[3])),
-                        argc > 4 && juce::String (argv[4]) == "--strict");
+    {
+        bool strict = false, qLimit = false;
+        for (int i = 4; i < argc; ++i)
+        {
+            strict = strict || juce::String (argv[i]) == "--strict";
+            qLimit = qLimit || juce::String (argv[i]) == "--qlimit";
+        }
+        return compare (juce::File (juce::String (argv[2])), juce::File (juce::String (argv[3])), strict, qLimit);
+    }
 
-    std::fprintf (stderr, "usage: render <e0_dir> <out_dir> [fixtures] | compare <e0_out> <e1a_out>\n");
+    std::fprintf (stderr, "usage: render <base_dir> <out_dir> [fixtures] | compare <base_out> <new_out> [--strict] [--qlimit]\n");
     return 2;
 }

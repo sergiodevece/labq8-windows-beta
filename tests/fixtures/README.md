@@ -1,4 +1,4 @@
-# Fixtures de estado E0 y E1a
+# Fixtures de estado E0, E1a y E1b
 
 Estados reales del plugin generados con las fuentes de cada commit
 (`git archive <commit> src`), compiladas con JUCE 9.0.3 en un directorio
@@ -31,3 +31,12 @@ docs/ARCHITECTURE.md).
 | `e1a_from_e0_custom.bin` | `e0_custom.bin` abierto en E1a y guardado de nuevo (migrado v1 → v2) | `9b810297708e6b5652f0cf5f340e7dcd6cd85c038119d451378ff107084ebdb0` |
 
 Cada `.bin` va acompañado de su `.xml` legible.
+
+## E1b (`1e8db0b`, estado v3) — [e1b_state_dump.cpp.txt](e1b_state_dump.cpp.txt)
+
+Para las pruebas de Q efectivo de E1b.1.
+
+| Archivo | Contenido | SHA-256 del .bin |
+|---|---|---|
+| `e1b_high_q.bin` | 8 bandas con tipos; b1 Low Shelf Q 18, b2 High Shelf Q 4, b3 Low Cut Q 10 y b4 High Cut Q 2,5 (por encima del límite); Bell y Notch con Q 18; un shelf y un corte por debajo del límite | `ac3a1c332fa34079f4b920a6e7b7e0ea15b6b9769518692ca7cab079e54063b1` |
+| `e1b_within_limits.bin` | 8 bandas con tipos; shelves con Q ≤ 1 y cortes con Q ≤ 2 (dos cortes justo en "2,00", guardado como 2,0000002384); b8 en bypass | `59492ba20a4e8f04ace97f99e59d43e4c84e945d0fa05451dab01ef89f4d2bdb` |

@@ -111,7 +111,10 @@ void EqBand::applyTargets (Path& path, bool snap) noexcept
     // gain (unused by cuts, notch and dry, but kept continuous).
     const auto f = clampFrequency (requested.frequencyHz, sampleRate);
     const auto g = (requested.bypassed && isGainKind (path.kind)) ? 0.0 : clampGainDb (requested.gainDb);
-    const auto q = clampQ (requested.q);
+    // Each path designs with the effective Q of its own topology (E1b.1);
+    // the limit acts on the target, so the 20 ms ramp still applies to it.
+    const auto q = path.kind == dryKind ? clampQ (requested.q)
+                                        : effectiveQ (filterTypeFromIndex (path.kind), clampQ (requested.q));
 
     if (snap)
     {

@@ -4,11 +4,13 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: E1b.** Ocho bandas independientes en cascada, cada una con
-seis topologías seleccionables (Bell, Low Shelf, High Shelf, Low Cut y High
-Cut de 12 dB/oct, Notch), crossfade sin clicks al cambiar de tipo, bypass por
-banda, estado v3 compatible con sesiones E0 y E1a, editor genérico de
-desarrollo y 68 pruebas que se ejecutan sin DAW.
+**Fase actual: E1b.1** (sobre E1b, `1e8db0b`). Ocho bandas independientes en
+cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
+Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
+cambiar de tipo, bypass por banda, estado v3 compatible con sesiones E0, E1a
+y E1b, editor genérico de desarrollo y 75 pruebas que se ejecutan sin DAW.
+E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
+guardado.
 
 ## Requisitos
 
@@ -55,15 +57,24 @@ Banco de CPU (en Release; no forma parte de ctest):
 ./build/release-universal/labq8_bench
 ```
 
+Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
+(E1b.1; tarda unos 30 s en Release):
+
+```bash
+./build/release-universal/labq8_sweep
+```
+
 ## Builds de referencia en este equipo
 
 | Directorio | Fuente | Uso |
 |---|---|---|
 | `build/debug`, `build/release-universal` | E0 (`dfcf25b`) | Referencia E0. No se recompila |
 | `build/e1a-debug`, `build/e1a-release-universal` | E1a (`9095401`) | Referencia E1a. No se recompila |
-| `build/e1b-debug`, `build/e1b-release-universal` | E1b (árbol de trabajo) | Builds de E1b |
+| `build/e1b-debug`, `build/e1b-release-universal` | E1b (`1e8db0b`) | Referencia E1b. No se recompila |
+| `build/e1b1-debug`, `build/e1b1-release-universal` | E1b.1 (árbol de trabajo) | Builds de E1b.1 |
 
-Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios tras E1b.
+Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
+tras E1b, y los de E0, E1a y E1b tras E1b.1.
 
 Comprobación de compatibilidad de audio con versiones anteriores (compila la
 versión base desde git en `build/compat/`):
@@ -96,5 +107,6 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 - [docs/PARAMETER_SCHEMA.md](docs/PARAMETER_SCHEMA.md): IDs estables, rangos y estado.
 - [docs/COMPATIBILITY_E0_E1A.md](docs/COMPATIBILITY_E0_E1A.md): compatibilidad de audio de sesiones E0 en E1a.
 - [docs/COMPATIBILITY_E1B.md](docs/COMPATIBILITY_E1B.md): compatibilidad de audio de sesiones E0 y E1a en E1b (`tests/compat/run_compat.sh`).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E1b.
+- [docs/COMPATIBILITY_E1B1.md](docs/COMPATIBILITY_E1B1.md): compatibilidad de audio de sesiones E0, E1a y E1b con el Q efectivo de E1b.1.
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras E1b.1.
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

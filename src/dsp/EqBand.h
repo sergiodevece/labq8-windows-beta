@@ -31,6 +31,12 @@ struct BandSettings
 // updateIntervalSamples on an absolute sample grid. With type Bell the band
 // is bit-identical to BellBand (verified by tests).
 //
+// Effective Q (E1b.1). Each path ramps towards effectiveQ(type, stored Q):
+// shelves are limited to Q 1 and cuts to Q 2, Bell and notch keep the full
+// range. The limit applies to the target, so a change of effective Q (stored
+// Q crossing the limit, or a type change) is smoothed like any Q change, and
+// moving the stored Q above the limit changes nothing at all.
+//
 // Type changes. Changing the path kind starts a linear crossfade of
 // crossfadeTimeSeconds (rounded to whole samples) from the old path to a new
 // path whose ramps start at the requested settings and whose state starts at
@@ -91,6 +97,7 @@ public:
     const BiquadCoefficients& getCoefficients() const noexcept { return paths[(size_t) active].coefficients; }
     double getCurrentFrequencyHz() const noexcept;
     double getCurrentGainDb() const noexcept { return paths[(size_t) active].gainDb.current; }
+    // Effective Q of the active path (what the filter uses), not the stored Q.
     double getCurrentQ() const noexcept;
 
 private:

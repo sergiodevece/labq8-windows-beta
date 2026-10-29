@@ -1,0 +1,69 @@
+// Writes genuine E1b (1e8db0b) plugin states to disk, for the E1b.1
+// effective-Q fixtures.
+#include "plugin/PluginProcessor.h"
+#include "parameters/ParameterIDs.h"
+
+static void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float v)
+{
+    auto* param = p.getValueTreeState().getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (v));
+}
+
+static void dump (labq8::LabQ8AudioProcessor& p, const juce::File& dir, const char* name)
+{
+    juce::MemoryBlock block;
+    p.getStateInformation (block);
+    dir.getChildFile (juce::String (name) + ".bin").replaceWithData (block.getData(), block.getSize());
+    auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+    dir.getChildFile (juce::String (name) + ".xml").replaceWithText (xml->toString());
+}
+
+struct Band
+{
+    int type;
+    float freq, gain, q;
+    bool bypass;
+};
+
+static void write (const juce::File& dir, const char* name, const Band (&bands)[8])
+{
+    labq8::LabQ8AudioProcessor p;
+    for (int b = 0; b < 8; ++b)
+    {
+        const auto& ids = labq8::params::bandIDs[(size_t) b];
+        setParam (p, ids.type, (float) bands[b].type);
+        setParam (p, ids.frequency, bands[b].freq);
+        setParam (p, ids.gain, bands[b].gain);
+        setParam (p, ids.q, bands[b].q);
+        setParam (p, ids.bypass, bands[b].bypass ? 1.0f : 0.0f);
+    }
+    dump (p, dir, name);
+}
+
+int main (int, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::File dir { juce::String { argv[1] } };
+    dir.createDirectory();
+
+    // Types: 0 Bell, 1 Low Shelf, 2 High Shelf, 3 Low Cut, 4 High Cut, 5 Notch.
+    // Shelves and cuts above the E1b.1 limits (shelf Q 1, cut Q 2), plus
+    // Bell / notch at Q 18 and one shelf and one cut inside the limits.
+    const Band highQ[8] = {
+        { 1, 80.0f, 6.0f, 18.0f, false },     { 2, 8000.0f, -8.0f, 4.0f, false },
+        { 3, 40.0f, 0.0f, 10.0f, false },     { 4, 12000.0f, 0.0f, 2.5f, false },
+        { 0, 1000.0f, 3.0f, 18.0f, false },   { 5, 3000.0f, 0.0f, 18.0f, false },
+        { 1, 200.0f, -3.0f, 0.8f, false },    { 3, 25.0f, 0.0f, 1.5f, false },
+    };
+    write (dir, "e1b_high_q", highQ);
+
+    // Every shelf and cut at or below its limit: must sound exactly like E1b.
+    const Band withinLimits[8] = {
+        { 1, 100.0f, 4.0f, 1.0f, false },     { 2, 6000.0f, -5.0f, 1.0f, false },
+        { 3, 30.0f, 0.0f, 2.0f, false },      { 4, 15000.0f, 0.0f, 2.0f, false },
+        { 0, 1000.0f, -6.0f, 18.0f, false },  { 5, 60.0f, 0.0f, 18.0f, false },
+        { 1, 250.0f, 2.0f, 0.5f, false },     { 4, 18000.0f, 0.0f, 0.7071f, true },
+    };
+    write (dir, "e1b_within_limits", withinLimits);
+    return 0;
+}

@@ -37,6 +37,16 @@ En total son 40 parámetros, todos automatizables. Además, el DSP limita la
 frecuencia a 0,49·fs, convierte NaN/Inf en el valor por defecto, y el
 adaptador trata |ganancia| < 0,005 dB como 0 exacto (ver ARCHITECTURE.md).
 
+**Q guardado y Q efectivo (E1b.1):**
+- `b{n}_q` guarda y automatiza el valor del usuario en todo su rango (0,1–18)
+  para cualquier tipo.
+- El filtro usa como mucho **Q 1 en Low/High Shelf y Q 2 en Low/High Cut**;
+  Bell y Notch usan el rango completo.
+- El valor guardado no se modifica nunca: al volver a Bell, una banda con Q 18
+  guardado vuelve a usar Q 18.
+- Detalles, medidas y propuesta de UI en
+  [ARCHITECTURE.md](ARCHITECTURE.md#q-guardado-y-q-efectivo-e1b1).
+
 ### Tipos de filtro (`b{n}_type`): índices congelados
 
 | Índice | Nombre (choice) | `dsp::FilterType` | Usa ganancia | Neutro a 0 dB |

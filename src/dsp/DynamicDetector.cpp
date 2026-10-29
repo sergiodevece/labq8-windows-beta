@@ -22,7 +22,7 @@ void DynamicDetector::prepare (double newSampleRate, int numChannels) noexcept
 void DynamicDetector::reset() noexcept
 {
     filters.fill ({});
-    meanSquare.fill (0.0);
+    meanSquare = {};
 }
 
 void DynamicDetector::setRegion (double frequencyHz, double q) noexcept
@@ -68,36 +68,46 @@ void DynamicDetector::process (const float* const* channels, int numChannels, in
     };
 
     const auto c = windowCoefficient;
-    auto ms0 = meanSquare[0], ms1 = meanSquare[1];
 
-    for (int i = 0; i < numSamples; ++i)
+    if (link == DetectorLink::mono || active == 1)
     {
-        double power = 0.0;
-
-        if (link == DetectorLink::mono || active == 1)
+        auto& ms = meanSquare[0];
+        for (int i = 0; i < numSamples; ++i)
         {
             double x = 0.0;
             for (int ch = 0; ch < active; ++ch)
                 x += sample (ch, i);
             const auto y = filter (filters[0], x / active);
-            power = y * y;
+            ms[0] += c * (y * y - ms[0]);
+            ms[1] += c * (ms[0] - ms[1]);
         }
-        else
-        {
-            for (int ch = 0; ch < active; ++ch)
-            {
-                const auto y = filter (filters[(size_t) ch], sample (ch, i));
-                power = link == DetectorLink::maxLinked ? std::max (power, y * y) : power + y * y;
-            }
-            if (link == DetectorLink::energyLinked)
-                power /= active;
-        }
-
-        ms0 += c * (power - ms0);
-        ms1 += c * (ms0 - ms1);
+        linkedChannels = 1;
+        return;
     }
 
-    meanSquare = { ms0, ms1 };
+    for (int ch = 0; ch < active; ++ch)
+    {
+        auto& ms = meanSquare[(size_t) ch];
+        auto& f = filters[(size_t) ch];
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto y = filter (f, sample (ch, i));
+            ms[0] += c * (y * y - ms[0]);
+            ms[1] += c * (ms[0] - ms[1]);
+        }
+    }
+    linkedChannels = active;
+}
+
+double DynamicDetector::getMeanSquare() const noexcept
+{
+    if (link == DetectorLink::mono || linkedChannels <= 1)
+        return meanSquare[0][1];
+
+    double linked = 0.0;
+    for (int ch = 0; ch < linkedChannels; ++ch)
+        linked = link == DetectorLink::maxLinked ? std::max (linked, meanSquare[(size_t) ch][1]) : linked + meanSquare[(size_t) ch][1];
+    return link == DetectorLink::energyLinked ? linked / linkedChannels : linked;
 }
 
 void DynamicDetector::sanitise() noexcept
@@ -115,13 +125,14 @@ void DynamicDetector::sanitise() noexcept
             clean (section->s2);
         }
 
-    for (auto& v : meanSquare)
-        clean (v);
+    for (auto& channel : meanSquare)
+        for (auto& v : channel)
+            clean (v);
 }
 
 double DynamicDetector::getLevelDb() const noexcept
 {
-    const auto twoMs = 2.0 * meanSquare[1];
+    const auto twoMs = 2.0 * getMeanSquare();
     return twoMs > 0.0 ? std::max (levelFloorDb, 10.0 * std::log10 (twoMs)) : levelFloorDb;
 }
 } // namespace labq8::dsp

@@ -1,9 +1,7 @@
 #pragma once
 
-#include "dsp/DynamicDetector.h"
-#include "dsp/DynamicGainLaw.h"
+#include "dsp/DynamicSection.h"
 #include "dsp/EqBand.h"
-#include "dsp/LinearRamp.h"
 
 namespace labq8::dsp
 {
@@ -21,22 +19,9 @@ struct DynamicBellSettings
     double releaseMs    = 100.0;
 };
 
-namespace dynamics::limits
-{
-    inline constexpr double minThresholdDb = -80.0, maxThresholdDb = 24.0;
-    inline constexpr double minRangeDb = 0.0, maxRangeDb = 24.0;
-    inline constexpr double minAttackMs = 0.5, maxAttackMs = 500.0;
-    inline constexpr double minReleaseMs = 5.0, maxReleaseMs = 5000.0;
-
-    // Below this the smoothed reduction snaps to exactly 0 once the target is
-    // 0, so a band at rest is bit-identical to the static band. 1e-4 dB is a
-    // gain step of 1.2e-5 (about -98 dB relative), reached after
-    // ln(R / 1e-4) release time constants (about 11 for R = 6 dB).
-    inline constexpr double restSnapDb = 1.0e-4;
-} // namespace dynamics::limits
-
-// One dynamic Bell band (E2a prototype): a static EqBand (type Bell) whose
-// gain is reduced by the dynamic engine.
+// One dynamic Bell band (E2a prototype, kept for single-band tests): a static
+// EqBand (type Bell) whose gain is reduced by a DynamicSection. EqCore uses
+// the same DynamicSection for its eight bands (E2b).
 //
 // Per control tick (EqBand's 16-sample grid, absolute since prepare()):
 //   1. ramps for threshold, range and the enable fade advance (20 ms);
@@ -58,7 +43,7 @@ class DynamicBellBand
 public:
     static constexpr int maxChannels = EqBand::maxChannels;
     static constexpr int controlIntervalSamples = EqBand::updateIntervalSamples;
-    static constexpr double rampTimeSeconds = EqBand::rampTimeSeconds;
+    static_assert (DynamicSection::controlIntervalSamples == EqBand::updateIntervalSamples);
 
     DynamicBellBand() noexcept;
 
@@ -67,29 +52,23 @@ public:
 
     // Real-time safe. Values are clamped to dynamics::limits and the band limits.
     void setTargets (const DynamicBellSettings& settings) noexcept;
-    void setDetectorLink (DetectorLink link) noexcept { detector.setLink (link); }
+    void setDetectorLink (DetectorLink link) noexcept { section.setDetectorLink (link); }
 
     // Real-time safe, in place.
     void process (float* const* channels, int numChannels, int numSamples) noexcept;
 
-    double getDetectorLevelDb() const noexcept { return detectorActive ? detector.getLevelDb() : DynamicDetector::levelFloorDb; }
+    double getDetectorLevelDb() const noexcept { return section.getDetectorLevelDb(); }
     // Reduction applied at the last tick (dB, >= 0).
-    double getGainReductionDb() const noexcept { return -band.getGainModulationDb(); }
+    double getGainReductionDb() const noexcept { return section.getGainReductionDb(); }
     const EqBand& getBand() const noexcept { return band; }
     double getSampleRate() const noexcept { return sampleRate; }
 
 private:
-    void controlTick() noexcept;
-
     EqBand band;
-    DynamicDetector detector;
-    dynamics::GainBallistics ballistics;
-    LinearRamp thresholdDb, rangeDb, enable;
+    DynamicSection section;
     DynamicBellSettings requested;
 
     double sampleRate = 44100.0;
-    int rampTicks = 1;
     int samplesUntilTick = 0;
-    bool detectorActive = false;
 };
 } // namespace labq8::dsp

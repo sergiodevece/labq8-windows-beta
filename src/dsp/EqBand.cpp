@@ -19,6 +19,13 @@ std::optional<FilterType> EqBand::filterOf (int kind) noexcept
     return filterTypeFromIndex (kind);
 }
 
+double EqBand::modulationFor (int kind) const noexcept
+{
+    // E2b: only the Bell is dynamic. Shelves keep their static gain until a
+    // shelf detection region is defined (docs/DYNAMICS_E2B.md).
+    return kind == static_cast<int> (FilterType::bell) ? gainModulationDb : 0.0;
+}
+
 bool EqBand::isGainKind (int kind) noexcept
 {
     return kind != dryKind && usesGain (filterTypeFromIndex (kind));
@@ -49,7 +56,7 @@ void EqBand::setGainModulationDb (double modulationDb) noexcept
     // the next control tick (tickPath).
     if (modulationDb != 0.0)
         for (auto& path : paths)
-            if (isGainKind (path.kind))
+            if (modulationFor (path.kind) != 0.0)
                 path.idle = false;
 }
 
@@ -115,7 +122,7 @@ void EqBand::initialisePath (Path& path, int kind) noexcept
     applyTargets (path, true);
     path.states.fill ({});
     updateCoefficients (path);
-    path.idle = kind == dryKind || (isGainKind (kind) && path.gainDb.current == 0.0 && gainModulationDb == 0.0);
+    path.idle = kind == dryKind || (isGainKind (kind) && path.gainDb.current == 0.0 && modulationFor (kind) == 0.0);
 }
 
 void EqBand::updateCoefficients (Path& path) const noexcept
@@ -128,7 +135,7 @@ void EqBand::updateCoefficients (Path& path) const noexcept
 
     // Gain modulation (E2a) only acts on gain topologies. With no modulation
     // the gain passed to the designer is exactly the E1b.1 one.
-    const auto modulation = isGainKind (path.kind) ? gainModulationDb : 0.0;
+    const auto modulation = modulationFor (path.kind);
     path.appliedModulationDb = modulation;
 
     path.coefficients = designFilter (filterTypeFromIndex (path.kind), sampleRate,
@@ -147,7 +154,7 @@ void EqBand::tickPath (Path& path) noexcept
     if (path.kind == dryKind)
         return;
 
-    const bool modulationMoving = isGainKind (path.kind) && path.appliedModulationDb != gainModulationDb;
+    const bool modulationMoving = path.appliedModulationDb != modulationFor (path.kind);
 
     path.interpolating = false;
 
@@ -181,7 +188,7 @@ void EqBand::tickPath (Path& path) noexcept
 
     // Only gain topologies are neutral at 0 dB; cuts and notch never go idle.
     if (isGainKind (path.kind) && ! path.idle && path.gainDb.isSettled() && path.gainDb.current == 0.0
-        && gainModulationDb == 0.0 && ! path.interpolating && ! residual)
+        && modulationFor (path.kind) == 0.0 && ! path.interpolating && ! residual)
     {
         path.states.fill ({});
         path.idle = true;

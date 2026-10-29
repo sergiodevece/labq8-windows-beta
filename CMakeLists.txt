@@ -35,6 +35,7 @@ add_library(labq8_dsp STATIC
     src/dsp/EqBand.cpp
     src/dsp/EqCore.cpp
     src/dsp/DynamicDetector.cpp
+    src/dsp/DynamicSection.cpp
     src/dsp/DynamicBellBand.cpp)
 
 target_include_directories(labq8_dsp PUBLIC src)
@@ -109,6 +110,7 @@ if(LABQ8_BUILD_TESTS)
         tests/ProcessorE1bTests.cpp
         tests/EffectiveQTests.cpp
         tests/DynamicTests.cpp
+        tests/EqCoreDynamicTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

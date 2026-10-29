@@ -38,8 +38,10 @@ struct BandSettings
 // Q crossing the limit, or a type change) is smoothed like any Q change, and
 // moving the stored Q above the limit changes nothing at all.
 //
-// Gain modulation (E2a). setGainModulationDb() adds a dB offset to the gain
-// of gain topologies (Bell, shelves) from the next control tick. The caller
+// Gain modulation (E2a; Bell only since E2b). setGainModulationDb() adds a dB
+// offset to the gain of the Bell path(s) from the next control tick; shelves,
+// cuts and notch ignore it, so after a type change away from Bell no
+// modulation remains on the new path. The caller
 // (the dynamic engine) supplies an already smoothed control signal on the
 // tick grid; a change is spread over the tick by interpolating the biquad
 // coefficients linearly, sample by sample, from the previous design to the
@@ -137,6 +139,7 @@ private:
 
     static std::optional<FilterType> filterOf (int kind) noexcept;
     static bool isGainKind (int kind) noexcept;
+    double modulationFor (int kind) const noexcept;
     int kindFor (const BandSettings& s) const noexcept;
 
     void applyTargets (Path& path, bool snap) noexcept;

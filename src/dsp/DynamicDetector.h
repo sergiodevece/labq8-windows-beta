@@ -10,8 +10,8 @@ namespace labq8::dsp
 enum class DetectorLink
 {
     mono,         // average of the channels, filtered once
-    maxLinked,    // each channel filtered; the louder channel drives (default)
-    energyLinked, // each channel filtered; mean energy of the channels drives
+    maxLinked,    // each channel filtered and averaged; the louder level drives (default)
+    energyLinked, // each channel filtered and averaged; the mean energy drives
 };
 
 // Level detector of the dynamic engine (E2a). No JUCE, no allocation.
@@ -22,8 +22,9 @@ enum class DetectorLink
 // peak) at the band frequency and Q: 4th order, exactly 0 dB at f0 for every
 // f0 and Q, 12 dB/oct skirts.
 //
-// Level: mean square of the band-passed signal, smoothed by two cascaded
-// one-pole filters with time constant windowSeconds(f0) = 0.5 / f0 (clamped
+// Level: mean square of the band-passed signal of each channel, smoothed by
+// two cascaded one-pole filters per channel, then linked (max or mean of the
+// channel levels, E2b); mono links before filtering. Smoothing: with time constant windowSeconds(f0) = 0.5 / f0 (clamped
 // to [0.1, 25] ms): about one period of f0, enough to remove the 2 f0 ripple
 // of a sine (+/-0.1 dB) without blurring transients more than necessary.
 //
@@ -61,7 +62,9 @@ public:
     // Called once per control tick by the owner.
     void sanitise() noexcept;
 
-    double getMeanSquare() const noexcept { return meanSquare[1]; }
+    // Linked mean square (the value the level is computed from).
+    double getMeanSquare() const noexcept;
+    double getChannelMeanSquare (int channel) const noexcept { return meanSquare[(size_t) channel][1]; }
     double getLevelDb() const noexcept;
 
 private:
@@ -79,7 +82,8 @@ private:
 
     BiquadCoefficients bandPass;
     std::array<ChannelFilter, maxChannels> filters {};
-    std::array<double, 2> meanSquare {};
+    std::array<std::array<double, 2>, maxChannels> meanSquare {};
+    int linkedChannels = 1;
     double windowCoefficient = 1.0;
     double sampleRate = 44100.0, regionFrequency = -1.0, regionQ = -1.0;
     int numPreparedChannels = maxChannels;

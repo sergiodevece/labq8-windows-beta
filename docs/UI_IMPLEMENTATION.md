@@ -295,8 +295,9 @@ aprobada por el usuario. Quedan por registrar en Logic las comprobaciones de
 §9.2. Sin cambios de DSP, parámetros, IDs, estado ni PNG maestro.
 
 **Alcance:** UI-1.1 es solo ergonomía de la interfaz existente. M/S,
-INTENTION y PHASE BEHAVIOR no forman parte de ella y sus controles siguen
-inactivos (§4).
+INTENTION y PHASE BEHAVIOR no forman parte de ella: su dirección de producto
+está en [specs/LABQ8_INTENTION_PHASE_MS_v01.md](specs/LABQ8_INTENTION_PHASE_MS_v01.md),
+sin autorización de implementación, y sus controles siguen inactivos (§4).
 
 **Zoom** (versión vigente tras SMOKE-2 en §9.4; esta es la de SMOKE-2):
 

@@ -17,11 +17,37 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
 | E2c (resto) | Detección estéreo no enlazada / M/S | — |
 | E3 | Validación de formatos (auval, pluginval, Logic) en entorno aislado, empaquetado y firma | — |
-| E4 | M/S y colocación L/R/M/S por banda | — |
+| E4 | M/S y colocación L/R/M/S por banda (dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §1) | — |
 | E5 | Analysis Engine: FFT fuera del hilo de audio (FIFO lock-free) | — |
 | E6 | UI definitiva: completar lo que UI-1 deja pendiente (analizador, M/S, INTENTION en pantalla) | — |
-| E7 | Intention Engine: perfiles como sugerencias | — |
+| E7 | Intention Engine: perfiles como sugerencias (dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §2) | — |
 | E8 | Variante de mastering | — |
+
+## Especificación conceptual: INTENTION, PHASE BEHAVIOR y M/S
+
+`docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md` (v0.1, 30-10-2026) recoge la
+dirección de producto aprobada. **No autoriza ninguna implementación**: cada
+etapa requiere su propia fase y autorización, después de UI-1.1. Fase de
+PHASE BEHAVIOR por asignar.
+
+- **Decisiones conceptuales aprobadas:** sustituir L/R por MID/SIDE como
+  selector del banco editado en modo M/S (un banco de ocho bandas por canal
+  M/S); los 12 presets de INTENTION por nombre y objetivo (no por valores);
+  PHASE BEHAVIOR con dos escenarios complementarios, análisis interno de una
+  pista y comparación con una señal externa por sidechain; flujo
+  ANALYZE → PROPOSE → APPLY, con aplicación solo tras aprobación del usuario,
+  A/B y deshacer.
+- **Pendiente de diseño técnico:** arquitectura M/S, migración de estado y
+  parámetros, automatización por banco y entradas mono; valores reales de los
+  presets, estado Modified, presets de usuario y alcance en M/S; NATIVE
+  (selector), PHASE MAP y MONO WATCH (medición y visualización, sin procesado);
+  sidechain externo (buses, límites del host, latencia, fiabilidad de la
+  medida) para LOW END LOCK y MULTI-MIC ALIGN.
+- **Experimental (investigación y validación musical):** calibración de
+  presets y umbrales dinámicos con material real; LOW END LOCK y MULTI-MIC
+  ALIGN como I+D; PHASE SCULPT (modelado de fase por regiones, p. ej.
+  all-pass), sujeto a viabilidad, utilidad musical, estabilidad y CPU. Una
+  variante de fase lineal no está aprobada.
 
 ## Pendiente tras UI-1 y UI-1.1 (no iniciado, sin fase asignada)
 

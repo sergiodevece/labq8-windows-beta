@@ -132,4 +132,5 @@ copia el AU a `~/Library/Audio/Plug-Ins/Components`, se niega mientras Logic
 - [docs/design/README.md](docs/design/README.md): diseño gráfico aprobado APPROVED_01 (congelado).
 - [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 y UI-1.1 (arquitectura, assets derivados, controles, zoom, edición desde los nodos).
 - [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-1.1.
+- [docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md](docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md): especificación conceptual de INTENTION, PHASE BEHAVIOR y M/S (no autorizada para implementación).
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

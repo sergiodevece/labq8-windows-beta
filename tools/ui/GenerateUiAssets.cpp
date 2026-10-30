@@ -32,6 +32,8 @@
 //                          cut to the pill shape (alpha)
 //   dynamic_switch_off.png the same pill mirrored and desaturated (off,
 //                          approved 29-10-2026)
+//   meter_lit.png          the master's lit meter cells with their glow
+//                          (UI-2a: the editor shows them up to the level)
 //
 // Usage: labq8_ui_assetgen <master.png> <output_dir>
 
@@ -496,7 +498,8 @@ int main (int argc, char** argv)
 
     const bool ok = writePng (background, outDir.getChildFile ("background.png"))
                  && writePng (on, outDir.getChildFile ("dynamic_switch_on.png"))
-                 && writePng (switchOff (on), outDir.getChildFile ("dynamic_switch_off.png"));
+                 && writePng (switchOff (on), outDir.getChildFile ("dynamic_switch_off.png"))
+                 && writePng (crop (master.convertedToFormat (juce::Image::ARGB), g::meterLitSprite), outDir.getChildFile ("meter_lit.png"));
     std::printf ("%s\n", ok ? "assets written" : "FAILED to write assets");
     return ok ? 0 : 1;
 }

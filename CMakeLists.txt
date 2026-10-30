@@ -47,6 +47,7 @@ set(LABQ8_HOST_ADAPTER_SOURCES
     src/parameters/ParameterLayout.cpp
     src/parameters/StateMigration.cpp
     src/ui/LabQ8Editor.cpp
+    src/ui/LevelMeterView.cpp
     src/ui/UiModel.cpp
     src/ui/UiPreferences.cpp)
 
@@ -59,7 +60,8 @@ juce_add_binary_data(labq8_ui_assets
     SOURCES
         assets/ui/background.png
         assets/ui/dynamic_switch_on.png
-        assets/ui/dynamic_switch_off.png)
+        assets/ui/dynamic_switch_off.png
+        assets/ui/meter_lit.png)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -128,6 +130,7 @@ if(LABQ8_BUILD_TESTS)
         tests/EqCoreDynamicTests.cpp
         tests/ProcessorDynamicTests.cpp
         tests/EditorTests.cpp
+        tests/MeterTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

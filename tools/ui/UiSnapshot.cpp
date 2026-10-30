@@ -14,6 +14,10 @@
 //        band in bypass and a non-Bell band with Dynamic EQ disabled.
 //        --ui11 writes the UI-1.1 captures: band ON / OFF buttons, Q
 //        handles per filter type and the editor at 100 / 60 / 40 / 140 %.
+//        --ui2a writes the UI-2a meter captures: real audio through the
+//        processor at known levels (silence, the master's level, over
+//        level in amber and red, mono, independent channels) and the
+//        difference with the master's meters.
 // The user's zoom preference is never read or written (kept in memory), and
 // every zoom is allowed whatever the screens of the machine.
 
@@ -23,7 +27,10 @@
 #include "ui/UiGeometry.h"
 #include "ui/UiPreferences.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <functional>
+#include <vector>
 
 namespace
 {
@@ -182,6 +189,135 @@ int captures (const juce::File& outDir)
     return ok ? 0 : 1;
 }
 } // namespace ui11
+
+//==============================================================================
+// UI-2a captures: the IN / OUT meters after real audio at known levels.
+namespace ui2a
+{
+// The editor after one frame of the meters, the processor having played a
+// 1 kHz sine whose crest is `inDb` dBFS on L and `inDbRight` on R, with a
+// Bell of `bellDb` at 1 kHz (OUT = IN when 0).
+juce::Image render (double inDb, double inDbRight, float bellDb = 0.0f, int channels = 2, float zoom = 1.0f,
+                    std::function<void (labq8::ui::LabQ8Editor&)> measure = {})
+{
+    labq8::LabQ8AudioProcessor processor;
+    const auto set = channels == 1 ? juce::AudioChannelSet::mono() : juce::AudioChannelSet::stereo();
+    juce::AudioProcessor::BusesLayout layout;
+    layout.inputBuses.add (set);
+    layout.outputBuses.add (set);
+    processor.setBusesLayout (layout);
+    setMasterState (processor);
+    for (const auto& ids : labq8::params::bandIDs)
+        setParam (processor, ids.gain, 0.0f);
+    for (const auto& ids : labq8::params::dynamicIDs)
+        setParam (processor, ids.enabled, 0.0f);
+    setParam (processor, labq8::params::bandIDs[3].frequency, 1000.0f);
+    setParam (processor, labq8::params::bandIDs[3].gain, bellDb);
+    setParam (processor, labq8::params::bandIDs[3].q, 1.0f);
+    processor.prepareToPlay (48000.0, 480);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<labq8::ui::LabQ8Editor*> (base.get());
+    editor->setZoom (zoom);
+
+    const double amplitude[] = { inDb < -200.0 ? 0.0 : std::pow (10.0, inDb / 20.0),
+                                 inDbRight < -200.0 ? 0.0 : std::pow (10.0, inDbRight / 20.0) };
+    juce::AudioBuffer<float> buffer (channels, 480);
+    juce::MidiBuffer midi;
+    for (int block = 0; block < 100; ++block) // 1 s: the Bell has settled
+    {
+        for (int ch = 0; ch < channels; ++ch)
+            for (int i = 0; i < 480; ++i)
+                buffer.setSample (ch, i, (float) (amplitude[ch] * std::sin (2.0 * juce::MathConstants<double>::pi * (block * 480 + i) / 48.0)));
+        if (block == 99)
+            editor->getMeters().advance (0.0); // discard the ramp, keep the last block
+        processor.processBlock (buffer, midi);
+    }
+    editor->getMeters().advance (100.0); // the earlier level has fallen away: only the last block shows
+    if (measure)
+        measure (*editor);
+    return editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f).convertedToFormat (juce::Image::RGB);
+}
+
+juce::Image meters (const juce::Image& editor)
+{
+    return editor.getClippedImage ({ 1380, 196, 180, 300 }).rescaled (360, 600, juce::Graphics::highResamplingQuality);
+}
+
+juce::Image row (const std::vector<juce::Image>& images)
+{
+    juce::Image sheet (juce::Image::RGB, (int) images.size() * images.front().getWidth(), images.front().getHeight(), true);
+    juce::Graphics gr (sheet);
+    for (size_t i = 0; i < images.size(); ++i)
+        gr.drawImageAt (images[i], (int) i * images.front().getWidth(), 0);
+    return sheet;
+}
+
+int captures (const juce::Image& master, const juce::File& outDir)
+{
+    bool ok = true;
+    auto save = [&] (const juce::Image& image, const char* name) { ok = writePng (image, outDir.getChildFile (name)) && ok; };
+
+    const auto silence = render (-300.0, -300.0);
+    const auto masterLevel = render (-1.0, -1.0);   // 17 cells, as drawn in the master
+    const auto amber = render (3.0, 3.0);            // up to +2.8 dB: three amber cells
+    const auto red = render (9.0, 9.0);              // up to +8.9 dB: amber and red
+    const auto full = render (13.0, 13.0);           // every cell
+    save (masterLevel, "ui2a_1_editor_master_level.png");
+    save (row ({ meters (silence), meters (masterLevel), meters (amber), meters (red), meters (full) }),
+          "ui2a_2_states_silence_-1_+3_+9_+13.png");
+    save (row ({ meters (render (-12.0, -30.0)), meters (render (-6.0, -6.0, 6.0f)), meters (render (-6.0, -300.0, 0.0f, 1)) }),
+          "ui2a_3_independent_eq_mono.png");
+
+    // The meters at the smallest and largest zoom (red state).
+    const auto small = render (9.0, 3.0, 0.0f, 2, 0.4f), large = render (9.0, 3.0, 0.0f, 2, 1.4f);
+    save (small.getClippedImage ({ 552, 78, 76, 124 }).rescaled (228, 372, juce::Graphics::highResamplingQuality), "ui2a_4_zoom_40.png");
+    save (large.getClippedImage ({ 1932, 274, 252, 420 }), "ui2a_5_zoom_140.png");
+
+    // Cost of repainting what a meter change repaints (one column with its
+    // glow, through the editor: background and lit cells), software renderer.
+    juce::String timing;
+    for (const auto zoom : { 0.6f, 1.0f, 1.4f })
+        render (9.0, 9.0, 0.0f, 2, zoom, [&] (labq8::ui::LabQ8Editor& editor)
+        {
+            const auto s = editor.getScale();
+            const auto column = juce::Rectangle<float> (1389.0f, 220.0f, 26.0f, 256.0f).transformedBy (juce::AffineTransform::scale (s)).getSmallestIntegerContainer();
+            std::vector<double> times;
+            for (int i = 0; i < 200; ++i)
+            {
+                const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                const auto image = editor.createComponentSnapshot (column, true, 1.0f);
+                times.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+                juce::ignoreUnused (image);
+            }
+            std::sort (times.begin(), times.end());
+            timing << "repaint of one column at " << juce::roundToInt (zoom * 100.0f) << " %: median "
+                   << juce::String (times[times.size() / 2], 3) << " ms, 95th percentile " << juce::String (times[times.size() * 95 / 100], 3) << " ms\n";
+        });
+    std::printf ("%s", timing.toRawUTF8());
+
+    // The master's level against the master, in the meters' area.
+    const juce::Rectangle<int> area (1385, 300, 170, 180);
+    double sum = 0.0;
+    int worst = 0, count = 0;
+    for (int y = area.getY(); y < area.getBottom(); ++y)
+        for (int x = area.getX(); x < area.getRight(); ++x)
+        {
+            const auto a = masterLevel.getPixelAt (x, y), b = master.getPixelAt (x, y);
+            for (const auto d : { std::abs (a.getRed() - b.getRed()), std::abs (a.getGreen() - b.getGreen()), std::abs (a.getBlue() - b.getBlue()) })
+            {
+                sum += d;
+                worst = std::max (worst, d);
+                ++count;
+            }
+        }
+    const auto report = juce::String ("meters at -1 dBFS vs the master, x 1385-1554, y 300-479: mean |difference| ")
+                        + juce::String (sum / count, 3) + ", max " + juce::String (worst) + " (of 255)\n";
+    ok = outDir.getChildFile ("ui2a_report.txt").replaceWithText (report + timing) && ok;
+    std::printf ("%s", report.toRawUTF8());
+    std::printf ("%s\n", ok ? "UI-2a captures written" : "FAILED");
+    return ok ? 0 : 1;
+}
+} // namespace ui2a
 } // namespace
 
 
@@ -244,6 +380,8 @@ int main (int argc, char** argv)
         return finalCaptures (outDir);
     if (argc > 3 && juce::String (argv[3]) == "--ui11")
         return ui11::captures (outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--ui2a")
+        return ui2a::captures (master, outDir);
 
     labq8::LabQ8AudioProcessor processor;
     processor.prepareToPlay (48000.0, 512);

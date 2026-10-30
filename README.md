@@ -4,12 +4,12 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: UI-1.1 cerrada** (ergonomía de la interfaz tras SMOKE-1, sobre UI-1 `13a810f`; SMOKE-3 aprobado). Ocho bandas independientes en
+**Fase actual: UI-2a cerrada** (medidores IN/OUT reales sobre UI-1.1 `13df851`; SMOKE-4 aprobado). Ocho bandas independientes en
 cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
 Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
 cambiar de tipo, bypass por banda, estado v4 compatible con sesiones E0, E1a,
 E1b y E2b, la interfaz del diseño aprobado (UI-1, con zoom, botones ON/OFF y
-edición desde los nodos de UI-1.1) y 125 pruebas que se ejecutan sin DAW.
+edición desde los nodos de UI-1.1, medidores IN/OUT reales de UI-2a) y 135 pruebas que se ejecutan sin DAW.
 E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
 guardado. E2a/E2b añaden el motor dinámico (ocho secciones independientes en
 el núcleo DSP, solo para Bells, detección sobre la entrada común y estéreo
@@ -86,6 +86,8 @@ Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
 | `build/smoke1-release-universal` | UI-1 (`13a810f`, `git archive`) | Build instalado en SMOKE-1. No se recompila |
 | `build/ui11-release-universal` | UI-1.1 (árbol de trabajo) | Build instalado en SMOKE-2. No se recompila |
 | `build/ui11zoom-release-universal` | UI-1.1 + zoom en seis tamaños (árbol de trabajo) | Build instalado en SMOKE-3. No se recompila |
+| `build/ui2a-release-universal` | UI-2a (árbol de trabajo) | Build instalado en SMOKE-4 |
+| `build/ui2a-mutation`, `build/ui2a-tsan` | UI-2a (árbol de trabajo) | Mutaciones (arm64) y ThreadSanitizer (arm64) |
 
 Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
 tras E1b, los de E0, E1a y E1b tras E1b.1, los de E0 a E1b.1 tras E2a, y los
@@ -131,6 +133,6 @@ copia el AU a `~/Library/Audio/Plug-Ins/Components`, se niega mientras Logic
 - [docs/DYNAMICS_E2C1.md](docs/DYNAMICS_E2C1.md): parámetros públicos de la dinámica, riesgos y propuesta de detector para E2c.2.
 - [docs/design/README.md](docs/design/README.md): diseño gráfico aprobado APPROVED_01 (congelado).
 - [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 y UI-1.1 (arquitectura, assets derivados, controles, zoom, edición desde los nodos).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-1.1.
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-2a.
 - [docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md](docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md): especificación conceptual de INTENTION, PHASE BEHAVIOR y M/S (no autorizada para implementación).
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

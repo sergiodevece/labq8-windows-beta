@@ -101,4 +101,46 @@ std::vector<double> cascadeResponseDb (const std::array<BandView, 8>& bands, dou
     }
     return total;
 }
+//==============================================================================
+double meterCellThresholdDb (int cellFromBottom)
+{
+    const auto top = g::numMeterCells - 1 - cellFromBottom; // index from the top
+    if (top == 0)
+        return 12.0;
+    if (top == g::meterZeroCell)
+        return 0.0;
+
+    // Linear between the printed labels (beyond the last two, extended).
+    const auto& cell = g::meterCells[(size_t) top];
+    const auto row = 0.5 * (cell.top + cell.bottom);
+    const auto& scale = g::meterScale;
+    size_t i = 0;
+    while (i + 2 < scale.size() && row > scale[i + 1].y)
+        ++i;
+    const auto& a = scale[i];
+    const auto& b = scale[i + 1];
+    return a.x + (b.x - a.x) * (row - a.y) / (b.y - a.y);
+}
+
+int meterLitCells (double levelDb)
+{
+    int lit = 0;
+    while (lit < g::numMeterCells && levelDb >= meterCellThresholdDb (lit))
+        ++lit;
+    return lit;
+}
+
+MeterColour meterCellColour (int cellFromBottom)
+{
+    const auto threshold = meterCellThresholdDb (cellFromBottom);
+    return threshold <= 0.0 ? MeterColour::green : threshold <= 6.0 ? MeterColour::amber : MeterColour::red;
+}
+
+double MeterBallistics::update (float peak, double seconds)
+{
+    const auto fallen = levelDb - fallDbPerSecond * std::max (0.0, seconds);
+    const auto peakDb = peak > 0.0f ? 20.0 * std::log10 ((double) peak) : restDb;
+    levelDb = std::clamp (std::max (fallen, peakDb), restDb, ceilingDb);
+    return levelDb;
+}
 } // namespace labq8::ui

@@ -2,6 +2,7 @@
 
 #include "dsp/EqCore.h"
 #include "parameters/StateMigration.h"
+#include "plugin/LevelMeter.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -27,6 +28,10 @@ public:
 
     void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
     using AudioProcessor::processBlock;
+    // Host bypass: the default pass-through, metered (IN = OUT = the
+    // unprocessed signal).
+    void processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
+    using AudioProcessor::processBlockBypassed;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -53,6 +58,12 @@ public:
     // not saved, no effect on audio.
     int getUiSelectedBand() const noexcept { return uiSelectedBand; }
     void setUiSelectedBand (int band) noexcept { uiSelectedBand = band; }
+
+    // UI-2a: sample peak of the input (before the EQ) and of the output
+    // (what the host receives). Written by the audio thread, taken by the
+    // editor; they never change the audio.
+    LevelMeter& getInputMeter() noexcept { return inputMeter; }
+    LevelMeter& getOutputMeter() noexcept { return outputMeter; }
 
 private:
     struct BandParameters
@@ -82,6 +93,7 @@ private:
     std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
     dsp::EqCore eq;
     int uiSelectedBand = 0;
+    LevelMeter inputMeter, outputMeter;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

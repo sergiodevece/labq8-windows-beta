@@ -411,7 +411,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
     const auto before = allValues (p);
     int found = 0;
     for (auto* child : editor->getContent().getChildren())
-        for (const auto* name : { "Stereo Mode", "Polarity", "Intention", "Display view", "Phase Behavior", "Level meters" })
+        for (const auto* name : { "Stereo Mode", "Polarity", "Intention", "Display view", "Phase Behavior" })
             if (child->getTitle() == name)
             {
                 ++found;
@@ -419,7 +419,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
                 auto* tip = dynamic_cast<juce::TooltipClient*> (child);
                 LQ_CHECK (tip != nullptr && tip->getTooltip().contains ("not available"), str (name, " explains it is not available"));
             }
-    LQ_CHECK (found == 6, str (found, " of 6 inactive areas"));
+    LQ_CHECK (found == 5, str (found, " of 5 inactive areas (the meters are real since UI-2a)"));
     LQ_CHECK (allValues (p) == before && editor->getSelectedBand() == 0, "inactive controls changed something");
 }
 

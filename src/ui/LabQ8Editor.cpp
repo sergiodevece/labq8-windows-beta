@@ -963,7 +963,7 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     const std::pair<const char*, juce::Rectangle<int>> pending[] = {
         { "Stereo Mode", { 458, 80, 310, 58 } },     { "Polarity", { 816, 80, 98, 58 } },
         { "Intention", { 988, 80, 244, 58 } },       { "Display view", { 370, 198, 940, 36 } },
-        { "Phase Behavior", { 1320, 619, 230, 43 } }, { "Level meters", { 1372, 176, 196, 338 } },
+        { "Phase Behavior", { 1320, 619, 230, 43 } },
     };
     for (const auto& [name, area] : pending)
     {
@@ -972,6 +972,10 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     }
 
     // Above the inactive "Display view" strip that surrounds it.
+    // UI-2a: the IN / OUT meters show the processor's real sample peaks.
+    meters = std::make_unique<LevelMeterView> (audioProcessor.getInputMeter(), audioProcessor.getOutputMeter());
+    content->addAndMakeVisible (*meters);
+
     settingsButton = std::make_unique<SettingsButton> ([this] { showZoomMenu (*settingsButton); });
     content->addAndMakeVisible (*settingsButton);
 

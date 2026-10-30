@@ -161,4 +161,24 @@ inline constexpr std::array<float, 7> plotGridRows { 251.0f, 289.0f, 325.5f, 362
 inline constexpr std::array<Span, 4> meterColumns { { { 1395, 1408 }, { 1420, 1433 }, { 1505, 1518 }, { 1530, 1544 } } };
 inline constexpr float meterLitTop = 304.0f, meterLitBottom = 475.0f;
 inline constexpr float meterTemplateCellRow = 252.0f, meterTemplateGapRow = 248.0f;
+
+// UI-2a: the rows of the 26 cells of every column, top to bottom, measured
+// on the master: the 9 cells above the 17 lit ones from their unlit
+// pattern (the ninth, y 298, is the "0" cell), the 17 lit ones as lit
+// there. The same rows in the four columns.
+struct Rows { float top, bottom; };
+inline constexpr int numMeterCells = 26, meterZeroCell = 8; // index from the top
+inline constexpr std::array<Rows, numMeterCells> meterCells { {
+    { 222, 227 }, { 230, 236 }, { 240, 246 }, { 250, 256 }, { 260, 265 }, { 269, 275 }, { 279, 285 }, { 288, 294 }, { 298, 303 },
+    { 307, 312 }, { 317, 322 }, { 326, 333 }, { 337, 342 }, { 347, 354 }, { 359, 365 }, { 369, 375 }, { 379, 384 },
+    { 388, 394 }, { 398, 405 }, { 409, 416 }, { 421, 426 }, { 431, 436 }, { 440, 445 }, { 449, 454 }, { 458, 463 }, { 468, 472 },
+} };
+// The printed scale between the columns: x = dB, y = centre row of its label.
+inline constexpr std::array<Point, 7> meterScale { { { 12, 224 }, { 6, 262 }, { 0, 299 }, { -6, 339 }, { -12, 380 }, { -24, 431.5f }, { -48, 468 } } };
+// A lit cell is drawn with its glow: the column widened by this much.
+inline constexpr float meterGlowWidth = 6.0f;
+// The master's lit cells (with their glow), cut by the asset generator into
+// meter_lit.png; the editor draws its meters only inside meterArea.
+inline constexpr Rect meterLitSprite { 1389.0f, 302.0f, 162.0f, 176.0f };
+inline constexpr Rect meterArea { 1372.0f, 176.0f, 196.0f, 338.0f };
 } // namespace labq8::ui::geometry

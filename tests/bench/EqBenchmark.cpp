@@ -20,11 +20,16 @@
 //   the thresholds), dyn8-rest (eight detectors running, no reduction: the
 //   detection cost), dyn8-auto (dyn8 plus every band and section retargeted
 //   every block).
+// - UI-2a (--ui2a): cost of the IN / OUT sample-peak meters (LevelMeter),
+//   stereo, 1 s x 9 runs: meters (the two measurements alone, as in the
+//   processor, without EQ), and static8 / dyn8 without and with the meters
+//   around the EQ (runs interleaved, so both see the same machine state).
 // - Load = CPU seconds / audio seconds on one core, single-threaded.
 // Build in Release; Debug numbers are printed with a warning.
 
 #include "dsp/DynamicBellBand.h"
 #include "dsp/EqCore.h"
+#include "plugin/LevelMeter.h"
 
 #include <algorithm>
 #include <array>
@@ -289,6 +294,48 @@ double runEightDynamic (EightDyn kind, double fs, int blockSize, int runs, doubl
     return loads[loads.size() / 2];
 }
 
+// UI-2a: what the processor adds around the EQ: one meter before, one after.
+enum class Metering { metersOnly, eqOnly, eqAndMeters };
+
+struct MeteringResult { double load; float sink; };
+
+MeteringResult runMetering (Metering kind, bool dynamics, double fs, int blockSize, double seconds,
+                            const std::vector<float>& left, const std::vector<float>& right)
+{
+    constexpr double freqs[8] = { 60.0, 150.0, 400.0, 1000.0, 2500.0, 5000.0, 9000.0, 15000.0 };
+    const auto n = left.size();
+    EqCore core;
+    for (int b = 0; b < 8; ++b)
+    {
+        core.setBandTargets (b, BandSettings { freqs[b], 2.0, 3.0, false, FilterType::bell });
+        labq8::dsp::DynamicSettings d;
+        d.enabled = dynamics;
+        d.thresholdDb = -24.0;
+        d.rangeDb = 15.0;
+        d.attackMs = 2.0;
+        d.releaseMs = 30.0;
+        core.setBandDynamics (b, d);
+    }
+    core.prepare (fs, 2);
+    labq8::LevelMeter in, out;
+
+    auto l = left, rr = right;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (size_t pos = 0; pos < n; pos += (size_t) blockSize)
+    {
+        const auto count = (int) std::min<size_t> ((size_t) blockSize, n - pos);
+        float* ch[] = { l.data() + pos, rr.data() + pos };
+        if (kind != Metering::eqOnly)
+            in.measure (ch, 2, count);
+        if (kind != Metering::metersOnly)
+            core.process (ch, 2, count);
+        if (kind != Metering::eqOnly)
+            out.measure (ch, 2, count);
+    }
+    const auto elapsed = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    return { elapsed / seconds, l[n / 2] + rr[n / 3] + in.takePeak (0) + out.takePeak (1) };
+}
+
 std::string machine()
 {
 #if defined(__APPLE__)
@@ -354,6 +401,42 @@ int main (int argc, char** argv)
                     const auto load = runEightDynamic (sc.k, fs, block, 5, 3.0);
                     std::printf ("%-11s %8.0f %6d %10.4f %14.2f\n", sc.name, fs, block, load * 100.0, load * 1.0e9 / fs);
                 }
+        return 0;
+    }
+
+    if (argc > 1 && std::string (argv[1]) == "--ui2a")
+    {
+        std::printf ("UI-2a meters, stereo, 1 s per run, median of 9 runs after 1 warm-up (interleaved)\n\n");
+        std::printf ("%-15s %8s %6s %10s %10s %10s %14s\n", "scenario", "fs", "block", "EQ %", "EQ+met %", "meters %", "meters ns/fr");
+        float sink = 0.0f;
+        for (const bool dynamics : { false, true })
+            for (const double fs : { 48000.0, 96000.0 })
+                for (const int block : { 32, 64, 512 })
+                {
+                    const auto n = (size_t) std::llround (1.0 * fs);
+                    auto left = noise (n, 404), right = noise (n, 405);
+                    std::vector<double> eq, both, meters;
+                    for (int r = 0; r < 10; ++r)
+                    {
+                        const auto a = runMetering (Metering::eqOnly, dynamics, fs, block, 1.0, left, right);
+                        const auto b = runMetering (Metering::eqAndMeters, dynamics, fs, block, 1.0, left, right);
+                        const auto c = runMetering (Metering::metersOnly, dynamics, fs, block, 1.0, left, right);
+                        sink += a.sink + b.sink + c.sink;
+                        if (r > 0)
+                        {
+                            eq.push_back (a.load);
+                            both.push_back (b.load);
+                            meters.push_back (c.load);
+                        }
+                    }
+                    for (auto* v : { &eq, &both, &meters })
+                        std::sort (v->begin(), v->end());
+                    const auto m = meters[meters.size() / 2];
+                    std::printf ("%-15s %8.0f %6d %10.4f %10.4f %10.5f %14.2f\n", dynamics ? "dyn8" : "static8", fs, block,
+                                 eq[eq.size() / 2] * 100.0, both[both.size() / 2] * 100.0, m * 100.0, m * 1.0e9 / fs);
+                }
+        volatile float keep = sink;
+        (void) keep;
         return 0;
     }
 

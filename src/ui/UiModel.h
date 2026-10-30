@@ -36,4 +36,35 @@ struct BandView
 // dynamic gain reduction is not included (no telemetry in UI-1).
 std::vector<double> bandResponseDb (const BandView& band, double sampleRate, const std::vector<double>& frequencies);
 std::vector<double> cascadeResponseDb (const std::array<BandView, 8>& bands, double sampleRate, const std::vector<double>& frequencies);
+
+//==============================================================================
+// UI-2a: IN / OUT sample-peak meters (26 cells per column, counted from the
+// bottom).
+
+// Level (dBFS) at which a cell lights: the printed scale at the cell's
+// centre row, except the "0" cell (exactly 0 dBFS) and the top one (+12).
+double meterCellThresholdDb (int cellFromBottom);
+// Cells lit at `levelDb`: all those whose threshold it reaches (0..26).
+int meterLitCells (double levelDb);
+
+// Colour of a lit cell: green up to 0 dBFS, amber above it up to +6 dBFS,
+// red above +6 dBFS (over level, not confirmed clipping).
+enum class MeterColour { green, amber, red };
+MeterColour meterCellColour (int cellFromBottom);
+
+// Peak ballistics of one column: rises at once to a new peak, falls
+// linearly in dB. Driven by the editor's frames.
+struct MeterBallistics
+{
+    static constexpr double fallDbPerSecond = 11.8;
+    static constexpr double restDb = -100.0;   // fallen below every cell
+    static constexpr double ceilingDb = 13.0;  // above the top cell (+inf)
+
+    // `peak`: linear sample peak since the previous frame (0: none);
+    // `seconds`: time since the previous frame. Returns the level in dB.
+    double update (float peak, double seconds);
+    bool atRest() const noexcept { return levelDb <= restDb; }
+
+    double levelDb = restDb;
+};
 } // namespace labq8::ui

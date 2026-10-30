@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/UiModel.h"
+#include "ui/LevelMeterView.h"
 #include "ui/UiPreferences.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -33,7 +34,8 @@ class SettingsButton;
 //   B. interactive       knobs, Filter Type, Dynamic EQ, band ON/OFF
 //                        buttons, screen nodes and Q handles, settings
 //   C. values / states   displays, band header and colour indicator
-//   D. visualisation     static EQ response and nodes (from the parameters)
+//   D. visualisation     static EQ response and nodes (from the parameters),
+//                        IN / OUT sample-peak meters (UI-2a, LevelMeterView)
 //
 // UI-1.1: the eight buttons only switch their band on / off (b{n}_bypass);
 // bands are selected and edited from their nodes on the screen; the zoom
@@ -97,6 +99,7 @@ public:
     juce::Component& getDynamicSwitch();
     juce::Component& getSettingsButton();
     juce::Component& getScreen();
+    LevelMeterView& getMeters() noexcept { return *meters; }
     bool isBandButtonOn (int band) const;
     juce::Point<float> getNodePosition (int band) const;               // reference space
     std::pair<juce::Point<float>, juce::Point<float>> getQHandleCentres() const; // selected band
@@ -123,6 +126,7 @@ private:
     std::unique_ptr<BypassIndicator> bypassIndicator;
     std::unique_ptr<ResponseScreen> screen;
     std::unique_ptr<SettingsButton> settingsButton;
+    std::unique_ptr<LevelMeterView> meters;
     std::vector<std::unique_ptr<juce::Component>> inactiveAreas;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 7> knobAttachments;
     juce::TooltipWindow tooltips { this, 600 };

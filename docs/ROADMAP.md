@@ -13,7 +13,8 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | **E2c.1** | Parámetros públicos de dinámica (40 nuevos, version hint 4, índices 40–79, rangos del DSP validado) y estado v4 con migración | Cerrada (`3041019`) |
 | **UI-1** | Interfaz del diseño aprobado APPROVED_01: fondo derivado con escalas corregidas, panel compartido de 8 bandas, bypass desde el indicador, Dynamic EQ solo en Bell, pantalla ±24 dB con la respuesta real; controles sin DSP inactivos | Cerrada (`13a810f`); SMOKE-1 en Logic satisfactorio (auval arm64/x86_64) |
 | **UI-1.1** | Ergonomía tras SMOKE-1: zoom en seis tamaños 40–140 % (60 % inicial, preferencia global, menú del icono de configuración, sin tirador de esquina, tamaños que no caben deshabilitados), ocho botones ON/OFF de bypass, selección y edición de bandas desde los nodos con tiradores de Q; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-2 y SMOKE-3 en Logic aprobados (UI_IMPLEMENTATION §9.1, §9.5), zoom en seis tamaños desde §9.4 |
-| UI-2 | Curva dinámica, medidores reales, presentación provisional de INTENTION (según decisiones de UI-1) | — |
+| **UI-2a** | Medidores IN/OUT reales: pico de muestra antes y después del EQ, transporte lock-free, balística en la interfaz, 26 celdas con la escala del diseño, verde / ámbar / rojo, mono en L y R, bypass del host medido; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-4 en Logic aprobado (UI_IMPLEMENTATION §10.1) |
+| UI-2 (resto) | Curva dinámica, presentación provisional de INTENTION (según decisiones de UI-1) | — |
 | E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
 | E2c (resto) | Detección estéreo no enlazada / M/S | — |
 | E3 | Validación de formatos (auval, pluginval, Logic) en entorno aislado, empaquetado y firma | — |

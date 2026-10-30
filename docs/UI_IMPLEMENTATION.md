@@ -2,8 +2,9 @@
 
 **Estado:** UI-1 cerrada (`13a810f`). **UI-1.1** (§9) cambia la ergonomía
 tras SMOKE-1: zoom, botones de banda ON/OFF y edición desde los nodos;
-**cerrada**, aprobada en SMOKE-2 y SMOKE-3 (§9.1, §9.5). Lo que UI-1.1 sustituye
-está señalado en cada apartado.
+**cerrada**, aprobada en SMOKE-2 y SMOKE-3 (§9.1, §9.5). **UI-2a** (§10)
+añade los medidores IN/OUT reales (cerrada, SMOKE-4 aprobado, §10.1). Lo que
+UI-1.1 y UI-2a sustituyen está señalado en cada apartado.
 
 UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
 **LABQ8_UI_DESIGN_APPROVED_01**
@@ -71,6 +72,7 @@ UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
 | `background.png` | `176895c9…40d69` | El maestro sin los elementos que dependen del estado, con las escalas re-rotuladas |
 | `dynamic_switch_on.png` | `f90fc1d5…d85c23f` | El interruptor del maestro (encendido), recortado a la forma de la píldora |
 | `dynamic_switch_off.png` | `3409d491…846f8` | El mismo, reflejado y desaturado (apagado) |
+| `meter_lit.png` | `7bc0aa5f…ed4d4` | UI-2a: las celdas encendidas de los cuatro medidores del maestro, con su brillo (x 1389–1550, y 302–477) |
 
 **Reproducibilidad:** los tres archivos son idénticos byte a byte generados en
 Debug, en Release arm64 y en Release x86_64.
@@ -160,7 +162,7 @@ aviso emergente provisional: "… not available yet".
 | INTENTION | Sin INTENTION ni presets. **El texto "Mix Bus - Glue" es ilustrativo, del diseño**: no representa un preset cargado. Su presentación provisional se resolverá antes del smoke definitivo |
 | Pestañas EQ / SPECTRUM / DYN / ALL, Analyzer, View, ajustes | Sin analizador FFT ni vistas |
 | Phase Behavior ("Minimum Phase") | Investigación futura; el DSP actual es de fase mínima |
-| Medidores IN/OUT | Apagados: no hay medición publicada desde el audio |
+| Medidores IN/OUT | ~~Apagados~~: reales desde UI-2a (§10) |
 
 **En la pantalla:**
 
@@ -509,3 +511,147 @@ arm64 y x86_64 sin avisos, 80 parámetros. Resultado aprobado por el usuario:
 Con esto **UI-1.1 queda aprobada**. Siguen sin registrarse en Logic la
 automatización y la persistencia de sesión (§9.2), cubiertas fuera de Logic
 por las pruebas.
+
+## 10. UI-2a: medidores IN/OUT reales
+
+**Estado:** **cerrada**, sobre `7833bd8`; arquitectura y decisiones
+aprobadas el 30-10-2026; colores ámbar y rojo aprobados sobre las capturas;
+**SMOKE-4 en Logic aprobado** (§10.1). Sin cambios de DSP,
+parámetros, IDs, estado ni PNG maestro. Sin FFT ni visualización de la
+reducción dinámica.
+
+**Medición** (`src/plugin/LevelMeter.h`, adaptador; nada en `src/dsp/`):
+
+- **pico de muestra** (sample peak, dBFS) por canal, por bloque: IN antes de
+  `eq.process` (que trabaja in situ), OUT después (lo que recibe el host); solo
+  lectura, el audio no cambia;
+- **bypass del host** (`processBlockBypassed`): el paso directo de JUCE,
+  medido; IN = OUT = la señal sin procesar, salida idéntica;
+- **mono:** se mide su único canal; la interfaz lo muestra en L y en R (no se
+  genera ni se procesa un segundo canal);
+- muestras NaN o infinitas: +inf (medidor lleno); el audio, como antes;
+- `prepareToPlay` y la apertura del editor descartan los picos anteriores.
+
+**Transporte sin bloqueos:** cuatro `std::atomic<float>` sin locks
+(`static_assert`). El hilo de audio eleva el máximo de cada canal
+(`compare_exchange_weak`, relaxed); la interfaz lo toma y lo pone a 0
+(`exchange`). Ningún pico se pierde entre dos lecturas, sea cual sea el tamaño
+de bloque o el refresco, y el silencio lee exactamente 0. Sin asignaciones ni
+llamadas al sistema en el hilo de audio.
+
+**Interfaz** (`src/ui/LevelMeterView.{h,cpp}`, `UiModel`):
+
+- refresco con la pantalla (`juce::VBlankAttachment`), independiente del
+  temporizador de parámetros (30 Hz); se detiene al cerrar el editor;
+- balística: subida instantánea; caída lineal de **11,8 dB/s** en función del
+  tiempo real transcurrido (independiente de la frecuencia de refresco). El
+  valor se tomó como referencia de la caída de IEC 60268-18 (20 dB en 1,7 s);
+  **no se ha validado la conformidad con esa norma**;
+- **26 celdas** por columna, filas medidas en el maestro (17 encendidas en él
+  desde y 307; 9 por encima, la novena es la celda "0"). Umbral de cada
+  celda: la escala impresa (+12 / +6 / 0 / −6 / −12 / −24 / −48 en las filas
+  224 / 262 / 299 / 339 / 380 / 431,5 / 468) en la fila central de la celda,
+  con la celda "0" exactamente a 0 dBFS y la superior a +12. De abajo arriba:
+  −49,3 · −43,1 · −37,2 · −31,2 · −25,3 · −22,1 · −19,6 · −17,0 · −14,6 ·
+  −12,3 · −10,8 · −9,4 · −7,7 · −6,1 · −4,6 · −3,1 · −1,6 · **0,0** · +1,3 ·
+  +2,8 · +4,4 · +5,9 · +7,4 · +9,0 · +10,6 · +12,0 dB;
+- **colores:** verde hasta 0 dBFS (18 celdas), ámbar por encima de 0 hasta
+  +6 dBFS (4), rojo por encima de +6 dBFS (4). Indican sobrenivel, no clipping
+  confirmado. Las celdas que el maestro muestra encendidas se dibujan con sus
+  propios píxeles (`meter_lit.png`); las demás, con la luz de una celda
+  encendida de la misma altura (encendida menos apagada) con el tono cambiado
+  (ámbar 36°, rojo 2°) sobre su fondo apagado;
+- cada celda ocupa desde la mitad del hueco superior hasta la mitad del
+  inferior, con 6 px de brillo lateral cortado en la mitad entre L y R;
+- se repinta solo la columna cuyo número de celdas cambia; en reposo, nada;
+- el área ya no es una zona inactiva ("Level meters" sin tooltip); no recibe
+  el ratón.
+
+**Verificación** (`build/ui2a-release-universal`):
+
+- 135/135 pruebas en Release arm64 y x86_64 (10 nuevas): silencio exacto,
+  senos de nivel conocido en IN y OUT (Bell +6 dB), +6 dBFS sin recorte,
+  canales independientes, mono, picos de una muestra en cualquier posición
+  con bloques de 1 a 4096, retención hasta la lectura, bypass idéntico y
+  medido, NaN/Inf, sin asignaciones, concurrencia (seis rondas de 400 000
+  escrituras contra tomas continuas: ningún pico perdido, ninguno leído dos
+  veces, ninguno inventado), escala, colores, balística, repintado, mono en
+  la vista y picos antiguos descartados;
+- **dibujo idéntico al maestro:** a −1 dBFS (17 celdas, el estado del
+  maestro) la zona de los medidores coincide píxel a píxel con el maestro
+  (diferencia máxima 0; prueba y captura);
+- ThreadSanitizer (`build/ui2a-tsan`, arm64): las pruebas de medidores sin
+  avisos;
+- mutaciones: 16 de 17 detectadas; la que no se detecta
+  (`if (p > c) store (p)`) es equivalente con un solo escritor (ver "Por qué
+  el CAS" más abajo);
+- `run_compat.sh all`: las nueve bases OK en arm64 y x86_64, estricta sin
+  diferencias frente a UI-1.1 (`13df851`, base nueva) y UI-1;
+- **CPU** (`labq8_bench --ui2a`, estéreo, mediana de 9): los dos medidores
+  cuestan **0,006–0,029 %** de un núcleo en arm64 (Apple M5; 1,3–3,2 ns por
+  trama estéreo) y 0,005–0,020 % en x86_64 (Rosetta), a 48 y 96 kHz con
+  bloques de 32 a 512;
+- **repintado** de una columna (software, Release arm64): 0,05 ms al 100 %,
+  0,11–0,12 ms al 60 y al 140 %.
+
+**Por qué el CAS.** El hilo de audio eleva el máximo con un bucle
+`compare_exchange_weak`, y la interfaz lo toma con `exchange (0)`. Las dos son
+operaciones lectura-modificación-escritura sobre el mismo atómico, así que
+cada toma devuelve exactamente el máximo de lo escrito desde la anterior,
+con cualquier número de escritores. Un `load` seguido de un `store` **no** es
+equivalente en general, ni siquiera con un solo productor: si la interfaz
+toma el valor entre el `load` y el `store`, un `store (max (c, p))`
+**republica `c`, un máximo ya consumido**, que se leería dos veces (prueba:
+20 de 20 ejecuciones lo detectan). La variante `if (p > c) store (p)` solo
+escribe el pico nuevo, que nadie ha tomado aún, y con un único escritor
+resulta equivalente (ninguna prueba puede distinguirla). Pero lo es por ese
+detalle, deja de serlo con dos escritores sobre el mismo contador (el
+`store` de uno pisaría un pico mayor del otro) y también si la interfaz
+escribiera algo distinto de 0. El código definitivo **mantiene el CAS**, que
+cuesta lo mismo en el caso normal: una comparación, y solo repite si la toma
+coincide.
+
+**Prueba de concurrencia** (corregida). La primera versión anotaba un contador
+`published` antes de cada toma y suponía un orden entre ese contador y el
+medidor. Con `relaxed` y `acquire/release` en ARM ese orden no está
+garantizado, y al repetirla con varias semillas dio falsos "peak lost" con el
+código correcto (2 de 25 ejecuciones). La versión actual solo usa la
+coherencia del propio atómico. Las escrituras de un hilo conservan su orden,
+así que las tomas cortan la secuencia escrita en tramos consecutivos y cada
+toma debe ser el máximo de su tramo. La prueba comprueba que ese corte
+existe: ningún valor inventado ni leído dos veces, ninguno perdido, en seis
+rondas de 400 000 escrituras. Resultados de 20 a 40 ejecuciones por
+implementación:
+
+| Implementación | Falla |
+|---|---|
+| CAS (definitivo) | 0 de 40 |
+| `store (max (c, p))` | 20 de 20 (leído dos veces) |
+| toma con `load` + `store (0)` | 20 de 20 (pico perdido) |
+| último bloque en vez del máximo | 5 de 5 (pico perdido) |
+| `if (p > c) store (p)` | 0 de 20 (equivalente con un escritor) |
+
+**Capturas** (`labq8_ui_snapshot <maestro> <dir> --ui2a`, audio real por el
+procesador): `ui2a_1_editor_master_level.png`,
+`ui2a_2_states_silence_-1_+3_+9_+13.png` (silencio, verde, ámbar, rojo,
+lleno), `ui2a_3_independent_eq_mono.png` (L −12 / R −30; IN −6 con Bell
++6 dB en OUT; mono), `ui2a_4_zoom_40.png`, `ui2a_5_zoom_140.png` y
+`ui2a_report.txt`.
+
+**Límites conocidos:** pico de muestra, no true peak (los picos entre
+muestras pueden quedar unos 3 dB por debajo); resolución de la escala del
+diseño (1,5 a 6 dB por celda); retardo visual de un bloque más un fotograma;
+si el host deja de llamar al plugin (transporte parado, pista inactiva), los
+medidores caen a reposo.
+
+### 10.1 SMOKE-4 en Logic Pro (30-10-2026)
+
+Build instalado con `tools/install/install_au.sh` (Logic cerrado):
+`build/ui2a-release-universal`, SHA-256 del binario
+`d5cb0d856778059b23de9fafcc24f200353d2d70eb0925fe0d111ab5a8247779`; auval
+arm64 y x86_64 sin avisos, 80 parámetros. Resultado aprobado por el usuario:
+**los cuatro medidores funcionan perfectamente y el sonido aprobado se
+conserva**. UI-2a queda aprobada funcional y musicalmente.
+
+Después del smoke solo cambiaron la prueba de concurrencia y esta
+documentación; el código del plugin es el mismo que se instaló.

@@ -1,5 +1,5 @@
-// UI-1 editor tests: the approved design's editor drives only public
-// parameters, never the audio; band selection is pure view state.
+// UI-1 / UI-1.1 editor tests: the approved design's editor drives only
+// public parameters, never the audio; band selection is pure view state.
 
 #pragma clang diagnostic ignored "-Wfloat-equal" // bit-exactness is a tested property
 
@@ -12,7 +12,10 @@
 #include "ui/LabQ8Editor.h"
 #include "ui/UiGeometry.h"
 #include "ui/UiModel.h"
+#include "ui/UiPreferences.h"
 
+#include <algorithm>
+#include <limits>
 #include <random>
 
 using labq8::LabQ8AudioProcessor;
@@ -25,6 +28,17 @@ namespace geo = labq8::ui::geometry;
 
 namespace
 {
+// The tests never read or write the user's real preferences file, and do
+// not depend on the screens of the machine (every zoom fits unless a test
+// says otherwise).
+const juce::Rectangle<int> largeScreen { 0, 0, 4000, 3000 };
+const bool preferencesInMemory = []
+{
+    labq8::ui::preferences::setStorageFileForTesting ({});
+    LabQ8Editor::setScreenAreaForTesting (largeScreen);
+    return true;
+}();
+
 void setParam (LabQ8AudioProcessor& p, const char* id, float value)
 {
     auto* parameter = p.getValueTreeState().getParameter (id);
@@ -99,6 +113,53 @@ void click (juce::Component& c)
     c.mouseDown (down);
     c.mouseUp (up);
 }
+
+// Counts begin / end gestures of one parameter (host automation recording).
+struct GestureCounter final : juce::AudioProcessorParameter::Listener
+{
+    int begins = 0, ends = 0;
+    void parameterValueChanged (int, float) override {}
+    void parameterGestureChanged (int, bool starting) override { (starting ? begins : ends)++; }
+};
+
+void clickAt (juce::Component& c, juce::Point<float> local, bool rightButton = false)
+{
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    const auto mods = rightButton ? juce::ModifierKeys::rightButtonModifier : juce::ModifierKeys::leftButtonModifier;
+    juce::MouseEvent down (source, local, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, local, now, 1, false);
+    juce::MouseEvent up (source, local, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, local, now, 1, false);
+    c.mouseDown (down);
+    c.mouseUp (up);
+}
+
+// A left-button drag on c: press at `from`, move through `to` in steps, release.
+void dragOn (juce::Component& c, juce::Point<float> from, juce::Point<float> to, int steps = 4)
+{
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    const auto left = juce::ModifierKeys::leftButtonModifier;
+    auto event = [&] (juce::Point<float> at, juce::ModifierKeys mods)
+    {
+        return juce::MouseEvent (source, at, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, from, now, 1, false);
+    };
+    c.mouseDown (event (from, left));
+    for (int i = 1; i <= steps; ++i)
+        c.mouseDrag (event (from + (to - from) * ((float) i / (float) steps), left));
+    c.mouseUp (event (to, {}));
+}
+
+// Changed parameter IDs between two snapshots of allValues().
+juce::StringArray changedIds (LabQ8AudioProcessor& p, const std::vector<float>& before)
+{
+    juce::StringArray ids;
+    const auto after = allValues (p);
+    const auto& all = p.getParameters();
+    for (size_t i = 0; i < after.size(); ++i)
+        if (after[i] != before[i])
+            ids.add (dynamic_cast<juce::RangedAudioParameter*> (all[(int) i])->paramID);
+    return ids;
+}
 } // namespace
 
 //==============================================================================
@@ -154,7 +215,7 @@ LQ_TEST ("ui model: display texts, axes and the static response equal the DSP's"
     LQ_CHECK (worst < 1e-6, str ("drawn response differs from the core by ", worst, " dB"));
 }
 
-LQ_TEST ("ui editor: opens and closes repeatedly; default 75 %, fixed aspect, proportional hit boxes")
+LQ_TEST ("ui editor: opens and closes repeatedly; default 60 %, no resize corner, proportional hit boxes at every zoom")
 {
     LabQ8AudioProcessor p;
     for (int i = 0; i < 30; ++i)
@@ -165,11 +226,14 @@ LQ_TEST ("ui editor: opens and closes repeatedly; default 75 %, fixed aspect, pr
             return;
         if (i == 0)
         {
-            LQ_CHECK (editor->getWidth() == 1254 && editor->getHeight() == 706, str ("default size ", editor->getWidth(), "x", editor->getHeight()));
-            LQ_CHECK (editor->isResizable() && std::abs (editor->getConstrainer()->getFixedAspectRatio() - 1672.0 / 941.0) < 1e-9, "fixed aspect ratio");
-            LQ_CHECK (editor->getConstrainer()->getMinimumWidth() == 836 && editor->getConstrainer()->getMaximumWidth() == 1672, "size limits");
+            LQ_CHECK (preferencesInMemory && editor->getWidth() == 1003 && editor->getHeight() == 565,
+                      str ("default size ", editor->getWidth(), "x", editor->getHeight()));
+            bool corner = false;
+            for (auto* child : editor->getChildren())
+                corner = corner || dynamic_cast<juce::ResizableCornerComponent*> (child) != nullptr;
+            LQ_CHECK (! editor->isResizable() && ! corner, "no resize corner, not resizable by the host");
 
-            for (const int width : { 836, 1000, 1254, 1672 })
+            for (const int width : { 669, 1003, 1338, 1672, 2006, 2341 })
             {
                 editor->setSize (width, (int) std::lround (width * 941.0 / 1672.0));
                 const auto scale = (float) width / 1672.0f;
@@ -181,7 +245,7 @@ LQ_TEST ("ui editor: opens and closes repeatedly; default 75 %, fixed aspect, pr
                           str ("threshold knob hit box at width ", width));
                 auto& button = editor->getBandButton (7);
                 const auto b = editor->getLocalArea (&button, button.getLocalBounds().toFloat());
-                LQ_CHECK (std::abs (b.getX() - geo::bandButtonLeft (7) * scale) < 1.5f, str ("band 8 button at width ", width));
+                LQ_CHECK (std::abs (b.getX() - (geo::bandButtonLeft (7) - 2.0f) * scale) < 1.5f, str ("band 8 button at width ", width));
             }
         }
     }
@@ -217,9 +281,9 @@ LQ_TEST ("ui editor: selecting each band shows exactly its parameters and change
     LQ_CHECK (editor->getSelectedBand() == 5, "selected band restored on reopening");
     LQ_CHECK (allValues (p) == before, "reopening changed a parameter");
 
-    // Clicking a band button selects it.
-    click (editor->getBandButton (2));
-    LQ_CHECK (editor->getSelectedBand() == 2 && allValues (p) == before, "band button click");
+    // Bands are selected from their nodes (UI-1.1), never from the buttons.
+    clickAt (editor->getScreen(), editor->getNodePosition (2) - editor->getScreen().getPosition().toFloat());
+    LQ_CHECK (editor->getSelectedBand() == 2 && allValues (p) == before, "node click selects without changing anything");
 }
 
 LQ_TEST ("ui editor: panel edits reach only the selected band")
@@ -359,30 +423,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
     LQ_CHECK (allValues (p) == before && editor->getSelectedBand() == 0, "inactive controls changed something");
 }
 
-//==============================================================================
-namespace
-{
-// Counts begin / end gestures of one parameter (host automation recording).
-struct GestureCounter final : juce::AudioProcessorParameter::Listener
-{
-    int begins = 0, ends = 0;
-    void parameterValueChanged (int, float) override {}
-    void parameterGestureChanged (int, bool starting) override { (starting ? begins : ends)++; }
-};
-
-void clickAt (juce::Component& c, juce::Point<float> local, bool rightButton = false)
-{
-    auto source = juce::Desktop::getInstance().getMainMouseSource();
-    const auto now = juce::Time::getCurrentTime();
-    const auto mods = rightButton ? juce::ModifierKeys::rightButtonModifier : juce::ModifierKeys::leftButtonModifier;
-    juce::MouseEvent down (source, local, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, local, now, 1, false);
-    juce::MouseEvent up (source, local, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, local, now, 1, false);
-    c.mouseDown (down);
-    c.mouseUp (up);
-}
-} // namespace
-
-LQ_TEST ("ui bypass: the BAND n indicator toggles bN_bypass of the shown band only, with a gesture; 34 x 34 click area")
+LQ_TEST ("ui bypass: each band button switches only its own band on / off, with one gesture; BAND n is an indicator only")
 {
     LabQ8AudioProcessor p;
     randomise (p, 61);
@@ -391,46 +432,64 @@ LQ_TEST ("ui bypass: the BAND n indicator toggles bN_bypass of the shown band on
     auto editor = openEditor (p);
     editor->selectBand (2);
 
-    auto& indicator = editor->getBypassIndicator();
-    LQ_CHECK (indicator.getWidth() == 34 && indicator.getHeight() == 34
-                  && std::abs ((float) indicator.getBounds().getCentreX() - geo::bandDotCentre.x) <= 1.0f
-                  && std::abs ((float) indicator.getBounds().getCentreY() - geo::bandDotCentre.y) <= 1.0f,
-              "34 x 34 area centred on the dot");
-
-    GestureCounter gestures;
-    auto* bypass3 = p.getValueTreeState().getParameter ("b3_bypass");
-    bypass3->addListener (&gestures);
-    const auto before = allValues (p);
-
-    // A click near the corner of the area (outside the 19 px dot) works.
-    clickAt (indicator, { 2.0f, 2.0f });
-    LQ_CHECK (getParam (p, "b3_bypass") == 1.0f && editor->isBypassShown(), "click bypasses band 3");
-    LQ_CHECK (gestures.begins == 1 && gestures.ends == 1, str ("gestures ", gestures.begins, "/", gestures.ends));
-    int otherChanges = 0;
-    const auto after = allValues (p);
-    const auto& all = p.getParameters();
-    for (size_t i = 0; i < after.size(); ++i)
-        if (after[i] != before[i] && dynamic_cast<juce::RangedAudioParameter*> (all[(int) i])->paramID != "b3_bypass")
-            ++otherChanges;
-    LQ_CHECK (otherChanges == 0, str (otherChanges, " other parameters changed"));
-    LQ_CHECK (editor->getSelectedBand() == 2, "bypass does not change the selection");
-
-    clickAt (indicator, { 17.0f, 17.0f });
-    LQ_CHECK (getParam (p, "b3_bypass") == 0.0f && ! editor->isBypassShown(), "second click restores band 3");
-    clickAt (indicator, { 17.0f, 17.0f }, true);
-    LQ_CHECK (getParam (p, "b3_bypass") == 0.0f, "right click does nothing");
-    bypass3->removeListener (&gestures);
-
-    // Selecting other bands never toggles bypass; the band buttons still select.
     for (int b = 0; b < 8; ++b)
     {
-        click (editor->getBandButton (b));
-        LQ_CHECK (editor->getSelectedBand() == b, str ("button ", b + 1, " selects"));
+        const auto* id = params::bandIDs[(size_t) b].bypass;
+        auto& button = editor->getBandButton (b);
+        LQ_CHECK (editor->isBandButtonOn (b), str ("button ", b + 1, " lit while active"));
+
+        GestureCounter gestures;
+        auto* bypass = p.getValueTreeState().getParameter (id);
+        bypass->addListener (&gestures);
+        const auto before = allValues (p);
+
+        // Anywhere on the button, its edges included.
+        clickAt (button, { 4.0f, 4.0f });
+        const auto changed = changedIds (p, before);
+        LQ_CHECK (getParam (p, id) == 1.0f && ! editor->isBandButtonOn (b), str ("click bypasses band ", b + 1));
+        LQ_CHECK (changed.size() == 1 && changed[0] == id, str ("button ", b + 1, " changed ", changed.joinIntoString (",")));
+        LQ_CHECK (gestures.begins == 1 && gestures.ends == 1, str ("gestures ", gestures.begins, "/", gestures.ends));
+        LQ_CHECK (editor->getSelectedBand() == 2, "a button never selects");
+
+        clickAt (button, button.getLocalBounds().getCentre().toFloat());
+        LQ_CHECK (getParam (p, id) == 0.0f && editor->isBandButtonOn (b), str ("second click restores band ", b + 1));
+        clickAt (button, button.getLocalBounds().getCentre().toFloat(), true);
+        LQ_CHECK (getParam (p, id) == 0.0f, "right click does nothing");
+        bypass->removeListener (&gestures);
     }
-    bool none = true;
-    for (const auto& ids : params::bandIDs)
-        none = none && getParam (p, ids.bypass) == 0.0f;
-    LQ_CHECK (none, "selecting bands toggled a bypass");
+
+    // The colour dot next to BAND n takes no clicks.
+    auto& indicator = editor->getBypassIndicator();
+    bool takesClicks = true, childrenTakeClicks = true;
+    indicator.getInterceptsMouseClicks (takesClicks, childrenTakeClicks);
+    LQ_CHECK (! takesClicks, "indicator ignores the mouse");
+    const auto dot = juce::Point<int> ((int) geo::bandDotCentre.x, (int) geo::bandDotCentre.y);
+    LQ_CHECK (editor->getContent().getComponentAt (dot) != &indicator, "clicks at the dot do not reach the indicator");
+    LQ_CHECK (getParam (p, "b3_bypass") == 0.0f, "indicator never toggles");
+}
+
+LQ_TEST ("ui routing: at every zoom the mouse reaches each band button, the settings icon and the screen; no corner")
+{
+    LabQ8AudioProcessor p;
+    auto editor = openEditor (p);
+    editor->setVisible (true); // as in a host window (hit testing skips invisible components)
+    for (const float zoom : LabQ8Editor::zoomChoices)
+    {
+        LQ_CHECK (editor->setZoom (zoom), str ("zoom ", zoom));
+        const auto s = editor->getScale();
+        auto at = [&] (float x, float y) { return editor->getComponentAt (juce::Point<float> (x * s, y * s).roundToInt()); };
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto cx = geo::bandButtonLeft (b) + geo::bandButtonWidth * 0.5f;
+            for (const float dx : { -45.0f, 0.0f, 45.0f })
+                LQ_CHECK (at (cx + dx, geo::bandButtonCentreY) == &editor->getBandButton (b), str ("button ", b + 1, " at ", zoom));
+        }
+        LQ_CHECK (at (geo::settingsIconCentre.x, geo::settingsIconCentre.y) == &editor->getSettingsButton(), str ("settings icon at ", zoom));
+        const auto node = editor->getNodePosition (4);
+        LQ_CHECK (at (node.x, node.y) == &editor->getScreen(), str ("screen node at ", zoom));
+        auto* corner = editor->getComponentAt (editor->getWidth() - 4, editor->getHeight() - 4);
+        LQ_CHECK (dynamic_cast<juce::ResizableCornerComponent*> (corner) == nullptr, str ("no resize corner at ", zoom));
+    }
 }
 
 LQ_TEST ("ui bypass: host automation, save and restore update the indicator")
@@ -455,6 +514,13 @@ LQ_TEST ("ui bypass: host automation, save and restore update the indicator")
     LQ_CHECK (getParam (q, "b6_bypass") == 1.0f && other->isBypassShown(), "restored bypass shown");
     other->selectBand (1);
     LQ_CHECK (getParam (q, "b2_bypass") == 0.0f && ! other->isBypassShown(), "restored active band shown");
+
+    // The band buttons follow the host and the restored state too.
+    LQ_CHECK (! other->isBandButtonOn (5) && other->isBandButtonOn (1), "restored buttons");
+    setParam (q, "b8_bypass", 1.0f);
+    LQ_CHECK (! other->isBandButtonOn (7), "host bypass unlights button 8");
+    setParam (q, "b8_bypass", 0.0f);
+    LQ_CHECK (other->isBandButtonOn (7), "host un-bypass lights it again");
 }
 
 LQ_TEST ("ui dynamic: the switch is disabled for non-Bell types and the stored bN_dyn_on is kept")
@@ -492,4 +558,418 @@ LQ_TEST ("ui dynamic: the switch is disabled for non-Bell types and the stored b
     LQ_CHECK (! editor->isDynamicSwitchAvailable(), "band 2 (shelf) disabled");
     editor->selectBand (0);
     LQ_CHECK (editor->isDynamicSwitchAvailable(), "band 1 (Bell) available");
+}
+
+//==============================================================================
+// UI-1.1: zoom, a global preference of the user, chosen from six sizes.
+namespace
+{
+struct ZoomMenuItems
+{
+    juce::StringArray names;
+    std::vector<bool> enabled;
+    int ticked = -1;
+};
+
+ZoomMenuItems zoomMenuItems (const LabQ8Editor& editor)
+{
+    ZoomMenuItems result;
+    const auto menu = editor.createZoomMenu();
+    juce::PopupMenu::MenuItemIterator items (menu);
+    while (items.next())
+        if (items.getItem().itemID > 0)
+        {
+            result.names.add (items.getItem().text);
+            result.enabled.push_back (items.getItem().isEnabled);
+            if (items.getItem().isTicked)
+                result.ticked = items.getItem().itemID;
+        }
+    return result;
+}
+} // namespace
+
+LQ_TEST ("ui zoom: menu of the settings icon, 40-140 % in six sizes, remembered globally; never part of the plugin state")
+{
+    namespace prefs = labq8::ui::preferences;
+    prefs::setStorageFileForTesting ({});
+    LabQ8AudioProcessor p;
+    randomise (p, 71);
+    juce::MemoryBlock stateBefore;
+    p.getStateInformation (stateBefore);
+    const auto before = allValues (p);
+
+    auto editor = openEditor (p);
+    LQ_CHECK (editor->getWidth() == 1003 && editor->getHeight() == 565 && std::abs (editor->getScale() - 0.6f) < 0.001f, "opens at 60 %");
+
+    // The menu: Zoom header + six choices, all available on a large screen,
+    // the current one ticked.
+    auto menu = zoomMenuItems (*editor);
+    LQ_CHECK (menu.names.joinIntoString ("|") == "40 %|60 %|80 %|100 %|120 %|140 %", menu.names.joinIntoString ("|").toStdString());
+    LQ_CHECK (std::count (menu.enabled.begin(), menu.enabled.end(), true) == 6, "all six available");
+    LQ_CHECK (menu.ticked == 2, str ("ticked item ", menu.ticked));
+
+    // Every size exactly, with the proportions of the design; each choice is
+    // stored at once and the editor reopens at it.
+    const std::pair<int, int> sizes[] = { { 669, 376 }, { 1003, 565 }, { 1338, 753 }, { 1672, 941 }, { 2006, 1129 }, { 2341, 1317 } };
+    for (int item = 1; item <= 6; ++item)
+    {
+        editor->handleZoomMenuResult (item);
+        const auto zoom = LabQ8Editor::zoomChoices[(size_t) item - 1];
+        const auto [w, h] = sizes[item - 1];
+        LQ_CHECK (editor->getWidth() == w && editor->getHeight() == h,
+                  str ("item ", item, ": ", editor->getWidth(), "x", editor->getHeight()));
+        LQ_CHECK (std::abs ((double) editor->getWidth() / editor->getHeight() - 1672.0 / 941.0) < 0.003, "proportions");
+        LQ_CHECK (std::abs (editor->getContent().getTransform().mat00 - (float) w / 1672.0f) < 1e-6f, "content scaled with the editor");
+        LQ_CHECK (prefs::loadZoom() == zoom, "choice stored as the preference");
+        LQ_CHECK (zoomMenuItems (*editor).ticked == item, "menu ticks the current size");
+        editor.reset();
+        editor = openEditor (p);
+        LQ_CHECK (editor->getWidth() == w, str ("reopens at the stored ", zoom, ": ", editor->getWidth()));
+    }
+
+    // Only the six sizes: anything else changes nothing.
+    editor->handleZoomMenuResult (3); // 80 %
+    for (const float other : { 0.5f, 0.75f, 0.9f, 1.5f, 3.0f })
+        LQ_CHECK (! editor->setZoom (other) && editor->getWidth() == 1338 && prefs::loadZoom() == 0.8f, str ("refused ", other));
+    for (const float other : { 0.75f, 0.0f, std::numeric_limits<float>::quiet_NaN() })
+    {
+        prefs::saveZoom (other);
+        LQ_CHECK (prefs::loadZoom() == 0.8f, str ("only the six sizes are stored, not ", other));
+    }
+    editor->handleZoomMenuResult (0); // menu dismissed
+    editor->handleZoomMenuResult (7);
+    LQ_CHECK (editor->getWidth() == 1338, "dismissed or unknown item changes nothing");
+
+    // The settings icon sits on the design's gear and explains itself.
+    auto& settings = editor->getSettingsButton();
+    LQ_CHECK (std::abs ((float) settings.getBounds().getCentreX() - geo::settingsIconCentre.x) <= 1.0f
+                  && std::abs ((float) settings.getBounds().getCentreY() - geo::settingsIconCentre.y) <= 1.0f, "on the gear");
+    auto* tip = dynamic_cast<juce::TooltipClient*> (&settings);
+    LQ_CHECK (tip != nullptr && tip->getTooltip().contains ("zoom"), "tooltip");
+
+    // A size change by the host is not remembered (only menu choices are).
+    editor->setSize (900, 506);
+    editor.reset();
+    LQ_CHECK (prefs::loadZoom() == 0.8f, "host size not stored");
+
+    // Zooming never touches the parameters or the plugin state.
+    juce::MemoryBlock stateAfter;
+    p.getStateInformation (stateAfter);
+    LQ_CHECK (allValues (p) == before && stateAfter == stateBefore, "zoom changed the plugin state");
+
+    // A real file (temporary, never the user's): written at once, read back
+    // by a new editor as after restarting the host; a size of an earlier
+    // build or garbage falls back to 60 %.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("labq8_ui11_test/LABQ8.settings");
+    file.getParentDirectory().deleteRecursively();
+    prefs::setStorageFileForTesting (file);
+    LQ_CHECK (prefs::loadZoom() == 0.6f, "no file: 60 %");
+    editor = openEditor (p);
+    editor->handleZoomMenuResult (5); // 120 %
+    LQ_CHECK (file.existsAsFile() && file.loadFileAsString().contains ("editorZoom"), "written at once to the file");
+    editor.reset();
+    prefs::setStorageFileForTesting (file); // forget everything kept in memory
+    editor = openEditor (p);
+    LQ_CHECK (editor->getWidth() == 2006, str ("restored from the file: ", editor->getWidth()));
+    editor.reset();
+    for (const char* stored : { "0.75", "0.5", "3", "nonsense", "" })
+    {
+        file.replaceWithText (juce::String ("<?xml version=\"1.0\"?><PROPERTIES><VALUE name=\"editorZoom\" val=\"") + stored + "\"/></PROPERTIES>");
+        LQ_CHECK (prefs::loadZoom() == 0.6f, str ("stored '", stored, "' gives ", prefs::loadZoom()));
+    }
+    file.replaceWithText ("not xml");
+    LQ_CHECK (prefs::loadZoom() == 0.6f, "unreadable file: 60 %");
+    file.getParentDirectory().deleteRecursively();
+    LQ_CHECK (prefs::defaultStorageFile().getFullPathName().endsWith ("Library/Application Support/VitaPlug/LABQ8/LABQ8.settings"),
+              prefs::defaultStorageFile().getFullPathName().toStdString());
+    prefs::setStorageFileForTesting ({});
+}
+
+LQ_TEST ("ui zoom: sizes that do not fit the screen are disabled, never applied, and the editor opens at the largest that fits")
+{
+    namespace prefs = labq8::ui::preferences;
+    prefs::setStorageFileForTesting ({});
+    LabQ8AudioProcessor p;
+
+    // This MacBook's display: 1710 x 1072 points usable. Up to 100 % fits
+    // with the host's window around it; 120 and 140 % do not.
+    LabQ8Editor::setScreenAreaForTesting ({ 0, 0, 1710, 1072 });
+    auto editor = openEditor (p);
+    auto menu = zoomMenuItems (*editor);
+    LQ_CHECK ((menu.enabled == std::vector<bool> { true, true, true, true, false, false }), "120 / 140 % disabled");
+    LQ_CHECK (menu.names[4].contains ("too large for this screen") && ! menu.names[3].contains ("too large"), menu.names[4].toStdString());
+    editor->handleZoomMenuResult (6);
+    LQ_CHECK (editor->getWidth() == 1003 && prefs::loadZoom() == 0.6f, "140 % not applied nor stored");
+    LQ_CHECK (editor->setZoom (1.0f) && editor->getWidth() == 1672, "100 % applied");
+
+    // The stored choice is kept for a larger screen; on a small one the
+    // editor opens at the largest size that fits, never clipped.
+    LabQ8Editor::setScreenAreaForTesting (largeScreen);
+    LQ_CHECK (editor->setZoom (1.4f), "140 % on a large screen");
+    editor.reset();
+    LabQ8Editor::setScreenAreaForTesting ({ 0, 0, 1440, 875 }); // 13" laptop
+    editor = openEditor (p);
+    LQ_CHECK (editor->getWidth() == 1338 && prefs::loadZoom() == 1.4f, str ("opens at 80 %, keeps 140 %: ", editor->getWidth()));
+    LabQ8Editor::setScreenAreaForTesting ({ 0, 0, 640, 400 });
+    editor.reset();
+    editor = openEditor (p);
+    LQ_CHECK (editor->getWidth() == 669, "40 % is always available");
+    LQ_CHECK ((zoomMenuItems (*editor).enabled == std::vector<bool> { true, false, false, false, false, false }), "only 40 % on a tiny screen");
+
+    // Exact limits: 100 % needs 1672 x (941 + 80).
+    LQ_CHECK (LabQ8Editor::zoomFits (1.0f, { 0, 0, 1672, 1021 }) && ! LabQ8Editor::zoomFits (1.0f, { 0, 0, 1671, 1021 })
+                  && ! LabQ8Editor::zoomFits (1.0f, { 0, 0, 1672, 1020 }), "fit limits");
+
+    editor.reset();
+    LabQ8Editor::setScreenAreaForTesting (largeScreen);
+    prefs::setStorageFileForTesting ({});
+}
+
+//==============================================================================
+// UI-1.1: selection and editing from the screen nodes.
+namespace
+{
+// Eight Bell bands, well apart, flat: no node overlaps another.
+void spreadBands (LabQ8AudioProcessor& p)
+{
+    for (int b = 0; b < 8; ++b)
+    {
+        const auto& ids = params::bandIDs[(size_t) b];
+        setParam (p, ids.frequency, (float) (40.0 * std::pow (2.0, b * 1.25)));
+        setParam (p, ids.gain, 0.0f);
+        setParam (p, ids.q, 1.0f);
+        setParam (p, ids.type, 0.0f);
+        setParam (p, ids.bypass, 0.0f);
+    }
+}
+
+juce::Point<float> onScreen (LabQ8Editor& editor, juce::Point<float> reference)
+{
+    return reference - editor.getScreen().getPosition().toFloat();
+}
+} // namespace
+
+LQ_TEST ("ui nodes: a click selects the band and shows its Q handles; other node switches, empty screen and chassis hide")
+{
+    LabQ8AudioProcessor p;
+    spreadBands (p);
+    setParam (p, "b6_bypass", 1.0f);
+    auto editor = openEditor (p);
+    auto& screen = editor->getScreen();
+    const auto before = allValues (p);
+    LQ_CHECK (! editor->areQHandlesShown(), "no handles on opening");
+
+    clickAt (screen, onScreen (*editor, editor->getNodePosition (2)) + juce::Point<float> (4.0f, -3.0f));
+    LQ_CHECK (editor->getSelectedBand() == 2 && editor->areQHandlesShown(), "node 3 selected, handles shown");
+    LQ_CHECK ((float) editor->getKnob (PanelControl::frequency).getValue() == getParam (p, "b3_freq"), "panel shows band 3");
+
+    clickAt (screen, onScreen (*editor, editor->getNodePosition (5)));
+    LQ_CHECK (editor->getSelectedBand() == 5 && editor->areQHandlesShown(), "a bypassed band is selectable");
+    LQ_CHECK (editor->isBypassShown(), "BAND 6 indicator dimmed");
+
+    clickAt (screen, onScreen (*editor, { 420.0f, 270.0f }));
+    LQ_CHECK (! editor->areQHandlesShown() && editor->getSelectedBand() == 5, "empty screen hides the handles, keeps the band");
+
+    editor->showQHandles (1);
+    clickAt (editor->getContent(), { 60.0f, 400.0f });
+    LQ_CHECK (! editor->areQHandlesShown(), "a click on the chassis hides them");
+
+    clickAt (screen, onScreen (*editor, editor->getNodePosition (4)), true);
+    LQ_CHECK (editor->getSelectedBand() == 1, "right click does not select");
+    LQ_CHECK (allValues (p) == before, str ("selection changed ", changedIds (p, before).joinIntoString (",")));
+}
+
+LQ_TEST ("ui nodes: dragging moves FREQUENCY horizontally, GAIN vertically, both diagonally; one gesture each; panel follows")
+{
+    LabQ8AudioProcessor p;
+    spreadBands (p);
+    auto editor = openEditor (p);
+    auto& screen = editor->getScreen();
+    auto* freq = p.getValueTreeState().getParameter ("b4_freq");
+    auto* gain = p.getValueTreeState().getParameter ("b4_gain");
+    GestureCounter freqGestures, gainGestures;
+    freq->addListener (&freqGestures);
+    gain->addListener (&gainGestures);
+
+    // Horizontal: frequency only (gain untouched, bit for bit).
+    auto before = allValues (p);
+    const auto f0 = getParam (p, "b4_freq");
+    auto node = onScreen (*editor, editor->getNodePosition (3));
+    dragOn (screen, node, node + juce::Point<float> (60.0f, 0.0f));
+    const auto expected = labq8::ui::xToFrequency (labq8::ui::frequencyToX (f0) + 60.0f);
+    LQ_CHECK (std::abs (getParam (p, "b4_freq") / expected - 1.0) < 1e-3, str ("frequency ", getParam (p, "b4_freq"), " vs ", expected));
+    auto changed = changedIds (p, before);
+    LQ_CHECK (changed.size() == 1 && changed[0] == "b4_freq", str ("horizontal changed ", changed.joinIntoString (",")));
+    LQ_CHECK (freqGestures.begins == 1 && freqGestures.ends == 1 && gainGestures.begins == 0, "one frequency gesture");
+    LQ_CHECK ((float) editor->getKnob (PanelControl::frequency).getValue() == getParam (p, "b4_freq")
+                  && editor->getDisplayText (PanelControl::frequency).toStdString() == labq8::ui::formatValue (PanelControl::frequency, getParam (p, "b4_freq")),
+              "knob and display follow the node");
+
+    // Vertical: gain only; 37 px = 8 dB.
+    before = allValues (p);
+    node = onScreen (*editor, editor->getNodePosition (3));
+    dragOn (screen, node, node + juce::Point<float> (0.0f, -37.0f));
+    LQ_CHECK (std::abs (getParam (p, "b4_gain") - 8.0f) < 0.02f, str ("gain ", getParam (p, "b4_gain")));
+    changed = changedIds (p, before);
+    LQ_CHECK (changed.size() == 1 && changed[0] == "b4_gain", str ("vertical changed ", changed.joinIntoString (",")));
+    LQ_CHECK (gainGestures.begins == 1 && gainGestures.ends == 1 && freqGestures.begins == 1, "one gain gesture");
+
+    // Diagonal: both, each its own gesture.
+    before = allValues (p);
+    node = onScreen (*editor, editor->getNodePosition (3));
+    dragOn (screen, node, node + juce::Point<float> (-40.0f, 18.5f));
+    changed = changedIds (p, before);
+    LQ_CHECK (changed.size() == 2 && changed.contains ("b4_freq") && changed.contains ("b4_gain"), changed.joinIntoString (",").toStdString());
+    LQ_CHECK (std::abs (getParam (p, "b4_gain") - 4.0f) < 0.02f, str ("diagonal gain ", getParam (p, "b4_gain")));
+    LQ_CHECK (freqGestures.begins == 2 && freqGestures.ends == 2 && gainGestures.begins == 2 && gainGestures.ends == 2, "gestures");
+
+    // Limits: never beyond the parameter ranges.
+    node = onScreen (*editor, editor->getNodePosition (3));
+    dragOn (screen, node, node + juce::Point<float> (2000.0f, -2000.0f), 8);
+    LQ_CHECK (std::abs (getParam (p, "b4_freq") - 20000.0f) < 0.01f && std::abs (getParam (p, "b4_gain") - 24.0f) < 1e-5f,
+              str ("clamped at 20 kHz / +24 dB: ", getParam (p, "b4_freq"), " Hz ", getParam (p, "b4_gain"), " dB"));
+
+    // A press with < 3 px jitter only selects.
+    before = allValues (p);
+    node = onScreen (*editor, editor->getNodePosition (1));
+    dragOn (screen, node, node + juce::Point<float> (1.5f, 1.5f));
+    LQ_CHECK (editor->getSelectedBand() == 1 && allValues (p) == before, "jitter changes nothing");
+
+    // Cuts and notch have no gain: vertical movement is ignored.
+    setParam (p, "b2_type", 3.0f);
+    before = allValues (p);
+    node = onScreen (*editor, editor->getNodePosition (1));
+    dragOn (screen, node, node + juce::Point<float> (0.0f, -50.0f));
+    LQ_CHECK (allValues (p) == before, "vertical drag on a Low Cut changes nothing");
+    freq->removeListener (&freqGestures);
+    gain->removeListener (&gainGestures);
+
+    // Host automation moves the node.
+    const auto x0 = editor->getNodePosition (6).x;
+    setParam (p, "b7_freq", 300.0f);
+    LQ_CHECK (std::abs (editor->getNodePosition (6).x - labq8::ui::frequencyToX (300.0)) < 0.01f && editor->getNodePosition (6).x != x0,
+              "automated frequency moves the node");
+}
+
+LQ_TEST ("ui Q handles: Bell / Notch on their real band edges; shelves / cuts a pure Q control within the effective range")
+{
+    LabQ8AudioProcessor p;
+    spreadBands (p);
+    p.prepareToPlay (48000.0, 256);
+    auto editor = openEditor (p);
+    using labq8::dsp::FilterType;
+
+    // Bell: half-gain (dB) points; Notch: -3 dB points (when wider than the minimum distance).
+    for (const auto& [type, gainDb, q, level] : { std::tuple { 0.0f, 12.0f, 0.8f, 6.0 }, std::tuple { 0.0f, -10.0f, 1.5f, -5.0 },
+                                                   std::tuple { 5.0f, 0.0f, 0.6f, -3.0103 } })
+    {
+        setParam (p, "b4_type", type);
+        setParam (p, "b4_gain", gainDb);
+        setParam (p, "b4_q", q);
+        editor->showQHandles (3);
+        const auto [left, right] = editor->getQHandleCentres();
+        labq8::ui::BandView band { getParam (p, "b4_freq"), getParam (p, "b4_gain"), getParam (p, "b4_q"),
+                                   labq8::dsp::filterTypeFromIndex ((int) type), false };
+        const auto edges = labq8::ui::bandResponseDb (band, 48000.0, { labq8::ui::xToFrequency (left.x), labq8::ui::xToFrequency (right.x) });
+        LQ_CHECK (std::abs (edges[0] - level) < 0.05 && std::abs (edges[1] - level) < 0.05,
+                  str ("type ", type, " Q ", q, ": edges at ", edges[0], " / ", edges[1], " dB, expected ", level));
+    }
+
+    // Shelves and cuts: equal distances, growing as Q falls, between 14 and 48 px.
+    for (const auto type : { 1.0f, 2.0f, 3.0f, 4.0f })
+    {
+        setParam (p, "b4_type", type);
+        setParam (p, "b4_gain", 6.0f);
+        float last = 0.0f;
+        bool ok = true;
+        for (const float q : { 18.0f, 2.0f, 1.0f, 0.5f, 0.2f, 0.1f })
+        {
+            setParam (p, "b4_q", q);
+            const auto node = editor->getNodePosition (3);
+            const auto [left, right] = editor->getQHandleCentres();
+            const auto d = right.x - node.x;
+            ok = ok && std::abs ((node.x - left.x) - d) < 1e-3f && d >= last - 1e-3f && d >= 14.0f - 1e-3f && d <= 48.0f + 1e-3f;
+            last = d;
+        }
+        LQ_CHECK (ok && last > 47.9f, str ("type ", type, " handle distances"));
+    }
+
+    // Dragging: outwards lowers Q (halves every 45 px), inwards raises it,
+    // one gesture, only b4_q changes.
+    setParam (p, "b4_type", 0.0f);
+    setParam (p, "b4_q", 2.0f);
+    editor->showQHandles (3);
+    auto* qParam = p.getValueTreeState().getParameter ("b4_q");
+    GestureCounter gestures;
+    qParam->addListener (&gestures);
+    auto before = allValues (p);
+    auto right = editor->getQHandleCentres().second;
+    dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (45.0f, 0.0f)));
+    LQ_CHECK (std::abs (getParam (p, "b4_q") - 1.0f) < 0.01f, str ("outwards: Q ", getParam (p, "b4_q")));
+    auto changed = changedIds (p, before);
+    LQ_CHECK (changed.size() == 1 && changed[0] == "b4_q" && gestures.begins == 1 && gestures.ends == 1, "only Q, one gesture");
+    LQ_CHECK (editor->getDisplayText (PanelControl::q) == "1.0", editor->getDisplayText (PanelControl::q).toStdString());
+    auto left = editor->getQHandleCentres().first;
+    dragOn (editor->getScreen(), onScreen (*editor, left), onScreen (*editor, left + juce::Point<float> (90.0f, 0.0f)));
+    LQ_CHECK (std::abs (getParam (p, "b4_q") - 4.0f) < 0.04f, str ("inwards: Q ", getParam (p, "b4_q")));
+    qParam->removeListener (&gestures);
+
+    // Within the effective range: a High Cut stored at Q 6 (effective 2)
+    // starts from 2, narrowing has no room and writes nothing...
+    setParam (p, "b4_type", 4.0f);
+    setParam (p, "b4_q", 6.0f);
+    before = allValues (p);
+    right = editor->getQHandleCentres().second;
+    dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (-40.0f, 0.0f)));
+    LQ_CHECK (allValues (p) == before, "no Q beyond the effective maximum");
+    // ...widening goes down from the effective 2.
+    right = editor->getQHandleCentres().second;
+    dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (45.0f, 0.0f)));
+    LQ_CHECK (std::abs (getParam (p, "b4_q") - 1.0f) < 0.01f, str ("High Cut widened to Q ", getParam (p, "b4_q")));
+    // Shelf: at most 1; the bottom of every range is 0.1.
+    setParam (p, "b4_type", 1.0f);
+    setParam (p, "b4_q", 0.7f);
+    right = editor->getQHandleCentres().second;
+    dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (-200.0f, 0.0f)));
+    LQ_CHECK (std::abs (getParam (p, "b4_q") - 1.0f) < 1e-4f, str ("Low Shelf narrowed to its limit: Q ", getParam (p, "b4_q")));
+    right = editor->getQHandleCentres().second;
+    dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (600.0f, 0.0f)), 8);
+    LQ_CHECK (std::abs (getParam (p, "b4_q") - 0.1f) < 1e-4f, str ("widened to the minimum: Q ", getParam (p, "b4_q")));
+}
+
+LQ_TEST ("ui nodes: editing from the screen leaves the audio path to the parameters (bit-identical to the same automation)")
+{
+    // The screen only writes parameters: rendering after a node drag equals
+    // rendering after setting the same final values directly.
+    constexpr double fs = 48000.0;
+    auto prepare = [] (LabQ8AudioProcessor& p)
+    {
+        spreadBands (p);
+        p.prepareToPlay (fs, 256);
+    };
+    LabQ8AudioProcessor edited, direct;
+    prepare (edited);
+    prepare (direct);
+    {
+        auto editor = openEditor (edited);
+        const auto node = onScreen (*editor, editor->getNodePosition (2));
+        dragOn (editor->getScreen(), node, node + juce::Point<float> (35.0f, -20.0f));
+        const auto right = editor->getQHandleCentres().second;
+        dragOn (editor->getScreen(), onScreen (*editor, right), onScreen (*editor, right + juce::Point<float> (-30.0f, 0.0f)));
+    }
+    for (const auto* id : { "b3_freq", "b3_gain", "b3_q" })
+        setParam (direct, id, getParam (edited, id));
+    LQ_CHECK (allValues (edited) == allValues (direct), "same parameters");
+
+    juce::MidiBuffer midi;
+    bool identical = true;
+    for (int block = 0; block < 100; ++block)
+    {
+        auto a = noiseBlock (256, (unsigned) block + 900), b = a;
+        edited.processBlock (a, midi);
+        direct.processBlock (b, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            identical = identical && std::equal (a.getReadPointer (ch), a.getReadPointer (ch) + 256, b.getReadPointer (ch));
+    }
+    LQ_CHECK (identical, "audio differs");
 }

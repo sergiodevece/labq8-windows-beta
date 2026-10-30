@@ -9,14 +9,19 @@
 //   difference.png      |editor - master| x 4, per pixel
 //   report.txt          mean absolute difference per region
 //
-// Usage: labq8_ui_snapshot <master.png> <output_dir> [--final]
+// Usage: labq8_ui_snapshot <master.png> <output_dir> [--final | --ui11]
 //        --final writes the final UI-1 captures instead: an active band, a
 //        band in bypass and a non-Bell band with Dynamic EQ disabled.
+//        --ui11 writes the UI-1.1 captures: band ON / OFF buttons, Q
+//        handles per filter type and the editor at 100 / 60 / 40 / 140 %.
+// The user's zoom preference is never read or written (kept in memory), and
+// every zoom is allowed whatever the screens of the machine.
 
 #include "parameters/ParameterIDs.h"
 #include "plugin/PluginProcessor.h"
 #include "ui/LabQ8Editor.h"
 #include "ui/UiGeometry.h"
+#include "ui/UiPreferences.h"
 
 #include <cstdio>
 
@@ -106,11 +111,85 @@ int finalCaptures (const juce::File& outDir)
     std::printf ("%s\n", ok ? "final captures written" : "FAILED");
     return ok ? 0 : 1;
 }
+
+//==============================================================================
+// UI-1.1 captures of the real editor: the ON / OFF band buttons and the Q
+// handles approved from the proposal preview (now drawn by the editor), and
+// the editor at its zoom sizes.
+namespace ui11
+{
+// The real editor at `zoom` after `configure`, Q handles shown on
+// `handlesBand` (-1: none).
+juce::Image render (const std::function<void (labq8::LabQ8AudioProcessor&)>& configure, int handlesBand, float zoom = 1.0f)
+{
+    labq8::LabQ8AudioProcessor processor;
+    processor.prepareToPlay (48000.0, 512);
+    setMasterState (processor);
+    configure (processor);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<labq8::ui::LabQ8Editor*> (base.get());
+    editor->setZoom (zoom);
+    if (handlesBand >= 0)
+        editor->showQHandles (handlesBand);
+    return editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f).convertedToFormat (juce::Image::RGB);
+}
+
+juce::Image stack (const std::vector<juce::Image>& images)
+{
+    int height = 0;
+    for (const auto& i : images)
+        height += i.getHeight();
+    juce::Image sheet (juce::Image::RGB, images.front().getWidth(), height, true);
+    juce::Graphics gr (sheet);
+    int y = 0;
+    for (const auto& i : images)
+    {
+        gr.drawImageAt (i, 0, y);
+        y += i.getHeight();
+    }
+    return sheet;
+}
+
+int captures (const juce::File& outDir)
+{
+    bool ok = true;
+    auto save = [&] (const juce::Image& image, const char* name) { ok = writePng (image, outDir.getChildFile (name)) && ok; };
+    const juce::Rectangle<int> buttons (340, 522, 990, 74), screen (360, 236, 970, 252);
+
+    auto mixed = [] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b2_bypass", 1.0f); setParam (p, "b5_bypass", 1.0f); setParam (p, "b7_bypass", 1.0f); };
+    auto none = [] (labq8::LabQ8AudioProcessor&) {};
+    const auto full = render (mixed, 3);
+    save (full, "ui11_1_editor_100.png");
+    save (render (mixed, 3, 0.6f), "ui11_2_editor_60_default.png");
+    save (render (mixed, 3, 0.4f), "ui11_3_editor_40.png");
+    save (render (mixed, 3, 1.4f), "ui11_6_editor_140.png");
+
+    save (stack ({ full.getClippedImage (buttons), render (none, -1).getClippedImage (buttons),
+                   render ([] (labq8::LabQ8AudioProcessor& p) { for (const auto& ids : labq8::params::bandIDs) setParam (p, ids.bypass, 1.0f); }, -1).getClippedImage (buttons) }),
+          "ui11_4_buttons_mixed_on_off.png");
+
+    save (stack ({
+              render (none, 3).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b4_q", 4.0f); setParam (p, "b4_gain", 8.0f); }, 3).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b2_type", 1.0f); setParam (p, "b2_gain", 6.0f); setParam (p, "b2_q", 0.7f); }, 1).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b8_type", 4.0f); setParam (p, "b8_freq", 12000.0f); setParam (p, "b8_q", 1.5f); }, 7).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b8_type", 4.0f); setParam (p, "b8_freq", 12000.0f); setParam (p, "b8_q", 6.0f); }, 7).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b6_type", 5.0f); setParam (p, "b6_q", 6.0f); }, 5).getClippedImage (screen),
+              render ([] (labq8::LabQ8AudioProcessor& p) { setParam (p, "b5_bypass", 1.0f); }, 4).getClippedImage (screen) }),
+          "ui11_5_q_handles.png");
+
+    std::printf ("%s\n", ok ? "UI-1.1 captures written" : "FAILED");
+    return ok ? 0 : 1;
+}
+} // namespace ui11
 } // namespace
+
 
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
+    labq8::ui::preferences::setStorageFileForTesting ({});
+    labq8::ui::LabQ8Editor::setScreenAreaForTesting ({ 0, 0, 4000, 3000 });
     if (argc < 3)
     {
         std::fprintf (stderr, "usage: labq8_ui_snapshot <master.png> <output_dir>\n");
@@ -163,6 +242,8 @@ int main (int argc, char** argv)
     outDir.createDirectory();
     if (argc > 3 && juce::String (argv[3]) == "--final")
         return finalCaptures (outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--ui11")
+        return ui11::captures (outDir);
 
     labq8::LabQ8AudioProcessor processor;
     processor.prepareToPlay (48000.0, 512);

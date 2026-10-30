@@ -47,7 +47,8 @@ set(LABQ8_HOST_ADAPTER_SOURCES
     src/parameters/ParameterLayout.cpp
     src/parameters/StateMigration.cpp
     src/ui/LabQ8Editor.cpp
-    src/ui/UiModel.cpp)
+    src/ui/UiModel.cpp
+    src/ui/UiPreferences.cpp)
 
 # UI-1 implementation assets, derived from the approved design by
 # labq8_ui_assetgen (docs/UI_IMPLEMENTATION.md). The master PNG itself is

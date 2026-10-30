@@ -139,6 +139,20 @@ inline constexpr std::array<FrequencyAnchor, 10> frequencyAnchors { {
     { 1000.0f, 896.5f }, { 2000.0f, 986.5f }, { 5000.0f, 1104.0f }, { 10000.0f, 1195.5f }, { 20000.0f, 1284.0f },
 } };
 
+// Screen editing (UI-1.1): band nodes and the Q handles of the selected one.
+inline constexpr float nodeDiameter = 15.0f;
+inline constexpr float nodeHitRadius = 11.0f;
+inline constexpr float selectionRingDiameter = 20.0f;
+inline constexpr float qHandleWidth = 5.0f, qHandleHeight = 14.0f;
+inline constexpr float qHandleHitWidth = 12.0f, qHandleHitHeight = 24.0f;
+inline constexpr float qHandleMinDistance = 14.0f;      // from the node centre, so both stay grabbable
+inline constexpr float qHandleMaxControlDistance = 48.0f; // shelves / cuts: distance at the minimum Q
+inline constexpr float qDragPixelsPerOctave = 45.0f;    // handle drag: Q halves / doubles every 45 px
+
+// Settings icon at the right of the screen header (the zoom menu, UI-1.1).
+inline constexpr Point settingsIconCentre { 1281.5f, 215.0f };
+inline constexpr float settingsHitSize = 32.0f;
+
 // Horizontal grid rows (re-drawn by the generator after removing the curves).
 inline constexpr std::array<float, 7> plotGridRows { 251.0f, 289.0f, 325.5f, 362.0f, 399.5f, 437.0f, 474.0f };
 

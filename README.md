@@ -4,12 +4,12 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: UI-1** (interfaz del diseño aprobado sobre E2c.1, `3041019`). Ocho bandas independientes en
+**Fase actual: UI-1.1 cerrada** (ergonomía de la interfaz tras SMOKE-1, sobre UI-1 `13a810f`; SMOKE-3 aprobado). Ocho bandas independientes en
 cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
 Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
 cambiar de tipo, bypass por banda, estado v4 compatible con sesiones E0, E1a,
-E1b y E2b, la interfaz del diseño aprobado (UI-1) y 118 pruebas que se ejecutan
-sin DAW.
+E1b y E2b, la interfaz del diseño aprobado (UI-1, con zoom, botones ON/OFF y
+edición desde los nodos de UI-1.1) y 125 pruebas que se ejecutan sin DAW.
 E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
 guardado. E2a/E2b añaden el motor dinámico (ocho secciones independientes en
 el núcleo DSP, solo para Bells, detección sobre la entrada común y estéreo
@@ -81,7 +81,11 @@ Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
 | `build/e2a-debug`, `build/e2a-release-universal` | E2a (`111acab`) | Referencia E2a. No se recompila |
 | `build/e2b-debug`, `build/e2b-release-universal` | E2b (`5623dc5`) | Referencia E2b. No se recompila |
 | `build/e2c1-debug`, `build/e2c1-release-universal` | E2c.1 (`3041019`) | Referencia E2c.1. No se recompila |
-| `build/ui1-debug`, `build/ui1-release-universal` | UI-1 (árbol de trabajo) | Builds de UI-1 |
+| `build/ui1-release-universal` | UI-1 (`13a810f`) | Build de UI-1 |
+| `build/ui1-debug` | árbol de trabajo | Build Debug de trabajo; desde la auditoría de UI-1.1 compila UI-1.1 |
+| `build/smoke1-release-universal` | UI-1 (`13a810f`, `git archive`) | Build instalado en SMOKE-1. No se recompila |
+| `build/ui11-release-universal` | UI-1.1 (árbol de trabajo) | Build instalado en SMOKE-2. No se recompila |
+| `build/ui11zoom-release-universal` | UI-1.1 + zoom en seis tamaños (árbol de trabajo) | Build instalado en SMOKE-3. No se recompila |
 
 Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
 tras E1b, los de E0, E1a y E1b tras E1b.1, los de E0 a E1b.1 tras E2a, y los
@@ -97,7 +101,10 @@ tests/compat/run_compat.sh all
 ## Artefactos
 
 Los plugins quedan **solo** en el directorio de build; `COPY_PLUGIN_AFTER_BUILD`
-está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Library`:
+está desactivado y el build no instala nada en `~/Library/Audio/Plug-Ins` ni
+en `/Library`. Para un smoke autorizado en un host, `tools/install/install_au.sh`
+copia el AU a `~/Library/Audio/Plug-Ins/Components`, se niega mientras Logic
+(u otro host de AU) esté abierto y aparta la copia anterior:
 
 - `build/<config>/LABQ8_artefacts/<Config>/AU/LABQ8.component`
 - `build/<config>/LABQ8_artefacts/<Config>/VST3/LABQ8.vst3`
@@ -123,6 +130,6 @@ está desactivado y nada se instala en `~/Library/Audio/Plug-Ins` ni en `/Librar
 - [docs/DYNAMICS_E2B.md](docs/DYNAMICS_E2B.md): motor dinámico de ocho bandas (señal original común, estéreo enlazado, tipos, medidas, propuesta para E2c y shelves dinámicos).
 - [docs/DYNAMICS_E2C1.md](docs/DYNAMICS_E2C1.md): parámetros públicos de la dinámica, riesgos y propuesta de detector para E2c.2.
 - [docs/design/README.md](docs/design/README.md): diseño gráfico aprobado APPROVED_01 (congelado).
-- [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 (arquitectura, assets derivados, controles, desviaciones pendientes de aprobación).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-1.
+- [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 y UI-1.1 (arquitectura, assets derivados, controles, zoom, edición desde los nodos).
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-1.1.
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

@@ -1,12 +1,15 @@
 #include "ui/LabQ8Editor.h"
 
 #include "LabQ8Assets.h"
+#include "dsp/BandLimits.h"
+#include "dsp/BiquadDesign.h"
 #include "dsp/FilterTypes.h"
 #include "parameters/ParameterIDs.h"
 #include "plugin/PluginProcessor.h"
 #include "ui/UiGeometry.h"
 
 #include <cmath>
+#include <limits>
 
 namespace labq8::ui
 {
@@ -32,7 +35,7 @@ namespace
     constexpr float headerFontHeight = 21.0f;       // Medium, cap 14
     constexpr float headerTracking = 0.124f;
     constexpr float filterTypeFontHeight = 15.75f;  // Regular, cap 11
-    constexpr float bandNumberFontHeight = 17.25f;  // Regular, cap 12
+    constexpr float bandButtonFontHeight = 19.0f;   // Medium (UI-1.1 lamps, approved preview)
     constexpr float nodeFontHeight = 11.75f;        // Bold, cap 8
 
     juce::Point<float> polar (juce::Point<float> centre, float radius, float degrees)
@@ -58,6 +61,15 @@ namespace
         return ids.frequency;
     }
 
+    // Lamp colour of a band button (UI-1.1, approved): deeper and warmer than
+    // the screen colour, less pastel, still clearly the band's hue.
+    juce::Colour lampColour (int band)
+    {
+        const auto c = bandColour (band);
+        const auto deep = juce::Colour::fromHSV (c.getHue(), juce::jmin (1.0f, c.getSaturation() * 1.45f + 0.08f), c.getBrightness() * 0.86f, 1.0f);
+        return deep.interpolatedWith (juce::Colour (255, 168, 72), 0.14f);
+    }
+
     constexpr PanelControl controls[] = { PanelControl::frequency, PanelControl::gain, PanelControl::q, PanelControl::threshold,
                                           PanelControl::range, PanelControl::attack, PanelControl::release };
 } // namespace
@@ -72,6 +84,15 @@ public:
     {
         setSize (g::referenceWidth, g::referenceHeight);
         setOpaque (false);
+    }
+
+    // Clicks on the chassis (where no control is).
+    std::function<void (const juce::MouseEvent&)> onBackgroundMouseDown;
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (onBackgroundMouseDown)
+            onBackgroundMouseDown (e);
     }
 };
 
@@ -154,55 +175,95 @@ private:
 };
 
 //==============================================================================
-// One of the eight band selector buttons (the button body is background).
+// One of the eight band buttons (UI-1.1): the whole button is the band's
+// ON / OFF switch. Lit lamp = band active, unlit = b{n}_bypass on; a left
+// click toggles it (complete gesture). No selection: bands are selected
+// from their screen nodes.
 class BandButton final : public juce::Component
 {
 public:
-    BandButton (int b, std::function<void (int)> onSelect) : band (b), select (std::move (onSelect))
+    explicit BandButton (int b) : band (b)
     {
-        const auto left = g::bandButtonLeft (b);
-        setBounds (juce::Rectangle<float> (left, g::bandButtonTop, g::bandButtonWidth, g::bandButtonBottom - g::bandButtonTop + 1).toNearestInt());
-        setTitle ("Band " + juce::String (b + 1));
+        // The button body plus 2 px for the lamp's halo.
+        setBounds (bodyArea().expanded (2.0f).toNearestInt());
+        setTitle ("Band " + juce::String (b + 1) + " On/Off");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
 
-    void setSelected (bool s) { if (s != selected) { selected = s; repaint(); } }
-
-    void mouseUp (const juce::MouseEvent& e) override
+    void attach (juce::RangedAudioParameter& parameter)
     {
-        if (getLocalBounds().contains (e.getPosition()))
-            select (band);
+        attachment = std::make_unique<juce::ParameterAttachment> (parameter, [this] (float value) { bypassed = value >= 0.5f; repaint(); });
+        attachment->sendInitialUpdate();
+    }
+
+    void toggle()
+    {
+        if (attachment != nullptr)
+            attachment->setValueAsCompleteGesture (bypassed ? 0.0f : 1.0f);
+    }
+
+    bool isOn() const noexcept { return ! bypassed; }
+
+    // On the press (not the release), left button only, no modifier gestures.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isLeftButtonDown() && ! e.mods.isPopupMenu())
+            toggle();
     }
 
     void paint (juce::Graphics& gr) override
     {
-        const auto left = g::bandButtonLeft (band) - (float) getX();
-        const auto cy = g::bandButtonCentreY - (float) getY();
-        const auto dot = juce::Rectangle<float> (2 * g::bandButtonDotRadius, 2 * g::bandButtonDotRadius).withCentre ({ left + g::bandButtonDotOffset, cy });
-        gr.setColour (bandColour (band, 0.25f));
-        gr.fillEllipse (dot.expanded (1.5f));
-        gr.setColour (bandColour (band));
-        gr.fillEllipse (dot);
-
-        gr.setColour (colourOf (g::lightTextColour));
-        gr.setFont (designFont (bandNumberFontHeight, "Regular"));
-        gr.drawText (juce::String (band + 1), juce::Rectangle<float> (30, 20).withCentre ({ left + g::bandButtonNumberOffset, cy + 0.5f }),
-                     juce::Justification::centred, false);
-
-        if (selected)
+        const auto body = bodyArea().translated (-(float) getX(), -(float) getY()).reduced (3.0f, 3.0f);
+        const auto c = lampColour (band);
+        gr.setColour (juce::Colour (14, 14, 12));
+        gr.fillRoundedRectangle (body.expanded (2.0f), 7.0f);
+        gr.setFont (designFont (bandButtonFontHeight, "Medium"));
+        if (! bypassed)
         {
-            // Selected: the design's border, in the band's colour.
-            const auto box = getLocalBounds().toFloat().reduced (2.5f, 2.5f);
-            gr.setColour (bandColour (band, 0.25f));
-            gr.drawRoundedRectangle (box.expanded (1.0f), 7.0f, 3.0f);
-            gr.setColour (bandColour (band).brighter (0.25f));
-            gr.drawRoundedRectangle (box, 6.0f, 1.6f);
+            // Backlit lamp lens: soft halo, warm core fading to the edges,
+            // a faint glass reflection and a dark bezel line.
+            for (int i = 3; i >= 1; --i)
+            {
+                gr.setColour (c.withAlpha (0.06f * (float) (4 - i)));
+                gr.fillRoundedRectangle (body.expanded ((float) i * 1.3f), 6.0f + (float) i);
+            }
+            gr.setGradientFill (juce::ColourGradient (c.brighter (0.18f), body.getCentreX(), body.getCentreY() - 2.0f,
+                                                      c.darker (0.55f), body.getX(), body.getBottom(), true));
+            gr.fillRoundedRectangle (body, 6.0f);
+            gr.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.13f), body.getCentreX(), body.getY(),
+                                                      juce::Colours::white.withAlpha (0.0f), body.getCentreX(), body.getY() + body.getHeight() * 0.45f, false));
+            gr.fillRoundedRectangle (body.reduced (3.0f, 1.5f).withHeight (body.getHeight() * 0.42f), 4.0f);
+            gr.setColour (juce::Colours::black.withAlpha (0.6f));
+            gr.drawRoundedRectangle (body, 6.0f, 1.3f);
+            gr.setColour (c.brighter (0.5f).withAlpha (0.35f));
+            gr.drawText (juce::String (band + 1), body.translated (0, 1.5f), juce::Justification::centred, false);
+            gr.setColour (juce::Colour (28, 20, 12));
+            gr.drawText (juce::String (band + 1), body.translated (0, 0.5f), juce::Justification::centred, false);
+        }
+        else
+        {
+            // Unlit lamp: the same lens, dark, with only a trace of its colour.
+            gr.setGradientFill (juce::ColourGradient (c.withMultipliedBrightness (0.2f), body.getCentreX(), body.getCentreY() - 2.0f,
+                                                      juce::Colour (9, 9, 8), body.getX(), body.getBottom(), true));
+            gr.fillRoundedRectangle (body, 6.0f);
+            gr.setColour (juce::Colours::black.withAlpha (0.6f));
+            gr.drawRoundedRectangle (body, 6.0f, 1.3f);
+            gr.setColour (c.withAlpha (0.18f));
+            gr.drawRoundedRectangle (body.reduced (1.2f), 5.0f, 0.8f);
+            gr.setColour (c.withMultipliedBrightness (0.62f).withAlpha (0.75f));
+            gr.drawText (juce::String (band + 1), body.translated (0, 0.5f), juce::Justification::centred, false);
         }
     }
 
 private:
+    juce::Rectangle<float> bodyArea() const
+    {
+        return { g::bandButtonLeft (band), g::bandButtonTop, g::bandButtonWidth, g::bandButtonBottom - g::bandButtonTop + 1 };
+    }
+
     const int band;
-    std::function<void (int)> select;
-    bool selected = false;
+    std::unique_ptr<juce::ParameterAttachment> attachment;
+    bool bypassed = false;
 };
 
 //==============================================================================
@@ -384,16 +445,16 @@ private:
 };
 
 //==============================================================================
-// The colour dot next to "BAND n": lit when the band is active, dimmed when
-// it is bypassed; a left click toggles b{n}_bypass of the shown band
-// (approved 29-10-2026). Invisible click area of 34 x 34 px.
+// The colour dot next to "BAND n": lit when the shown band is active, dimmed
+// when it is bypassed. Indicator only (UI-1.1): it takes no clicks; the band
+// buttons switch bands on / off.
 class BypassIndicator final : public juce::Component
 {
 public:
     BypassIndicator()
     {
         setBounds (juce::Rectangle<float> (g::bandDotHitSize, g::bandDotHitSize).withCentre ({ g::bandDotCentre.x, g::bandDotCentre.y }).toNearestInt());
-        setTitle ("Band bypass");
+        setInterceptsMouseClicks (false, false);
     }
 
     void attach (juce::RangedAudioParameter& parameter, int newBand)
@@ -403,20 +464,7 @@ public:
         attachment->sendInitialUpdate();
     }
 
-    void toggle()
-    {
-        if (attachment != nullptr)
-            attachment->setValueAsCompleteGesture (bypassed ? 0.0f : 1.0f);
-    }
-
     bool isBypassed() const noexcept { return bypassed; }
-
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        // Left click only; the click area is the whole (invisible) 34 x 34.
-        if (! e.mods.isPopupMenu() && getLocalBounds().contains (e.getPosition()))
-            toggle();
-    }
 
     void paint (juce::Graphics& gr) override
     {
@@ -443,9 +491,46 @@ private:
 };
 
 //==============================================================================
+// The settings icon of the screen header (drawn by the background): opens
+// the zoom menu (UI-1.1).
+class SettingsButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit SettingsButton (std::function<void()> onOpen) : open (std::move (onOpen))
+    {
+        setBounds (juce::Rectangle<float> (g::settingsHitSize, g::settingsHitSize).withCentre ({ g::settingsIconCentre.x, g::settingsIconCentre.y }).toNearestInt());
+        setTitle ("Settings");
+        setTooltip ("Settings: zoom");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { open(); }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+
+    void paint (juce::Graphics& gr) override
+    {
+        if (isMouseOver())
+        {
+            gr.setColour (colourOf (g::lightTextColour, 0.12f));
+            gr.fillEllipse (getLocalBounds().toFloat().reduced (4.0f));
+        }
+    }
+
+private:
+    std::function<void()> open;
+};
+
+//==============================================================================
 // Central screen: the static EQ response computed from the parameters with
 // the DSP's own designs, and the eight band nodes. No spectrum, no dynamic
 // curve, no meters: nothing that would pretend to be a measurement.
+//
+// Editing (UI-1.1): a click on a node selects its band (bypassed bands too)
+// and shows its two Q handles; dragging the node moves FREQUENCY
+// horizontally and GAIN vertically (Bell and shelves only), both at once
+// diagonally; dragging a handle sets Q. A click on the empty screen hides
+// the handles. Every drag is one begin / end gesture per parameter.
 class ResponseScreen final : public juce::Component
 {
 public:
@@ -457,19 +542,117 @@ public:
             allFrequencies.push_back (xToFrequency (x));
     }
 
+    std::function<void()> onContextMenu;
+
     void setSelectedBand (int b) { selectedBand = b; repaint(); }
 
-    void mouseDown (const juce::MouseEvent& e) override
+    void showHandles (bool shouldShow)
+    {
+        if (shouldShow != handlesShown)
+        {
+            handlesShown = shouldShow;
+            repaint();
+        }
+    }
+
+    bool areHandlesShown() const noexcept { return handlesShown; }
+
+    // Reference-space centre of a band's node (on the composite curve).
+    juce::Point<float> nodePosition (int band) const
     {
         const auto bands = readBands();
         const auto total = cascadeResponseDb (bands, sampleRate(), nodeFrequencies (bands));
-        for (int b = 0; b < 8; ++b)
-            if (nodePosition (bands[(size_t) b], total[(size_t) b]).getDistanceFrom (e.position + getPosition().toFloat()) <= 11.0f)
+        return nodePosition (bands[(size_t) band], total[(size_t) band]);
+    }
+
+    // Reference-space centres of the selected band's two Q handles.
+    std::pair<juce::Point<float>, juce::Point<float>> handleCentres() const
+    {
+        const auto node = nodePosition (selectedBand);
+        const auto [left, right] = handleOffsets (readBands()[(size_t) selectedBand]);
+        return { { node.x - left, node.y }, { node.x + right, node.y } };
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const auto p = toReference (e);
+        if (handlesShown && handleAt (p) != 0)
+            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+        else
+            setMouseCursor (nodeAt (p) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        endDrag();
+        if (e.mods.isPopupMenu())
+        {
+            if (onContextMenu)
+                onContextMenu();
+            return;
+        }
+        if (! e.mods.isLeftButtonDown())
+            return;
+
+        const auto p = toReference (e);
+        if (handlesShown)
+            if (const auto side = handleAt (p); side != 0)
             {
-                select (b);
+                const auto band = readBands()[(size_t) selectedBand];
+                drag = { DragKind::q, selectedBand, p, band.frequencyHz, band.gainDb, clampedEffectiveQ (band), side, band.type };
+                q.parameter = parameter (params::bandIDs[(size_t) selectedBand].q);
                 return;
             }
+
+        const auto band = nodeAt (p);
+        if (band < 0)
+        {
+            showHandles (false);
+            return;
+        }
+        select (band);
+        showHandles (true);
+        const auto view = readBands()[(size_t) band];
+        drag = { DragKind::node, band, p, view.frequencyHz, view.gainDb, 0.0, 0, view.type };
+        frequency.parameter = parameter (params::bandIDs[(size_t) band].frequency);
+        gain.parameter = dsp::usesGain (view.type) ? parameter (params::bandIDs[(size_t) band].gain) : nullptr;
     }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (drag.kind == DragKind::none)
+            return;
+        const auto delta = toReference (e) - drag.start;
+        // A small jitter while clicking a node only selects it.
+        if (! drag.moved && delta.getDistanceFromOrigin() < 3.0f)
+            return;
+        drag.moved = true;
+
+        if (drag.kind == DragKind::node)
+        {
+            if (delta.x != 0.0f || frequency.active)
+            {
+                const auto f = delta.x == 0.0f ? drag.startFrequency : xToFrequency (frequencyToX (drag.startFrequency) + delta.x);
+                frequency.set (juce::jlimit (dsp::limits::minFrequencyHz, dsp::limits::maxFrequencyHz, f));
+            }
+            if (gain.parameter != nullptr && (delta.y != 0.0f || gain.active))
+                gain.set (juce::jlimit (dsp::limits::minGainDb, dsp::limits::maxGainDb, drag.startGain - delta.y / g::plotPixelsPerDb));
+        }
+        else
+        {
+            // Outwards widens (lower Q), inwards narrows; within the type's
+            // effective range, so the handles never promise a Q that does
+            // not sound.
+            const auto outwards = (double) (delta.x * (float) drag.side);
+            const auto newQ = juce::jlimit (dsp::limits::minQ, dsp::maxEffectiveQ (drag.type),
+                                            drag.startQ * std::pow (2.0, -outwards / g::qDragPixelsPerOctave));
+            if (! juce::exactlyEqual (newQ, drag.startQ) || q.active) // pressing against a limit writes nothing
+                q.set (newQ);
+        }
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { endDrag(); }
 
     void paint (juce::Graphics& gr) override
     {
@@ -524,7 +707,7 @@ public:
         {
             const auto centre = nodePosition (bands[(size_t) b], atNodes[(size_t) b]);
             const auto alpha = bands[(size_t) b].bypassed ? 0.35f : 1.0f; // bypass look (approved)
-            const auto dot = juce::Rectangle<float> (15.0f, 15.0f).withCentre (centre);
+            const auto dot = juce::Rectangle<float> (g::nodeDiameter, g::nodeDiameter).withCentre (centre);
             gr.setColour (bandColour (b, 0.25f * alpha));
             gr.fillEllipse (dot.expanded (2.5f));
             gr.setColour (bandColour (b, alpha));
@@ -534,6 +717,9 @@ public:
             gr.setFont (designFont (nodeFontHeight, "Bold"));
             gr.drawText (juce::String (b + 1), dot.translated (0, 0.5f), juce::Justification::centred, false);
         }
+
+        if (handlesShown)
+            paintHandles (gr, bands[(size_t) selectedBand], nodePosition (bands[(size_t) selectedBand], atNodes[(size_t) selectedBand]));
     }
 
     std::array<BandView, 8> readBands() const
@@ -550,6 +736,140 @@ public:
     }
 
 private:
+    enum class DragKind { none, node, q };
+    struct Drag
+    {
+        DragKind kind = DragKind::none;
+        int band = -1;
+        juce::Point<float> start;
+        double startFrequency = 0.0, startGain = 0.0, startQ = 0.0;
+        int side = 0; // Q handle: -1 left, +1 right
+        dsp::FilterType type = dsp::FilterType::bell;
+        bool moved = false;
+    };
+
+    // One parameter edited by a drag: the gesture begins with the first
+    // change and ends on release.
+    struct GestureParameter
+    {
+        juce::RangedAudioParameter* parameter = nullptr;
+        bool active = false;
+
+        void set (double value)
+        {
+            if (parameter == nullptr)
+                return;
+            if (! active)
+            {
+                parameter->beginChangeGesture();
+                active = true;
+            }
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 ((float) value));
+        }
+
+        void end()
+        {
+            if (active)
+                parameter->endChangeGesture();
+            active = false;
+            parameter = nullptr;
+        }
+    };
+
+    void endDrag()
+    {
+        frequency.end();
+        gain.end();
+        q.end();
+        drag = {};
+    }
+
+    juce::RangedAudioParameter* parameter (const char* id) const { return state.getParameter (id); }
+
+    juce::Point<float> toReference (const juce::MouseEvent& e) const { return e.position + getPosition().toFloat(); }
+
+    // Nearest node within its hit radius (any band, bypassed too), or -1.
+    int nodeAt (juce::Point<float> p) const
+    {
+        const auto bands = readBands();
+        const auto total = cascadeResponseDb (bands, sampleRate(), nodeFrequencies (bands));
+        int best = -1;
+        auto bestDistance = g::nodeHitRadius;
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto d = nodePosition (bands[(size_t) b], total[(size_t) b]).getDistanceFrom (p);
+            if (d < bestDistance || (d <= bestDistance && b == selectedBand))
+            {
+                best = b;
+                bestDistance = d;
+            }
+        }
+        return best;
+    }
+
+    // -1 / +1 when p is on the left / right Q handle of the selected band.
+    int handleAt (juce::Point<float> p) const
+    {
+        const auto [left, right] = handleCentres();
+        auto hit = [&] (juce::Point<float> c) { return juce::Rectangle<float> (g::qHandleHitWidth, g::qHandleHitHeight).withCentre (c).contains (p); };
+        return hit (left) ? -1 : (hit (right) ? 1 : 0);
+    }
+
+    static double clampedEffectiveQ (const BandView& band)
+    {
+        return juce::jlimit (dsp::limits::minQ, dsp::maxEffectiveQ (band.type), dsp::effectiveQ (band.type, dsp::clampQ (band.q)));
+    }
+
+    // Distances (px) of the Q handles from the node, from the effective Q.
+    // Bell: the half-gain (dB) points (RBJ's bandwidth); Notch: its -3 dB
+    // points. Shelves and cuts have no such width: the handles are a pure Q
+    // control, further away as Q falls (log scale over the type's effective
+    // range). Never closer than qHandleMinDistance.
+    static std::pair<float, float> handleOffsets (const BandView& band)
+    {
+        const auto q = clampedEffectiveQ (band);
+        if (band.type == dsp::FilterType::bell || band.type == dsp::FilterType::notch)
+        {
+            const auto halfOctaves = std::asinh (1.0 / (2.0 * q)) / std::log (2.0);
+            const auto x0 = frequencyToX (band.frequencyHz);
+            return { std::max (g::qHandleMinDistance, x0 - frequencyToX (band.frequencyHz * std::pow (2.0, -halfOctaves))),
+                     std::max (g::qHandleMinDistance, frequencyToX (band.frequencyHz * std::pow (2.0, halfOctaves)) - x0) };
+        }
+        const auto qMax = dsp::maxEffectiveQ (band.type);
+        const auto t = (float) juce::jlimit (0.0, 1.0, std::log (qMax / q) / std::log (qMax / dsp::limits::minQ));
+        const auto d = g::qHandleMinDistance + (g::qHandleMaxControlDistance - g::qHandleMinDistance) * t;
+        return { d, d };
+    }
+
+    void paintHandles (juce::Graphics& gr, const BandView& band, juce::Point<float> node) const
+    {
+        const auto [left, right] = handleOffsets (band);
+        const auto xl = node.x - left, xr = node.x + right;
+        const auto c = bandColour (selectedBand);
+        if (band.type == dsp::FilterType::bell || band.type == dsp::FilterType::notch)
+        {
+            // A real bandwidth: a dotted span between the edges.
+            gr.setColour (c.withAlpha (0.4f));
+            const float dots[] = { 1.5f, 3.0f };
+            gr.drawDashedLine ({ xl + 3, node.y, node.x - 10, node.y }, dots, 2, 1.0f);
+            gr.drawDashedLine ({ node.x + 10, node.y, xr - 3, node.y }, dots, 2, 1.0f);
+        }
+        for (const auto x : { xl, xr })
+        {
+            // Discreet grip: a small dark capsule outlined in the band colour.
+            const auto grip = juce::Rectangle<float> (g::qHandleWidth, g::qHandleHeight).withCentre ({ x, node.y });
+            gr.setColour (juce::Colour (10, 12, 10).withAlpha (0.85f));
+            gr.fillRoundedRectangle (grip, 2.5f);
+            gr.setColour (c.withAlpha (0.9f));
+            gr.drawRoundedRectangle (grip, 2.5f, 1.1f);
+            gr.setColour (c.withAlpha (0.6f));
+            gr.drawLine (x, node.y - 3.0f, x, node.y + 3.0f, 1.0f);
+        }
+        // Selected node: a thin light ring.
+        gr.setColour (juce::Colour (232, 236, 224).withAlpha (0.75f));
+        gr.drawEllipse (juce::Rectangle<float> (g::selectionRingDiameter, g::selectionRingDiameter).withCentre (node), 1.2f);
+    }
+
     double sampleRate() const { return processor.getSampleRate() > 0 ? processor.getSampleRate() : 48000.0; }
 
     static std::vector<double> nodeFrequencies (const std::array<BandView, 8>& bands)
@@ -574,6 +894,9 @@ private:
     std::function<void (int)> select;
     std::vector<double> allFrequencies;
     int selectedBand = 0;
+    bool handlesShown = false;
+    Drag drag;
+    GestureParameter frequency, gain, q;
 };
 
 //==============================================================================
@@ -594,10 +917,19 @@ public:
 LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     : AudioProcessorEditor (p), audioProcessor (p), state (p.getValueTreeState())
 {
-    content = std::make_unique<Content>();
+    auto chassis = std::make_unique<Content>();
+    chassis->onBackgroundMouseDown = [this] (const juce::MouseEvent& e)
+    {
+        if (e.mods.isPopupMenu())
+            showZoomMenu (*content);
+        else
+            screen->showHandles (false); // a click outside the nodes hides the Q handles
+    };
+    content = std::move (chassis);
     addAndMakeVisible (*content);
 
     screen = std::make_unique<ResponseScreen> (state, audioProcessor, [this] (int b) { selectBand (b); });
+    screen->onContextMenu = [this] { showZoomMenu (*screen); };
     content->addAndMakeVisible (*screen);
 
     for (int i = 0; i < 7; ++i)
@@ -609,9 +941,11 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
         knobs[(size_t) i]->onValueChange = [this, i] { displays[(size_t) i]->repaint(); };
     }
 
+    // Each button is bound to its own band's b{n}_bypass for good.
     for (int b = 0; b < 8; ++b)
     {
-        bandButtons[(size_t) b] = std::make_unique<BandButton> (b, [this] (int band) { selectBand (band); });
+        bandButtons[(size_t) b] = std::make_unique<BandButton> (b);
+        bandButtons[(size_t) b]->attach (*state.getParameter (params::bandIDs[(size_t) b].bypass));
         content->addAndMakeVisible (*bandButtons[(size_t) b]);
     }
 
@@ -637,12 +971,20 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
         content->addAndMakeVisible (*inactiveAreas.back());
     }
 
+    // Above the inactive "Display view" strip that surrounds it.
+    settingsButton = std::make_unique<SettingsButton> ([this] { showZoomMenu (*settingsButton); });
+    content->addAndMakeVisible (*settingsButton);
+
     selectBand (juce::jlimit (0, 7, audioProcessor.getUiSelectedBand()));
 
-    setResizable (true, true);
-    getConstrainer()->setFixedAspectRatio ((double) g::referenceWidth / g::referenceHeight);
-    setResizeLimits ((int) (g::referenceWidth * minimumScale), (int) (g::referenceHeight * minimumScale), g::referenceWidth, g::referenceHeight);
-    setSize ((int) std::lround (g::referenceWidth * defaultScale), (int) std::lround (g::referenceHeight * defaultScale));
+    // No resize corner and no resizing by the host: the size only changes
+    // through the zoom menu. Opens at the stored zoom, or at the largest
+    // smaller choice that fits this screen (the preference is kept).
+    setResizable (false, false);
+    auto zoom = preferences::loadZoom();
+    for (auto i = (size_t) juce::jmax (0, preferences::zoomChoiceIndex (zoom)); i > 0 && ! zoomFits (zoom, getAvailableScreenArea()); --i)
+        zoom = zoomChoices[i - 1];
+    setSize ((int) std::lround (g::referenceWidth * zoom), (int) std::lround (g::referenceHeight * zoom));
     startTimerHz (30);
 }
 
@@ -677,13 +1019,81 @@ float LabQ8Editor::getScale() const noexcept
     return (float) getWidth() / (float) g::referenceWidth;
 }
 
+namespace
+{
+    juce::Rectangle<int> screenAreaOverride;
+}
+
+bool LabQ8Editor::zoomFits (float zoom, juce::Rectangle<int> available)
+{
+    if (preferences::zoomChoiceIndex (zoom) == 0)
+        return true; // the smallest size is always offered
+    return std::lround (g::referenceWidth * zoom) + hostWindowAllowanceWidth <= available.getWidth()
+        && std::lround (g::referenceHeight * zoom) + hostWindowAllowanceHeight <= available.getHeight();
+}
+
+juce::Rectangle<int> LabQ8Editor::getAvailableScreenArea() const
+{
+    if (! screenAreaOverride.isEmpty())
+        return screenAreaOverride;
+    const auto& screens = juce::Desktop::getInstance().getDisplays();
+    const auto* display = isShowing() ? screens.getDisplayForRect (getScreenBounds())
+                                      : screens.getDisplayForPoint (juce::Desktop::getMousePosition().toFloat());
+    if (display == nullptr)
+        display = screens.getPrimaryDisplay();
+    if (display == nullptr)
+        return { std::numeric_limits<int>::max(), std::numeric_limits<int>::max() }; // no display: nothing to limit
+    return display->userBounds.getSmallestIntegerContainer();
+}
+
+void LabQ8Editor::setScreenAreaForTesting (juce::Rectangle<int> area)
+{
+    screenAreaOverride = area;
+}
+
+bool LabQ8Editor::setZoom (float zoom)
+{
+    const auto index = preferences::zoomChoiceIndex (zoom);
+    if (index < 0 || ! zoomFits (zoom, getAvailableScreenArea()))
+        return false;
+    zoom = zoomChoices[(size_t) index];
+    setSize ((int) std::lround (g::referenceWidth * zoom), (int) std::lround (g::referenceHeight * zoom));
+    preferences::saveZoom (zoom);
+    return true;
+}
+
+juce::PopupMenu LabQ8Editor::createZoomMenu() const
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Zoom");
+    const auto available = getAvailableScreenArea();
+    for (size_t i = 0; i < zoomChoices.size(); ++i)
+    {
+        const auto fits = zoomFits (zoomChoices[i], available);
+        menu.addItem ((int) i + 1, juce::String (juce::roundToInt (zoomChoices[i] * 100.0f)) + " %" + (fits ? "" : "  (too large for this screen)"),
+                      fits, std::abs (getScale() - zoomChoices[i]) < 0.002f);
+    }
+    return menu;
+}
+
+void LabQ8Editor::handleZoomMenuResult (int itemId)
+{
+    if (itemId >= 1 && itemId <= (int) zoomChoices.size())
+        setZoom (zoomChoices[(size_t) itemId - 1]);
+}
+
+void LabQ8Editor::showZoomMenu (juce::Component& target)
+{
+    juce::Component::SafePointer<LabQ8Editor> self (this);
+    createZoomMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
+                                    [self] (int result) { if (self != nullptr) self->handleZoomMenuResult (result); });
+}
+
 void LabQ8Editor::selectBand (int band)
 {
     selectedBand = juce::jlimit (0, 7, band);
     audioProcessor.setUiSelectedBand (selectedBand);
     attachPanel();
-    for (int b = 0; b < 8; ++b)
-        bandButtons[(size_t) b]->setSelected (b == selectedBand);
     header->setBand (selectedBand);
     screen->setSelectedBand (selectedBand);
 }
@@ -736,6 +1146,18 @@ bool LabQ8Editor::isDynamicSwitchAvailable() const { return dynamicSwitch->isAva
 bool LabQ8Editor::isDynamicSwitchOn() const { return dynamicSwitch->isOn(); }
 juce::Component& LabQ8Editor::getBypassIndicator() { return *bypassIndicator; }
 juce::Component& LabQ8Editor::getDynamicSwitch() { return *dynamicSwitch; }
+juce::Component& LabQ8Editor::getSettingsButton() { return *settingsButton; }
+juce::Component& LabQ8Editor::getScreen() { return *screen; }
+bool LabQ8Editor::isBandButtonOn (int band) const { return bandButtons[(size_t) juce::jlimit (0, 7, band)]->isOn(); }
 bool LabQ8Editor::isBypassShown() const { return bypassIndicator->isBypassed(); }
 juce::String LabQ8Editor::getDisplayText (PanelControl control) const { return displays[(size_t) control]->text(); }
+juce::Point<float> LabQ8Editor::getNodePosition (int band) const { return screen->nodePosition (juce::jlimit (0, 7, band)); }
+std::pair<juce::Point<float>, juce::Point<float>> LabQ8Editor::getQHandleCentres() const { return screen->handleCentres(); }
+bool LabQ8Editor::areQHandlesShown() const { return screen->areHandlesShown(); }
+
+void LabQ8Editor::showQHandles (int band)
+{
+    selectBand (band);
+    screen->showHandles (true);
+}
 } // namespace labq8::ui

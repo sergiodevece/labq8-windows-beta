@@ -1,7 +1,9 @@
 # UI-1: implementación de la interfaz aprobada
 
-**Estado:** aprobada visualmente el 29-10-2026, con las decisiones del §5
-integradas. Queda pendiente la aprobación final del commit.
+**Estado:** UI-1 cerrada (`13a810f`). **UI-1.1** (§9) cambia la ergonomía
+tras SMOKE-1: zoom, botones de banda ON/OFF y edición desde los nodos;
+**cerrada**, aprobada en SMOKE-2 y SMOKE-3 (§9.1, §9.5). Lo que UI-1.1 sustituye
+está señalado en cada apartado.
 
 UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
 **LABQ8_UI_DESIGN_APPROVED_01**
@@ -16,8 +18,8 @@ UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
 | Capa | Qué es | Dónde |
 |---|---|---|
 | A. Gráficos estáticos | `assets/ui/background.png`, derivado del maestro (§2), incrustado con `juce_add_binary_data` | `assets/ui/`, `tools/ui/GenerateUiAssets.cpp` |
-| B. Controles interactivos | 7 potenciómetros, Filter Type, interruptor Dynamic EQ, 8 selectores de banda, nodos de la pantalla (clic = seleccionar banda) | `src/ui/LabQ8Editor.cpp` |
-| C. Valores y estados | Displays numéricos, cabecera "● BAND n", resaltado del selector, posición de los potenciómetros | `src/ui/LabQ8Editor.cpp` |
+| B. Controles interactivos | 7 potenciómetros, Filter Type, interruptor Dynamic EQ, 8 botones ON/OFF de banda, nodos y tiradores de Q de la pantalla, icono de configuración (zoom) | `src/ui/LabQ8Editor.cpp` |
+| C. Valores y estados | Displays numéricos, cabecera "● BAND n" (indicador de color), posición de los potenciómetros | `src/ui/LabQ8Editor.cpp` |
 | D. Visualización | Respuesta estática real del EQ y nodos, calculados con los mismos diseños, límites y Q efectivo que el DSP | `src/ui/UiModel.cpp` |
 
 - **Espacio de referencia:**
@@ -28,16 +30,23 @@ UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
   - un componente `Content` contiene todo y se escala con una única
     transformación.
 - **Tamaño del editor:**
-  - es redimensionable, con proporción fija 1672:941;
-  - va del 50 % al 100 % y abre al **75 %** (1254 × 706);
+  - seis tamaños fijos con la proporción 1672:941, elegidos en el menú Zoom
+    (40 / 60 / 80 / 100 / 120 / 140 %); sin tirador de esquina ni
+    redimensionado por el host (§9.4; UI-1 abría al 75 % con esquina);
+  - abre al **60 %** (1003 × 565) o al último tamaño elegido (preferencia
+    global, §9);
   - las zonas de clic escalan con el dibujo.
 - **Conexión con los parámetros:**
   - los potenciómetros usan `SliderAttachment`;
-  - Filter Type, Dynamic EQ y el indicador de bypass usan
-    `ParameterAttachment`, con gestos completos de inicio y fin.
+  - Filter Type, Dynamic EQ, los botones ON/OFF y el indicador de "BAND n"
+    usan `ParameterAttachment`, con gestos completos de inicio y fin;
+  - los arrastres en la pantalla escriben los parámetros con un gesto de
+    inicio y fin por parámetro (§9).
 - **Selección de banda:**
+  - se hace desde los nodos de la pantalla (UI-1.1);
   - vuelve a conectar los diez controles del panel (siete potenciómetros,
-    Filter Type, Dynamic EQ y el bypass) a los parámetros de la banda elegida;
+    Filter Type, Dynamic EQ y el indicador) a los parámetros de la banda
+    elegida;
   - crear o destruir las conexiones nunca escribe un parámetro;
   - la banda elegida se guarda en el procesador (`uiSelectedBand`), así que
     sobrevive a cerrar y abrir el editor;
@@ -109,8 +118,10 @@ tocar):
 | RANGE | `b{n}_range` | 0 … 24 dB | "8.0 dB" |
 | ATTACK | `b{n}_attack` | 0,5 … 500 ms | "10 ms" / "0.5 ms" |
 | RELEASE | `b{n}_release` | 5 … 5000 ms | "120 ms" |
-| Punto de color junto a "BAND n" | `b{n}_bypass` | off / on | iluminado = activa; atenuado = bypass |
-| Selector 1–8 / nodo en la pantalla | — (solo vista) | | resaltado y "BAND n" |
+| Botón 1–8 (UI-1.1) | `b{n}` de ese botón: `b{n}_bypass` | off / on | lámpara encendida = activa; apagada = bypass |
+| Punto de color junto a "BAND n" | `b{n}_bypass` (solo lectura) | | iluminado = activa; atenuado = bypass |
+| Nodo en la pantalla (UI-1.1) | selección; `b{n}_freq`, `b{n}_gain` | | anillo y tiradores de Q |
+| Tiradores de Q (UI-1.1) | `b{n}_q` | 0,1 … Q efectivo máximo del tipo | |
 
 **Potenciómetros:**
 
@@ -119,16 +130,10 @@ tocar):
 - **Ratón:** arrastre (240 px para todo el recorrido) y rueda.
 - **Doble clic:** vuelve al valor por defecto.
 
-**Bypass por banda:**
+**Bypass por banda** (UI-1.1: los botones 1–8, §9; en UI-1 se hacía con un
+clic en el punto de "BAND n", que ahora es solo indicador):
 
-- **Cómo se usa:** clic izquierdo en el punto de color de "BAND n". La zona
-  de clic es invisible, de 34 × 34 px, centrada en el punto de 19 px.
-- **Qué cambia:** alterna `b{n}_bypass` de la banda mostrada, con gesto
-  completo.
-- **Clic derecho:** no hace nada.
-- **Independencia:** no cambia la selección, y los selectores 1–8 nunca
-  alternan el bypass.
-- **Aspecto:**
+- **Aspecto del indicador de "BAND n":**
   - **banda activa:** el punto iluminado del diseño;
   - **en bypass:** relleno al 18 % y contorno al 55 % del color de la banda, y
     el nodo de la pantalla al 35 %.
@@ -281,3 +286,225 @@ Sin `--final`, la herramienta genera `editor_100.png`, `editor_75.png`,
 - `PluginProcessor.{h,cpp}`: crea el editor y guarda la banda seleccionada.
 - `CMakeLists.txt`.
 - `tests/compat/CMakeLists.txt` y `run_compat.sh`.
+
+## 9. UI-1.1: ergonomía tras SMOKE-1
+
+**Estado:** **cerrada** sobre `13a810f`; propuestas visuales aprobadas el
+30-10-2026; **SMOKE-2 y SMOKE-3 en Logic aprobados** (§9.1, §9.5); UI-1.1
+aprobada por el usuario. Quedan por registrar en Logic las comprobaciones de
+§9.2. Sin cambios de DSP, parámetros, IDs, estado ni PNG maestro.
+
+**Alcance:** UI-1.1 es solo ergonomía de la interfaz existente. M/S,
+INTENTION y PHASE BEHAVIOR no forman parte de ella y sus controles siguen
+inactivos (§4).
+
+**Zoom** (versión vigente tras SMOKE-2 en §9.4; esta es la de SMOKE-2):
+
+- del 50 % al 100 %, proporción fija; abre al **60 %** (1003 × 565);
+- **preferencia global del usuario**, nunca en el estado del plugin:
+  `~/Library/Application Support/VitaPlug/LABQ8/LABQ8.settings`
+  (`src/ui/UiPreferences.{h,cpp}`);
+- **acceso principal:** el icono de engranaje de la cabecera de la pantalla
+  (zona de clic de 32 × 32 px sobre el icono del fondo, con tooltip): menú
+  "Zoom", el actual marcado;
+- **acceso adicional:** el mismo menú con clic derecho (o ctrl-clic) en el
+  chasis o en la pantalla;
+- se mantenía el tirador de esquina de JUCE (retirado en §9.4).
+
+**Botones de banda 1–8:** interruptor ON/OFF de su propia banda
+(`b{n}_bypass`), sin selección. Lámpara vintage encendida = activa, apagada =
+bypass (colores más profundos y cálidos que los de la pantalla). Clic
+izquierdo, al pulsar, con gesto completo; el clic derecho no hace nada. Cada
+botón queda conectado a su banda para siempre, así que también sigue a la
+automatización y a la carga de estado. El punto de "BAND n" es solo
+indicador: no recibe el ratón.
+
+**Pantalla:**
+
+- **clic en un nodo:** selecciona la banda (también en bypass) y muestra un
+  anillo y dos tiradores de Q; el nodo más cercano dentro de 11 px gana;
+- **arrastre del nodo:** horizontal = FREQUENCY, vertical = GAIN (37 px =
+  8 dB; solo Bell y shelves), diagonal = ambos; relativo al punto de partida;
+  un temblor de menos de 3 px solo selecciona; cada parámetro tiene un gesto
+  que empieza con el primer cambio y termina al soltar; un eje que no se mueve
+  no se escribe;
+- **tiradores de Q:** desde el Q efectivo; hacia fuera baja Q (la mitad cada
+  45 px), hacia dentro sube; limitado a [0,1, Q efectivo máximo del tipo];
+  empujar contra un límite no escribe nada;
+- **posición de los tiradores:** Bell en los puntos de media ganancia en dB
+  (definición de ancho de RBJ), Notch en sus puntos de −3 dB, con una línea
+  punteada; shelves y cortes no tienen ese ancho, así que los tiradores son un
+  control de Q puro (de 14 a 48 px del nodo según el Q, escala logarítmica en
+  su rango efectivo), sin línea; nunca a menos de 14 px del nodo;
+- **ocultar:** clic en la pantalla vacía o en el chasis; clic en otro nodo
+  cambia de banda;
+- sin gestos con teclas modificadoras.
+
+**Revisión del enrutado del ratón** (los fallos de SMOKE-1 siguen sin causa
+confirmada):
+
+- con el editor visible, `getComponentAt` lleva cada botón, el engranaje, la
+  pantalla a su componente en cada zoom (prueba);
+- el punto de "BAND n" de UI-1 recibía el clic y su lógica era correcta fuera
+  de Logic; no se reprodujo el fallo;
+- no se pudieron inyectar eventos reales del sistema (la ventana de prueba
+  queda tapada por otras aplicaciones), así que el comportamiento dentro de
+  Logic solo se comprobará físicamente;
+- los botones nuevos conmutan al pulsar, sin depender de dónde se suelta el
+  ratón.
+
+**Verificación:**
+
+- 124 pruebas (6 nuevas de UI-1.1) en Release arm64 y x86_64: 124/124;
+- compatibilidad de audio: `run_compat.sh all`, ocho bases en arm64 y x86_64,
+  todas OK; frente a UI-1 (`13a810f`), estricta, 31/31 casos idénticos bit a
+  bit por arquitectura;
+- mutaciones, todas detectadas: botones conectados a la banda 1 (2 pruebas),
+  indicador que recibe clics (1), arrastre vertical que reescribe la
+  frecuencia (1), Q hasta 18 en todos los tipos (1), tiradores a distancia
+  fija (1), zoom no guardado (1), sin umbral de temblor (1), un gesto por
+  movimiento (2);
+- repintado completo (Release arm64, software): 3,9–4,3 ms a 1254 px y
+  4,3–5,0 ms a 1672 px, frente a 3,0–3,5 ms de UI-1 medido en la misma
+  sesión (las lámparas añaden unos 1 ms; los repintados normales son locales).
+
+**Capturas** (`labq8_ui_snapshot <maestro> <dir> --ui11`):
+`ui11_1_editor_100.png`, `ui11_2_editor_60_default.png`,
+`ui11_3_editor_50.png`, `ui11_4_buttons_mixed_on_off.png`,
+`ui11_5_q_handles.png`.
+
+### 9.1 SMOKE-2 en Logic Pro (30-10-2026)
+
+Build instalado: `build/ui11-release-universal` (árbol de trabajo sobre
+`13a810f`), SHA-256 del binario
+`bb3c0bc6defa235a6639b10d6b451eae8b804b4e551ad2e067d30671ff63f035`; auval
+arm64 y x86_64 sin avisos, 80 parámetros. Resultados aprobados por el usuario:
+
+- **EQ estática y dinámica:** resultado musical excepcional con bajo DI,
+  batería, guitarra acústica y mezcla completa. El DSP queda aprobado
+  musicalmente y no se modifica;
+- **tamaño inicial del 60 %:** correcto;
+- **botones coloreados ON/OFF:** funcionan en Logic (el fallo de SMOKE-1 en
+  el bypass no se reproduce con los botones nuevos; su causa sigue sin
+  confirmar);
+- **selección de bandas desde sus nodos:** aprobada;
+- **tiradores gráficos de Q:** aprobados como parte de la identidad de LABQ8;
+- **superposición de bandas:** se mantiene el comportamiento actual (los
+  nodos pueden superponerse; el clic elige el más cercano dentro de 11 px, sin
+  reordenar ni apartar nodos).
+
+### 9.2 Comprobaciones pendientes tras SMOKE-2
+
+Las dos primeras quedaron superadas en SMOKE-3 (§9.5); las dos últimas no se
+han registrado en ningún smoke y siguen sin darse por superadas en Logic:
+
+- **zoom en Logic** (ahora con los seis tamaños de §9.4, sin esquina): que
+  cada tamaño disponible redimensione de verdad la ventana de Logic y que el
+  ratón responda donde se dibuja;
+- **recuperación de la preferencia de zoom:** tras SMOKE-2 no existe
+  `~/Library/Application Support/VitaPlug/LABQ8/LABQ8.settings` (Logic no
+  está en sandbox), así que no se llegó a guardar ningún zoom: o no se cambió,
+  o falló el guardado dentro de Logic. Falta comprobar en Logic que se escribe
+  al elegir un zoom y que se recupera al reabrir el editor y tras reiniciar
+  Logic. Fuera de Logic está cubierto por pruebas (archivo temporal real,
+  editor nuevo que lo lee, valores no válidos);
+- **automatización en Logic:** gesto de `Band n Bypass` desde los botones y
+  de Frequency/Gain/Q desde los nodos (Latch/Touch), y que botones, nodos y
+  potenciómetros sigan la reproducción. Fuera de Logic está cubierto por
+  pruebas;
+- **persistencia de sesión en Logic:** guardar, cerrar y reabrir el
+  proyecto (valores, bypass, banda seleccionada). Fuera de Logic está
+  cubierto por pruebas.
+
+### 9.3 Verificación de cierre (30-10-2026)
+
+Sobre el mismo árbol de trabajo; recompilar `build/ui11-release-universal`
+no cambia nada (el binario sigue siendo el instalado en SMOKE-2):
+
+- 124/124 pruebas en Release arm64 y x86_64 (entre ellas estado v1–v4 y
+  migración, automatización del host, carga de estado con el editor abierto,
+  bypass desde los botones, zoom y edición desde los nodos);
+- `run_compat.sh all`: las ocho bases OK en arm64 y x86_64; frente a UI-1
+  (`13a810f`) y E2c.1 (`3041019`), estricta, sin diferencias;
+- sin cambios frente a `13a810f` en `src/` fuera de `src/ui/`, ni en
+  `assets/` ni en `docs/design/`; PNG maestro `4e14b925…f30b01`.
+
+**Instalación para pruebas en host:** `tools/install/install_au.sh` (solo con
+autorización). Se niega, sin tocar nada, si están abiertos Logic Pro,
+MainStage, GarageBand o AUHostingService, o si algún proceso tiene abierto el
+binario instalado; la copia anterior se aparta, nunca se borra. Probado en una
+carpeta temporal (`LABQ8_COMPONENTS_DIR`), con procesos simulados.
+
+### 9.4 Zoom en seis tamaños, sin tirador de esquina (30-10-2026)
+
+Cambio aprobado tras SMOKE-2 para cerrar el redimensionado: el tamaño ya no
+depende del tirador de esquina, que no respondió en SMOKE-1 y no se llegó a
+validar en SMOKE-2.
+
+- **Menú "Zoom"** del engranaje (y del clic derecho): **40 / 60 / 80 / 100 /
+  120 / 140 %**, el actual marcado. Tamaños exactos: 669 × 376, 1003 × 565,
+  1338 × 753, 1672 × 941, 2006 × 1129 y 2341 × 1317 (proporción del diseño;
+  todo se dibuja con una única transformación, así que el ratón responde
+  donde se dibuja).
+- **Abre al 60 %** o al último tamaño elegido. Solo se guardan los seis
+  tamaños, y solo al elegir uno en el menú; un tamaño de una build anterior
+  (p. ej. 75 %), un valor ilegible o un archivo dañado vuelven al 60 %.
+- **Ventana del host:** el editor cambia de tamaño con `setSize`, y el
+  wrapper AU de JUCE ajusta con él la vista que Logic aloja
+  (`EditorCompHolder::childBoundsChanged` → `resizeHostWindow`); VST3 avisa
+  al host con `resizeView`. Que Logic redimensione su ventana se comprobará
+  físicamente.
+- **Pantalla disponible:** un tamaño cabe si el editor más 80 puntos de
+  altura para la ventana del host (barra de título y cabecera de plug-in de
+  Logic) cabe en el área útil de la pantalla (sin barra de menús ni Dock) en
+  la que está el editor, o, antes de mostrarse, en la que está el ratón.
+  Los que no caben aparecen deshabilitados en el menú con "(too large for
+  this screen)" y no se aplican. 40 % siempre está disponible. Si el tamaño
+  guardado no cabe al abrir, el editor abre al mayor tamaño menor que cabe,
+  sin recortar nada, y la preferencia se conserva para una pantalla mayor.
+  En esta máquina (1710 × 1072 puntos útiles) caben hasta el 100 %; 120 y
+  140 % aparecerán deshabilitados.
+- **Sin tirador de esquina** y sin redimensionado por el host
+  (`setResizable (false, false)`): ningún control engañoso.
+- **Por encima del 100 %** el fondo se interpola desde los 1672 × 941 px del
+  maestro (no hay más detalle); textos, potenciómetros, botones, curva y
+  nodos se dibujan nítidos a cualquier tamaño.
+
+**Limitación conocida:** si se arrastra la ventana a una pantalla más pequeña
+con el editor abierto, el tamaño no se reduce solo; el menú ya solo ofrece lo
+que cabe allí.
+
+**Verificación** (`build/ui11zoom-release-universal`, árbol de trabajo):
+
+- 125/125 pruebas en Release arm64 y x86_64; nuevas o reescritas: los seis
+  tamaños exactos con su proporción y escala, guardado inmediato y
+  recuperación desde un archivo real por un editor nuevo (como al reiniciar
+  el host), valores no válidos, sin esquina, enrutado del ratón en los seis
+  tamaños, menú con tamaños deshabilitados en pantallas de 1710 × 1072,
+  1440 × 875 y 640 × 400, y límites exactos de encaje;
+- mutaciones, todas detectadas (9): setZoom sin comprobar la pantalla,
+  apertura sin reducir, esquina restaurada, sin margen para el host, 40 % no
+  garantizado, menú sin deshabilitar, guardar cualquier valor, cargar sin
+  exigir un tamaño exacto, no guardar al elegir;
+- `run_compat.sh all`: las ocho bases OK en arm64 y x86_64; frente a UI-1 y
+  E2c.1, estricta, sin diferencias;
+- PNG maestro `4e14b925…f30b01`; sin cambios en el DSP, los parámetros ni el
+  estado;
+- capturas (`--ui11`): `ui11_3_editor_40.png` y `ui11_6_editor_140.png`
+  sustituyen a la del 50 %.
+
+### 9.5 SMOKE-3 en Logic Pro (30-10-2026)
+
+Build instalado con `tools/install/install_au.sh` (Logic cerrado):
+`build/ui11zoom-release-universal`, SHA-256 del binario
+`c87e66f004d4fb6e2f9f531875873552ffca5d9b9673554a1bc38c0d0c909c9d`; auval
+arm64 y x86_64 sin avisos, 80 parámetros. Resultado aprobado por el usuario:
+
+- **el selector de zoom funciona perfectamente en Logic** (los tamaños
+  redimensionan la ventana del host);
+- **el tamaño elegido se recuerda tras reiniciar Logic;** Logic escribió la
+  preferencia en `~/Library/Application Support/VitaPlug/LABQ8/LABQ8.settings`.
+
+Con esto **UI-1.1 queda aprobada**. Siguen sin registrarse en Logic la
+automatización y la persistencia de sesión (§9.2), cubiertas fuera de Logic
+por las pruebas.

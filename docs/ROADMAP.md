@@ -11,7 +11,8 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | **E2a** | Prototipo DSP de una banda Bell dinámica (detector, ley de reducción, balística), sin parámetros públicos nuevos; ruta estática intacta | Cerrada (`111acab`) |
 | **E2b** | Motor dinámico de ocho bandas en `EqCore`: secciones independientes, detección sobre la señal original común, estéreo enlazado por máximo; solo DSP y pruebas, sin parámetros públicos | Cerrada (`5623dc5`) |
 | **E2c.1** | Parámetros públicos de dinámica (40 nuevos, version hint 4, índices 40–79, rangos del DSP validado) y estado v4 con migración | Cerrada (`3041019`) |
-| **UI-1** | Interfaz del diseño aprobado APPROVED_01: fondo derivado con escalas corregidas, panel compartido de 8 bandas, bypass desde el indicador, Dynamic EQ solo en Bell, pantalla ±24 dB con la respuesta real; controles sin DSP inactivos | Aprobada visualmente; commit pendiente de autorización |
+| **UI-1** | Interfaz del diseño aprobado APPROVED_01: fondo derivado con escalas corregidas, panel compartido de 8 bandas, bypass desde el indicador, Dynamic EQ solo en Bell, pantalla ±24 dB con la respuesta real; controles sin DSP inactivos | Cerrada (`13a810f`); SMOKE-1 en Logic satisfactorio (auval arm64/x86_64) |
+| **UI-1.1** | Ergonomía tras SMOKE-1: zoom en seis tamaños 40–140 % (60 % inicial, preferencia global, menú del icono de configuración, sin tirador de esquina, tamaños que no caben deshabilitados), ocho botones ON/OFF de bypass, selección y edición de bandas desde los nodos con tiradores de Q; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-2 y SMOKE-3 en Logic aprobados (UI_IMPLEMENTATION §9.1, §9.5), zoom en seis tamaños desde §9.4 |
 | UI-2 | Curva dinámica, medidores reales, presentación provisional de INTENTION (según decisiones de UI-1) | — |
 | E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
 | E2c (resto) | Detección estéreo no enlazada / M/S | — |
@@ -22,7 +23,11 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | E7 | Intention Engine: perfiles como sugerencias | — |
 | E8 | Variante de mastering | — |
 
-## Pendiente tras UI-1 (no iniciado, sin fase asignada)
+## Pendiente tras UI-1 y UI-1.1 (no iniciado, sin fase asignada)
+
+- Registrar en Logic la automatización (botones y nodos) y la persistencia
+  de sesión de UI-1.1 (UI_IMPLEMENTATION §9.2); cubiertas por pruebas fuera
+  de Logic.
 
 - Mostrar el Q efectivo en la UI definitiva (propuesta en ARCHITECTURE.md).
 - Resolver en la fase de interfaz las escalas de APPROVED_01 frente a los

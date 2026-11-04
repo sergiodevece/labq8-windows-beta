@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<LABQ8 labq8StateVersion="2">
+  <PARAM id="b1_bypass" value="0.0"/>
+  <PARAM id="b1_freq" value="3149.99951171875"/>
+  <PARAM id="b1_gain" value="-7.250000476837158"/>
+  <PARAM id="b1_q" value="4.500000476837158"/>
+  <PARAM id="b2_bypass" value="0.0"/>
+  <PARAM id="b2_freq" value="44.99999618530273"/>
+  <PARAM id="b2_gain" value="3.999999284744263"/>
+  <PARAM id="b2_q" value="0.699999988079071"/>
+  <PARAM id="b3_bypass" value="1.0"/>
+  <PARAM id="b3_freq" value="119.9999923706055"/>
+  <PARAM id="b3_gain" value="-3.500000476837158"/>
+  <PARAM id="b3_q" value="1.399999856948853"/>
+  <PARAM id="b4_bypass" value="0.0"/>
+  <PARAM id="b4_freq" value="300.0"/>
+  <PARAM id="b4_gain" value="1.999999403953552"/>
+  <PARAM id="b4_q" value="2.000000238418579"/>
+  <PARAM id="b5_bypass" value="0.0"/>
+  <PARAM id="b5_freq" value="2199.999755859375"/>
+  <PARAM id="b5_gain" value="-6.000000476837158"/>
+  <PARAM id="b5_q" value="3.000000238418579"/>
+  <PARAM id="b6_bypass" value="0.0"/>
+  <PARAM id="b6_freq" value="4700.0009765625"/>
+  <PARAM id="b6_gain" value="5.499999523162842"/>
+  <PARAM id="b6_q" value="0.5"/>
+  <PARAM id="b7_bypass" value="1.0"/>
+  <PARAM id="b7_freq" value="9000.0009765625"/>
+  <PARAM id="b7_gain" value="8.999999046325684"/>
+  <PARAM id="b7_q" value="5.999999523162842"/>
+  <PARAM id="b8_bypass" value="0.0"/>
+  <PARAM id="b8_freq" value="15000.0"/>
+  <PARAM id="b8_gain" value="-12.0"/>
+  <PARAM id="b8_q" value="1.0"/>
+</LABQ8>

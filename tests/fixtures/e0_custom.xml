@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<LABQ8 labq8StateVersion="1">
+  <PARAM id="b1_bypass" value="0.0"/>
+  <PARAM id="b1_freq" value="3149.99951171875"/>
+  <PARAM id="b1_gain" value="-7.250000476837158"/>
+  <PARAM id="b1_q" value="4.500000476837158"/>
+</LABQ8>

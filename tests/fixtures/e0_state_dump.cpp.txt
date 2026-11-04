@@ -1,0 +1,44 @@
+// Writes genuine E0 (dfcf25b) plugin states to disk, for E1a migration fixtures.
+#include "plugin/PluginProcessor.h"
+
+static void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float v)
+{
+    auto* param = p.getValueTreeState().getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (v));
+}
+
+static void dump (labq8::LabQ8AudioProcessor& p, const juce::File& dir, const char* name)
+{
+    juce::MemoryBlock block;
+    p.getStateInformation (block);
+    dir.getChildFile (juce::String (name) + ".bin").replaceWithData (block.getData(), block.getSize());
+    auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+    dir.getChildFile (juce::String (name) + ".xml").replaceWithText (xml->toString());
+}
+
+int main (int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::File dir { juce::String { argv[argc - 1] } };
+    dir.createDirectory();
+
+    { labq8::LabQ8AudioProcessor p; dump (p, dir, "e0_default"); }
+
+    {
+        labq8::LabQ8AudioProcessor p;
+        setParam (p, "b1_freq", 3150.0f);
+        setParam (p, "b1_gain", -7.25f);
+        setParam (p, "b1_q", 4.5f);
+        dump (p, dir, "e0_custom");
+    }
+
+    {
+        labq8::LabQ8AudioProcessor p;
+        setParam (p, "b1_freq", 120.0f);
+        setParam (p, "b1_gain", 9.0f);
+        setParam (p, "b1_q", 0.7f);
+        setParam (p, "b1_bypass", 1.0f);
+        dump (p, dir, "e0_bypassed");
+    }
+    return 0;
+}

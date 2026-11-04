@@ -6,6 +6,11 @@ name: LABQ8 Windows VST3 x64 beta (private)
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnose_tests:
+        description: 'Only build the tests and run each of the 163 in its own process'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,10 +55,32 @@ jobs:
       - name: Build the VST3, the tests and the capture tool
         shell: pwsh
         run: |
-          cmake --build build/windows-x64 --config Release --parallel 4 --target LABQ8_VST3 labq8_tests labq8_ui_snapshot 2>&1 | Tee-Object validation/build.txt
+          $targets = if ('${{ inputs.diagnose_tests }}' -eq 'true') { @('labq8_tests') } else { @('LABQ8_VST3', 'labq8_tests', 'labq8_ui_snapshot') }
+          cmake --build build/windows-x64 --config Release --parallel 4 --target $targets 2>&1 | Tee-Object validation/build.txt
           if ($LASTEXITCODE -ne 0) { throw 'Build failed; no product-source change is authorised' }
 
+      - name: Run each test in its own process (diagnosis)
+        if: ${{ inputs.diagnose_tests }}
+        shell: pwsh
+        run: |
+          $tests = Get-ChildItem -Path build/windows-x64 -Recurse -File -Filter 'labq8_tests.exe' | Select-Object -First 1
+          $names = Get-Content distribution/windows/test-names.txt
+          $summary = @()
+          New-Item -ItemType Directory -Path validation/tests-each -Force | Out-Null
+          $i = 0
+          foreach ($name in $names) {
+            $i++
+            $out = & $tests.FullName $name 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            $out | Set-Content ("validation/tests-each/{0:D3}.txt" -f $i)
+            $summary += ('{0:D3} exit {1} :: {2}' -f $i, $code, $name)
+          }
+          $summary | Set-Content validation/tests-each-summary.txt
+          ($summary | Where-Object { $_ -notmatch ' exit 0 ::' }) | Set-Content validation/tests-each-failures.txt
+          exit 0
+
       - name: Run the 163 tests (results recorded, packaging continues)
+        if: ${{ ! inputs.diagnose_tests }}
         shell: pwsh
         run: |
           $tests = Get-ChildItem -Path build/windows-x64 -Recurse -File -Filter 'labq8_tests.exe' | Select-Object -First 1
@@ -62,6 +89,7 @@ jobs:
           exit 0
 
       - name: Load the real bundle in a JUCE VST3 test host (not Pro Tools / PatchWork)
+        if: ${{ ! inputs.diagnose_tests }}
         shell: pwsh
         run: |
           cmake -S distribution/windows/vst3-smoke -B build/vst3-smoke -G "Visual Studio 17 2022" -A x64 -DJUCE_DIR="${{ github.workspace }}/external/JUCE" 2>&1 | Out-File validation/vst3-smoke-build.txt
@@ -74,6 +102,7 @@ jobs:
           exit 0
 
       - name: Windows captures of the four views and the font study
+        if: ${{ ! inputs.diagnose_tests }}
         shell: pwsh
         run: |
           $tool = Get-ChildItem -Path build/windows-x64 -Recurse -File -Filter 'labq8_ui_snapshot.exe' | Select-Object -First 1
@@ -87,6 +116,7 @@ jobs:
           exit 0
 
       - name: Inspect the binary (PE32+ x64, dependencies, hashes)
+        if: ${{ ! inputs.diagnose_tests }}
         shell: pwsh
         run: |
           $bundle = Get-ChildItem -Path build/windows-x64 -Recurse -Directory -Filter 'LABQ8.vst3' | Select-Object -First 1

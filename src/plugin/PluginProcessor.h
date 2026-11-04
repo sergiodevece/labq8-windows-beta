@@ -2,6 +2,7 @@
 
 #include "dsp/EqCore.h"
 #include "parameters/StateMigration.h"
+#include "plugin/DynamicsTelemetry.h"
 #include "plugin/LevelMeter.h"
 #include "plugin/SpectrumTap.h"
 
@@ -78,6 +79,22 @@ public:
     SpectrumTap& getPreTap() noexcept { return preTap; }
     SpectrumTap& getPostTap() noexcept { return postTap; }
 
+    // UI-2c: what the eight dynamic sections applied (static gain,
+    // reduction, frequency, Q, Bell), offered after every sub-block of the
+    // EQ, for the editor's dynamic view. Only while the screen shows it; it
+    // never changes the audio.
+    //
+    // The EQ runs in sub-blocks of at most this many samples (A4, approved
+    // 04-11-2026): EqCore's output does not depend on how a block is split
+    // (its control grid is absolute), and the parameters are still read
+    // once per host block, so the sound is the same bit for bit (tests and
+    // tests/compat/run_compat.sh); the telemetry sees inside long blocks.
+    static constexpr int eqSubBlockSamples = 256;
+    DynamicsTelemetry& getDynamicsTelemetry() noexcept { return dynamicsTelemetry; }
+
+    // Tests: the EQ core (read only; never while audio runs on another thread).
+    const dsp::EqCore& getEqCoreForTesting() const noexcept { return eq; }
+
 private:
     struct BandParameters
     {
@@ -100,6 +117,7 @@ private:
     dsp::BandSettings readBandSettings (const BandParameters& band) const noexcept;
     static dsp::DynamicSettings readDynamicSettings (const DynamicParameters& dynamics) noexcept;
     void pushParametersToCore() noexcept;
+    void offerDynamics (bool hostBypassed) noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
     std::array<BandParameters, dsp::EqCore::numBands> bandParameters;
@@ -110,6 +128,7 @@ private:
     int uiAnalyzerSource = 1; // POST
     LevelMeter inputMeter, outputMeter;
     SpectrumTap preTap, postTap;
+    DynamicsTelemetry dynamicsTelemetry;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

@@ -27,11 +27,25 @@
 // - UI-2b (--ui2b): cost of the analyzer's capture on the audio thread
 //   (SpectrumTap::write, PRE + POST, stereo), 1 s x 9 runs: taps active
 //   (analyzer shown) and inactive (one flag read per block).
+// - UI-2c (--ui2c): the EQ in one call per block against the processor's
+//   256-sample sub-blocks (A4), without and with the dynamics telemetry
+//   offered after each (DynamicsTelemetry::offer), interleaved; plus one
+//   offer alone.
+// - UI-2c (--ui2c-intrablock): what an end-of-block snapshot of the gain
+//   reductions leaves out. The reduction of every control tick (16 samples)
+//   is the reference (the EQ's output does not depend on the block size, so
+//   it is the same for any host block); for each host block size it reports
+//   (a) the largest difference between any tick inside a block and the
+//   block's last tick, and (b) what a 30 Hz screen shows: the latest
+//   completed block's value at each frame against the value at the frame's
+//   instant, and the largest reduction each burst reaches on the screen
+//   against its true peak.
 // - Load = CPU seconds / audio seconds on one core, single-threaded.
 // Build in Release; Debug numbers are printed with a warning.
 
 #include "dsp/DynamicBellBand.h"
 #include "dsp/EqCore.h"
+#include "plugin/DynamicsTelemetry.h"
 #include "plugin/LevelMeter.h"
 #include "plugin/SpectrumTap.h"
 
@@ -363,6 +377,258 @@ double runCapture (bool active, double fs, int blockSize, const std::vector<floa
     return elapsed / ((double) n / fs);
 }
 
+// UI-2c: the processor around an 8-band dynamic EQ: the EQ in one call per
+// block (before A4), in sub-blocks of 256 (A4), and in sub-blocks with the
+// telemetry offered after each (A4 + A2, editor showing the dynamics).
+enum class Telemetry { wholeBlock, subBlocks, subBlocksOffered };
+
+void offerFrom (labq8::DynamicsTelemetry& telemetry, const EqCore& core)
+{
+    telemetry.offer (false, [&core] (int b, labq8::DynamicsTelemetry::Band& out)
+    {
+        const auto& band = core.getBand (b);
+        out.staticGainDb = (float) band.getCurrentGainDb();
+        out.reductionDb = (float) core.getDynamics (b).getGainReductionDb();
+        out.frequencyHz = (float) band.getCurrentFrequencyHz();
+        out.q = (float) band.getCurrentQ();
+        out.bell = band.getActiveFilter() == FilterType::bell;
+    });
+}
+
+double runTelemetry (Telemetry kind, bool dynamics, double fs, int blockSize, const std::vector<float>& left, const std::vector<float>& right)
+{
+    constexpr double freqs[8] = { 60.0, 150.0, 400.0, 1000.0, 2500.0, 5000.0, 9000.0, 15000.0 };
+    EqCore core;
+    for (int b = 0; b < 8; ++b)
+    {
+        core.setBandTargets (b, BandSettings { freqs[b], 2.0, 3.0, false, FilterType::bell });
+        core.setBandDynamics (b, labq8::dsp::DynamicSettings { dynamics, -30.0, 12.0, 2.0, 30.0 });
+    }
+    core.prepare (fs, 2);
+    labq8::DynamicsTelemetry telemetry;
+    telemetry.setActive (kind == Telemetry::subBlocksOffered);
+    auto l = left, r = right;
+    const auto n = l.size();
+    const auto t0 = std::chrono::steady_clock::now();
+    for (size_t pos = 0; pos < n; pos += (size_t) blockSize)
+    {
+        const auto count = (int) std::min<size_t> ((size_t) blockSize, n - pos);
+        if (kind == Telemetry::wholeBlock)
+        {
+            float* ch[] = { l.data() + pos, r.data() + pos };
+            core.process (ch, 2, count);
+            continue;
+        }
+        for (int sub = 0; sub < count; sub += 256)
+        {
+            float* ch[] = { l.data() + pos + (size_t) sub, r.data() + pos + (size_t) sub };
+            core.process (ch, 2, std::min (256, count - sub));
+            offerFrom (telemetry, core); // inactive: one flag read
+        }
+    }
+    const auto elapsed = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    labq8::DynamicsTelemetry::Snapshot s;
+    volatile auto keep = l[n / 2] + (telemetry.peek (s) ? s.bands[0].reductionDb : 0.0f);
+    (void) keep;
+    return elapsed / ((double) n / fs);
+}
+
+// UI-2c: one offer alone (its share of the EQ is below the run-to-run
+// noise): median ns per offer over 9 runs of 200000, active or inactive.
+double publishNanoseconds (bool active)
+{
+    EqCore core;
+    for (int b = 0; b < 8; ++b)
+        core.setBandDynamics (b, labq8::dsp::DynamicSettings { true, -30.0, 12.0, 2.0, 30.0 });
+    core.prepare (48000.0, 2);
+    labq8::DynamicsTelemetry telemetry;
+    telemetry.setActive (active);
+    std::vector<double> runs;
+    for (int r = 0; r < 10; ++r)
+    {
+        constexpr int count = 200000;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < count; ++i)
+            offerFrom (telemetry, core);
+        if (r > 0)
+            runs.push_back (std::chrono::duration<double, std::nano> (std::chrono::steady_clock::now() - t0).count() / count);
+    }
+    std::sort (runs.begin(), runs.end());
+    labq8::DynamicsTelemetry::Snapshot s;
+    volatile auto keep = telemetry.peek (s) ? s.id : 0u;
+    (void) keep;
+    return runs[runs.size() / 2];
+}
+
+// UI-2c: the reduction of band 1 at every control tick for a signal.
+struct IntraSignal { const char* name; float (*sample) (int); };
+
+std::vector<double> tickReductions (const IntraSignal& signal, double attackMs, double releaseMs, double fs, int seconds)
+{
+    EqCore core;
+    core.setBandTargets (0, BandSettings { 1000.0, 0.0, 1.0, false, FilterType::bell });
+    core.setBandDynamics (0, labq8::dsp::DynamicSettings { true, -30.0, 12.0, attackMs, releaseMs });
+    core.prepare (fs, 2);
+    const auto total = (int) fs * seconds;
+    std::vector<double> reductions;
+    float l[16], r[16];
+    for (int pos = 0; pos < total; pos += 16)
+    {
+        for (int i = 0; i < 16; ++i)
+            l[i] = r[i] = signal.sample (pos + i);
+        float* ch[] = { l, r };
+        core.process (ch, 2, 16); // one tick per call: its reduction applies to these 16 samples
+        reductions.push_back (core.getDynamics (0).getGainReductionDb());
+    }
+    return reductions;
+}
+
+constexpr double benchPi = 3.14159265358979323846;
+// 1 kHz bursts at -6 dBFS, 30 ms on / 70 ms off (hard edges: the worst case).
+float hardBursts (int i) { return (i % 4800) < 1440 ? (float) (0.5 * std::sin (2.0 * benchPi * 1000.0 * i / 48000.0)) : 0.0f; }
+// Percussive: 1 kHz hits every 250 ms, -6 dBFS, decaying with a 40 ms time constant.
+float hits (int i) { const auto t = (i % 12000) / 48000.0; return (float) (0.5 * std::exp (-t / 0.04) * std::sin (2.0 * benchPi * 1000.0 * i / 48000.0)); }
+// Slow: 1 kHz at -6 dBFS with 4 Hz tremolo, 24 dB deep.
+float tremolo (int i)
+{
+    const auto depthDb = -12.0 + 12.0 * std::sin (2.0 * benchPi * 4.0 * i / 48000.0);
+    return (float) (0.5 * std::pow (10.0, depthDb / 20.0) * std::sin (2.0 * benchPi * 1000.0 * i / 48000.0));
+}
+
+void intraBlockReport()
+{
+    constexpr double fs = 48000.0, frame = fs / 30.0, pxPerDb = 37.0 / 8.0;
+    const IntraSignal signals[] = { { "bursts", hardBursts }, { "hits", hits }, { "tremolo", tremolo } };
+    const struct { double attack, release; } times[] = { { 0.5, 5.0 }, { 0.5, 50.0 }, { 10.0, 100.0 }, { 50.0, 500.0 } };
+    std::printf ("UI-2c intra-block: band 1 Bell 1 kHz Q 1, 0 dB, threshold -30, range 12 dB, 48 kHz, 8 s per case\n");
+    std::printf ("(a) max |tick in block - block end| dB; (b) screen at 30 Hz: max |shown - true at frame| dB and its 99th percentile;\n");
+    std::printf ("(c) burst peaks: mean and worst shortfall of the largest reduction shown vs the true peak, dB (block 16 = ticks, the ideal)\n");
+    std::printf ("1 dB = %.2f reference px (%.2f physical px at 60 %% on Retina, %.2f at 100 %%)\n\n", pxPerDb, pxPerDb * 1.2, pxPerDb * 2.0);
+    std::printf ("%-8s %-9s %6s %8s %8s %8s %9s %9s\n", "signal", "atk/rel", "block", "(a)max", "(b)max", "(b)p99", "(c)mean", "(c)worst");
+    for (const auto& signal : signals)
+        for (const auto& t : times)
+        {
+            const auto ticks = tickReductions (signal, t.attack, t.release, fs, 8);
+            const auto numTicks = (int) ticks.size();
+            const auto period = signal.sample == hits ? 12000 : signal.sample == hardBursts ? 4800 : 12000;
+            for (const int block : { 16, 64, 256, 512, 1024, 2048, 4096 })
+            {
+                const auto ticksPerBlock = block / 16;
+                double intra = 0.0;
+                for (int start = 0; start + ticksPerBlock <= numTicks; start += ticksPerBlock)
+                {
+                    const auto endValue = ticks[(size_t) (start + ticksPerBlock - 1)];
+                    for (int k = start; k < start + ticksPerBlock; ++k)
+                        intra = std::max (intra, std::abs (ticks[(size_t) k] - endValue));
+                }
+                // The screen: at a frame at sample time T it shows the last tick of the
+                // latest block that ended by T; the truth is the tick in effect at T.
+                std::vector<double> errors;
+                std::vector<double> shownPeak ((size_t) (numTicks * 16 / period + 1), 0.0), truePeak (shownPeak.size(), 0.0);
+                for (int k = 0; k < numTicks; ++k)
+                    truePeak[(size_t) (k * 16 / period)] = std::max (truePeak[(size_t) (k * 16 / period)], ticks[(size_t) k]);
+                for (double T = frame * 0.37; T < numTicks * 16.0; T += frame)
+                {
+                    const auto lastBlockEnd = (int) (std::floor (T / block) * block);
+                    if (lastBlockEnd < block)
+                        continue;
+                    const auto shown = ticks[(size_t) (lastBlockEnd / 16 - 1)];
+                    const auto truth = ticks[(size_t) std::min (numTicks - 1, (int) (T / 16.0))];
+                    errors.push_back (std::abs (shown - truth));
+                    const auto burst = (size_t) (T / period);
+                    shownPeak[burst] = std::max (shownPeak[burst], shown);
+                }
+                std::sort (errors.begin(), errors.end());
+                double shortfallSum = 0.0, worst = 0.0;
+                int counted = 0;
+                for (size_t b = 1; b + 1 < shownPeak.size(); ++b) // whole bursts only
+                {
+                    const auto d = truePeak[b] - shownPeak[b];
+                    shortfallSum += d;
+                    worst = std::max (worst, d);
+                    ++counted;
+                }
+                char label[16];
+                std::snprintf (label, sizeof (label), "%g/%g", t.attack, t.release);
+                std::printf ("%-8s %-9s %6d %8.2f %8.2f %8.2f %9.2f %9.2f\n", signal.name, label, block, intra,
+                             errors.back(), errors[(size_t) (0.99 * (double) (errors.size() - 1))],
+                             counted > 0 ? shortfallSum / counted : 0.0, worst);
+            }
+        }
+}
+
+// UI-2c: burst-peak shortfall on a 30 Hz screen for the snapshot policies.
+// Snapshots are taken every `granularity` samples (block ends; or sub-block
+// ends; or every tick); "latest" shows the newest at each frame, "peak" the
+// one with the largest reduction since the previous frame (one coherent instant).
+struct Shortfall { double mean, worst; };
+
+Shortfall burstShortfall (const std::vector<double>& ticks, int period, int granularity, bool peak)
+{
+    constexpr double fs = 48000.0, frame = fs / 30.0;
+    const auto numTicks = (int) ticks.size();
+    const auto step = granularity / 16;
+    std::vector<double> shownPeak ((size_t) (numTicks * 16 / period + 1), 0.0), truePeak (shownPeak.size(), 0.0);
+    for (int k = 0; k < numTicks; ++k)
+        truePeak[(size_t) (k * 16 / period)] = std::max (truePeak[(size_t) (k * 16 / period)], ticks[(size_t) k]);
+    int nextSnapshot = step - 1; // tick index of the next snapshot
+    double held = 0.0, latest = 0.0;
+    bool any = false;
+    for (double T = frame * 0.37; T < numTicks * 16.0; T += frame)
+    {
+        while (nextSnapshot < numTicks && (nextSnapshot + 1) * 16 <= T)
+        {
+            const auto v = ticks[(size_t) nextSnapshot];
+            latest = v;
+            held = any ? std::max (held, v) : v;
+            any = true;
+            nextSnapshot += step;
+        }
+        const auto shown = peak ? (any ? held : latest) : latest;
+        any = false;
+        const auto burst = (size_t) (T / period);
+        shownPeak[burst] = std::max (shownPeak[burst], shown);
+    }
+    double sum = 0.0, worst = 0.0;
+    int counted = 0;
+    for (size_t b = 1; b + 1 < shownPeak.size(); ++b)
+    {
+        const auto d = truePeak[b] - shownPeak[b];
+        sum += d;
+        worst = std::max (worst, d);
+        ++counted;
+    }
+    return { counted > 0 ? sum / counted : 0.0, worst };
+}
+
+void policyReport()
+{
+    constexpr double fs = 48000.0;
+    const IntraSignal signals[] = { { "bursts", hardBursts }, { "hits", hits }, { "tremolo", tremolo } };
+    const struct { double attack, release; } times[] = { { 0.5, 5.0 }, { 0.5, 50.0 }, { 10.0, 100.0 }, { 50.0, 500.0 } };
+    std::printf ("\nUI-2c policies: burst-peak shortfall on the 30 Hz screen, mean / worst dB\n");
+    std::printf ("  latest = newest block-end snapshot (the implemented one); A2 = most reducing block-end snapshot since the\n");
+    std::printf ("  previous frame; A4 = A2 with the processor calling the EQ in sub-blocks of <= 256; A3 = A2 per tick (DSP change)\n\n");
+    std::printf ("%-8s %-9s %6s %13s %13s %13s %13s\n", "signal", "atk/rel", "block", "latest", "A2", "A4 (256)", "A3 (tick)");
+    for (const auto& signal : signals)
+        for (const auto& t : times)
+        {
+            const auto ticks = tickReductions (signal, t.attack, t.release, fs, 8);
+            const auto period = signal.sample == hardBursts ? 4800 : 12000;
+            for (const int block : { 256, 512, 1024, 2048, 4096 })
+            {
+                const auto a = burstShortfall (ticks, period, block, false);
+                const auto b = burstShortfall (ticks, period, block, true);
+                const auto c = burstShortfall (ticks, period, std::min (block, 256), true);
+                const auto d = burstShortfall (ticks, period, 16, true);
+                char label[16];
+                std::snprintf (label, sizeof (label), "%g/%g", t.attack, t.release);
+                std::printf ("%-8s %-9s %6d %6.2f/%6.2f %6.2f/%6.2f %6.2f/%6.2f %6.2f/%6.2f\n", signal.name, label, block,
+                             a.mean, a.worst, b.mean, b.worst, c.mean, c.worst, d.mean, d.worst);
+            }
+        }
+}
+
 std::string machine()
 {
 #if defined(__APPLE__)
@@ -428,6 +694,50 @@ int main (int argc, char** argv)
                     const auto load = runEightDynamic (sc.k, fs, block, 5, 3.0);
                     std::printf ("%-11s %8.0f %6d %10.4f %14.2f\n", sc.name, fs, block, load * 100.0, load * 1.0e9 / fs);
                 }
+        return 0;
+    }
+
+    if (argc > 1 && std::string (argv[1]) == "--ui2c-intrablock")
+    {
+        intraBlockReport();
+        policyReport();
+        return 0;
+    }
+
+    if (argc > 1 && std::string (argv[1]) == "--ui2c")
+    {
+        std::printf ("UI-2c: 8-band EQ, stereo, 1 s per run, median of 9 after 1 warm-up (interleaved)\n");
+        std::printf ("  whole = one EQ call per block (before A4); A4 = sub-blocks of 256; A4+offer = with the telemetry offered after each\n\n");
+        std::printf ("%-8s %8s %6s %10s %10s %12s\n", "dynamics", "fs", "block", "whole %", "A4 %", "A4+offer %");
+        for (const bool dynamics : { false, true })
+            for (const double fs : { 48000.0, 96000.0 })
+                for (const int block : { 64, 512, 2048 })
+                {
+                    const auto n = (size_t) std::llround (fs);
+                    const auto left = noise (n, 601), right = noise (n, 602);
+                    std::vector<double> whole, sub, offered;
+                    for (int r = 0; r < 10; ++r)
+                    {
+                        const auto a = runTelemetry (Telemetry::wholeBlock, dynamics, fs, block, left, right);
+                        const auto b = runTelemetry (Telemetry::subBlocks, dynamics, fs, block, left, right);
+                        const auto c = runTelemetry (Telemetry::subBlocksOffered, dynamics, fs, block, left, right);
+                        if (r > 0)
+                        {
+                            whole.push_back (a);
+                            sub.push_back (b);
+                            offered.push_back (c);
+                        }
+                    }
+                    for (auto* v : { &whole, &sub, &offered })
+                        std::sort (v->begin(), v->end());
+                    std::printf ("%-8s %8.0f %6d %10.4f %10.4f %12.4f\n", dynamics ? "dyn8" : "static8", fs, block,
+                                 whole[whole.size() / 2] * 100.0, sub[sub.size() / 2] * 100.0, offered[offered.size() / 2] * 100.0);
+                }
+        const auto activeNs = publishNanoseconds (true), inactiveNs = publishNanoseconds (false);
+        std::printf ("\noffer alone: %.1f ns active, %.2f ns inactive; at most one per 256 samples (fewer with smaller blocks: one per block)\n",
+                     activeNs, inactiveNs);
+        for (const int block : { 32, 64, 256 })
+            std::printf ("  at 48 kHz, one offer per %3d samples: %.5f %% of one core active\n", block, activeNs * 48000.0 / block * 1.0e-7);
         return 0;
     }
 

@@ -411,7 +411,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
     const auto before = allValues (p);
     int found = 0;
     for (auto* child : editor->getContent().getChildren())
-        for (const auto* name : { "Stereo Mode", "Polarity", "Intention", "Phase Behavior", "DYN" })
+        for (const auto* name : { "Stereo Mode", "Polarity", "Intention", "Phase Behavior" })
             if (child->getTitle() == name)
             {
                 ++found;
@@ -419,9 +419,9 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
                 auto* tip = dynamic_cast<juce::TooltipClient*> (child);
                 LQ_CHECK (tip != nullptr && tip->getTooltip().contains ("not available"), str (name, " explains it is not available"));
             }
-    LQ_CHECK (found == 5, str (found, " of 5 inactive areas (meters real since UI-2a; view tabs and analyzer since UI-2b, DYN still not)"));
+    LQ_CHECK (found == 4, str (found, " of 4 inactive areas (meters real since UI-2a; view tabs and analyzer since UI-2b, DYN since UI-2c)"));
     LQ_CHECK (allValues (p) == before && editor->getSelectedBand() == 0, "inactive controls changed something");
-    LQ_CHECK (editor->getView() == LabQ8Editor::viewAll, "DYN does not change the view");
+    LQ_CHECK (editor->getView() == LabQ8Editor::viewAll, "the view is unchanged");
 }
 
 LQ_TEST ("ui bypass: each band button switches only its own band on / off, with one gesture; BAND n is an indicator only")

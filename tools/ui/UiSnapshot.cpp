@@ -22,6 +22,11 @@
 //        through the processor (the master's EQ settings) in each view and
 //        analyzer source, silence, 40 / 140 % zoom, the header against the
 //        master, and the analysis / painting times.
+//        --ui2c writes the UI-2c dynamic-view captures: the programme with
+//        real dynamic bands in the four views (EQ, SPECTRUM, DYN, ALL), 60 %
+//        and 100 %, eight acting bands, the release to the static curve,
+//        and the cost per frame with the analyzer running (Retina, 60 / 100 %,
+//        1 and 8 dynamic bands).
 // The user's zoom preference is never read or written (kept in memory), and
 // every zoom is allowed whatever the screens of the machine.
 
@@ -590,6 +595,290 @@ int captures (const juce::Image& master, const juce::File& outDir)
     return ok ? 0 : 1;
 }
 } // namespace ui2b
+
+namespace ui2c
+{
+using labq8::ui::AnalyzerSource;
+using labq8::ui::LabQ8Editor;
+
+// The master's state with real dynamics, thresholds just below the
+// programme's detector levels (--ui2c-probe) so the reductions move with the
+// music: band 4 (820 Hz, the master's dynamic band) and band 2 (90 Hz, the
+// bass line); or all eight Bells dynamic (`eight`).
+void setDynamicState (labq8::LabQ8AudioProcessor& p, bool eight)
+{
+    setMasterState (p);
+    auto dyn = [&p] (int b, float threshold, float range)
+    {
+        const auto& d = labq8::params::dynamicIDs[(size_t) b];
+        setParam (p, d.enabled, 1.0f);
+        setParam (p, d.threshold, threshold);
+        setParam (p, d.range, range);
+        setParam (p, d.attack, 5.0f);
+        setParam (p, d.release, 120.0f);
+    };
+    dyn (3, -30.0f, 8.0f);
+    dyn (1, -22.0f, 8.0f);
+    if (eight)
+    {
+        setParam (p, labq8::params::bandIDs[7].type, 0.0f); // band 8 from High Shelf to Bell
+        const float thresholds[] = { -21.0f, 0.0f, -26.0f, 0.0f, -27.0f, -30.0f, -31.5f, -33.0f };
+        for (const int b : { 0, 2, 4, 5, 6, 7 })
+            dyn (b, thresholds[b], 6.0f);
+    }
+}
+
+struct Session
+{
+    std::unique_ptr<labq8::LabQ8AudioProcessor> processor;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    LabQ8Editor* editor = nullptr;
+    long pos = 0;
+    double fs = 48000.0;
+
+    Session (int view, float zoom, bool eight, AnalyzerSource source = AnalyzerSource::post)
+        : processor (std::make_unique<labq8::LabQ8AudioProcessor>())
+    {
+        setDynamicState (*processor, eight);
+        processor->prepareToPlay (fs, 512);
+        base.reset (processor->createEditor());
+        editor = dynamic_cast<LabQ8Editor*> (base.get());
+        editor->setZoom (zoom);
+        editor->setView (view);
+        editor->setAnalyzerSource (source);
+    }
+
+    // `seconds` of the programme (or silence) in blocks of 512, one screen
+    // frame per 1600 samples.
+    void play (double seconds, bool silent = false)
+    {
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        const auto end = pos + (long) (seconds * fs);
+        long sinceFrame = 0;
+        while (pos < end)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buffer.setSample (ch, i, silent ? 0.0f : ui2b::programme (ch, pos + i, fs));
+            processor->processBlock (buffer, midi);
+            pos += 512;
+            sinceFrame += 512;
+            if (sinceFrame >= 1600)
+            {
+                sinceFrame -= 1600;
+                editor->getSpectrum().advance (1.0 / 30.0);
+                editor->getDynamics().advance (1.0 / 30.0);
+            }
+        }
+    }
+
+    // Plays until band `band` reduces at least `db` (a kick or a bass note), at most 2 s more.
+    void playUntilReducing (int band, double db)
+    {
+        for (int i = 0; i < 120 && editor->getDynamics().getEffectiveReductions()[(size_t) band] < db; ++i)
+            play (1.0 / 60.0);
+    }
+
+    juce::Image image (float density = 1.0f) const
+    {
+        return editor->createComponentSnapshot (editor->getLocalBounds(), true, density).convertedToFormat (juce::Image::RGB);
+    }
+};
+
+juce::String reductions (const Session& s)
+{
+    juce::String text;
+    const auto& r = s.editor->getDynamics().getEffectiveReductions();
+    for (int b = 0; b < 8; ++b)
+        if (r[(size_t) b] > 0.0)
+            text << " b" << (b + 1) << " " << juce::String (r[(size_t) b], 2) << " dB";
+    return text.isEmpty() ? juce::String (" none") : text;
+}
+
+// Detector levels of the programme per band (threshold -80, range 24: the
+// reduction is level + 80 up to 24 dB), to place the thresholds.
+void probe()
+{
+    // With range 24 the reduction is (level - threshold) above the knee, up
+    // to 24: thresholds 24 dB apart cover -80 .. +16 dB.
+    for (const float threshold : { -80.0f, -56.0f, -32.0f, -8.0f })
+    {
+        labq8::LabQ8AudioProcessor p;
+        setMasterState (p);
+        setParam (p, labq8::params::bandIDs[7].type, 0.0f);
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto& d = labq8::params::dynamicIDs[(size_t) b];
+            setParam (p, d.enabled, 1.0f);
+            setParam (p, d.threshold, threshold);
+            setParam (p, d.range, 24.0f);
+            setParam (p, d.attack, 5.0f);
+            setParam (p, d.release, 120.0f);
+        }
+        p.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        std::array<double, 8> lo, hi;
+        lo.fill (1e9);
+        hi.fill (-1e9);
+        for (long pos = 0; pos < 48000 * 4; pos += 512)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 512; ++i)
+                    buffer.setSample (ch, i, ui2b::programme (ch, pos + i, 48000.0));
+            p.processBlock (buffer, midi);
+            if (pos > 48000)
+                for (int b = 0; b < 8; ++b)
+                {
+                    const auto r = p.getEqCoreForTesting().getDynamics (b).getGainReductionDb();
+                    lo[(size_t) b] = std::min (lo[(size_t) b], r);
+                    hi[(size_t) b] = std::max (hi[(size_t) b], r);
+                }
+        }
+        std::printf ("threshold %.0f:", threshold);
+        for (int b = 0; b < 8; ++b)
+            std::printf ("  b%d %.1f..%.1f", b + 1, lo[(size_t) b], hi[(size_t) b]);
+        std::printf ("\n");
+    }
+}
+
+int captures (const juce::File& outDir)
+{
+    bool ok = true;
+    juce::String report;
+    auto save = [&] (const juce::Image& image, const char* name, const Session& s)
+    {
+        ok = writePng (image, outDir.getChildFile (name)) && ok;
+        report << name << ": reductions" << reductions (s) << "\n";
+    };
+    auto screenOf = [] (const juce::Image& editor) { return editor.getClippedImage ({ 355, 186, 975, 330 }); };
+
+    // The four views, the same moment of the programme (100 %).
+    const char* names[] = { "ui2c_1_eq.png", "ui2c_2_spectrum.png", "ui2c_3_dyn.png", "ui2c_4_all.png" };
+    for (const int view : { LabQ8Editor::viewEq, LabQ8Editor::viewSpectrum, LabQ8Editor::viewDyn, LabQ8Editor::viewAll })
+    {
+        Session s (view, 1.0f, false);
+        s.play (1.5);
+        s.playUntilReducing (3, 2.5);
+        // EQ / SPECTRUM do not read the dynamics: the reductions are those of DYN / ALL.
+        save (screenOf (s.image()), names[view], s);
+        if (view == LabQ8Editor::viewDyn)
+        {
+            save (s.image(), "ui2c_5_editor_dyn_100.png", s);
+            // Detail at 2x density around bands 2 and 4.
+            const auto detail = s.editor->createComponentSnapshot ({ 420, 250, 520, 225 }, true, 2.0f).convertedToFormat (juce::Image::RGB);
+            save (detail, "ui2c_6_dyn_detail_2x.png", s);
+        }
+        if (view == LabQ8Editor::viewAll)
+            save (s.image(), "ui2c_7_editor_all_100.png", s);
+    }
+    {
+        Session s (LabQ8Editor::viewAll, 1.0f, false, AnalyzerSource::both);
+        s.play (1.5);
+        s.playUntilReducing (3, 2.5);
+        save (screenOf (s.image()), "ui2c_8_all_pre_post.png", s);
+    }
+    for (const auto view : { LabQ8Editor::viewDyn, LabQ8Editor::viewAll })
+    {
+        Session s (view, 0.6f, false);
+        s.play (1.5);
+        s.playUntilReducing (3, 2.5);
+        save (s.image(), view == LabQ8Editor::viewDyn ? "ui2c_9_editor_60_dyn.png" : "ui2c_10_editor_60_all.png", s);
+        save (s.image (2.0f), view == LabQ8Editor::viewDyn ? "ui2c_11_editor_60_dyn_retina.png" : "ui2c_12_editor_60_all_retina.png", s);
+    }
+    {
+        Session s (LabQ8Editor::viewDyn, 1.0f, true);
+        s.play (1.5);
+        s.playUntilReducing (3, 2.5);
+        save (screenOf (s.image()), "ui2c_13_dyn_eight_bands.png", s);
+        Session a (LabQ8Editor::viewAll, 1.0f, true);
+        a.play (1.5);
+        a.playUntilReducing (3, 2.5);
+        save (screenOf (a.image()), "ui2c_14_all_eight_bands.png", a);
+    }
+    {
+        // Silence: the real release, then the static curve alone.
+        Session s (LabQ8Editor::viewDyn, 1.0f, false);
+        s.play (1.5);
+        s.play (1.0, true);
+        save (screenOf (s.image()), "ui2c_15_dyn_after_silence.png", s);
+    }
+
+    // Cost per screen frame (1/30 s) of one editor, with the analyzer running:
+    // the processor's block, the spectrum's frame (copies + FFTs), the
+    // dynamics' frame (telemetry + curves) and the plot's repaint, one pass
+    // per display density (as a window draws).
+    report << "\ncost per screen frame, one editor, 48 kHz, programme (median of 60 settled frames):\n";
+    for (const auto zoom : { 0.6f, 1.0f })
+        for (const bool eight : { false, true })
+            for (const auto& [view, source] : { std::pair { LabQ8Editor::viewAll, AnalyzerSource::post },
+                                                std::pair { LabQ8Editor::viewAll, AnalyzerSource::both },
+                                                std::pair { LabQ8Editor::viewDyn, AnalyzerSource::post },
+                                                std::pair { LabQ8Editor::viewAll, AnalyzerSource::post } })
+            {
+                // The last row: the same ALL with the dynamics' telemetry off
+                // (the UI-2b frame, for comparison).
+                static int row = 0;
+                const auto withoutDynamics = (row++ % 4) == 3;
+                Session s (view, zoom, eight, source);
+                if (withoutDynamics)
+                    s.editor->getDynamics().setShown (false, false);
+                s.play (1.0);
+                juce::AudioBuffer<float> audio (2, 1600);
+                juce::MidiBuffer none;
+                std::vector<double> retina, standard, dynamicsMs, spectrumMs;
+                int acting = 0, frames = 0;
+                for (const float density : { 1.0f, 2.0f })
+                    for (int frame = 0; frame < 75; ++frame)
+                    {
+                        for (int ch = 0; ch < 2; ++ch)
+                            for (int k = 0; k < 1600; ++k)
+                                audio.setSample (ch, k, ui2b::programme (ch, s.pos + k, s.fs));
+                        s.pos += 1600;
+                        s.processor->processBlock (audio, none);
+                        auto t0 = juce::Time::getMillisecondCounterHiRes();
+                        s.editor->getSpectrum().advance (1.0 / 30.0);
+                        const auto t1 = juce::Time::getMillisecondCounterHiRes();
+                        s.editor->getDynamics().advance (1.0 / 30.0);
+                        const auto t2 = juce::Time::getMillisecondCounterHiRes();
+                        const auto plot = s.editor->getSpectrum().getBounds().toFloat()
+                                              .transformedBy (juce::AffineTransform::scale (s.editor->getScale())).getSmallestIntegerContainer();
+                        juce::ignoreUnused (s.editor->createComponentSnapshot (plot, true, density));
+                        const auto t3 = juce::Time::getMillisecondCounterHiRes();
+                        if (frame >= 15)
+                        {
+                            (density == 1.0f ? standard : retina).push_back (t3 - t0);
+                            if (density == 2.0f)
+                            {
+                                spectrumMs.push_back (t1 - t0);
+                                dynamicsMs.push_back (t2 - t1);
+                                ++frames;
+                                for (const auto r : s.editor->getDynamics().getEffectiveReductions())
+                                    acting += r > 0.0 ? 1 : 0;
+                            }
+                        }
+                    }
+                for (auto* v : { &standard, &retina, &dynamicsMs, &spectrumMs })
+                    std::sort (v->begin(), v->end());
+                auto median = [] (const std::vector<double>& v) { return v[v.size() / 2]; };
+                report << "  zoom " << juce::roundToInt (zoom * 100.0f) << " %, "
+                       << (view == LabQ8Editor::viewDyn ? "DYN" : "ALL") << ", "
+                       << (view == LabQ8Editor::viewDyn ? "no analyzer" : source == AnalyzerSource::post ? "POST" : "PRE + POST") << ", "
+                       << (withoutDynamics ? "dynamics off (UI-2b)" : eight ? "8 dynamic bands" : "2 dynamic bands")
+                       << ": bands acting per frame " << juce::String ((double) acting / std::max (1, frames), 1)
+                       << "; frame median " << juce::String (median (standard), 3) << " ms (1x), " << juce::String (median (retina), 3)
+                       << " ms (Retina) = " << juce::String (median (retina) * 30.0 / 10.0, 2) << " % of one core at 30 frames/s"
+                       << "; of which dynamics frame " << juce::String (median (dynamicsMs), 3) << " ms, spectrum frame "
+                       << juce::String (median (spectrumMs), 3) << " ms\n";
+            }
+
+    ok = outDir.getChildFile ("ui2c_report.txt").replaceWithText (report) && ok;
+    std::printf ("%s", report.toRawUTF8());
+    std::printf ("%s\n", ok ? "UI-2c captures written" : "FAILED");
+    return ok ? 0 : 1;
+}
+} // namespace ui2c
 } // namespace
 
 
@@ -658,6 +947,13 @@ int main (int argc, char** argv)
         return ui2a::captures (master, outDir);
     if (argc > 3 && juce::String (argv[3]) == "--ui2b")
         return ui2b::captures (master, outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--ui2c")
+        return ui2c::captures (outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--ui2c-probe")
+    {
+        ui2c::probe();
+        return 0;
+    }
 
     labq8::LabQ8AudioProcessor processor;
     processor.prepareToPlay (48000.0, 512);

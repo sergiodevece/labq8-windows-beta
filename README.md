@@ -4,12 +4,12 @@ Ecualizador paramétrico dinámico de ocho bandas (objetivo final) para mezcla,
 parte de **VitaPlug LAB BUNDLE**. C++20 · JUCE 9.0.3 · CMake · AU + VST3 · macOS
 Apple Silicon e Intel.
 
-**Fase actual: UI-2b cerrada** (analizador espectral FFT sobre UI-2a `761b7bf`; SMOKE-5 aprobado). Ocho bandas independientes en
+**Fase actual: UI-2c cerrada** (visualización dinámica real sobre UI-2b `d7840f3`; SMOKE-6 aprobado). Ocho bandas independientes en
 cascada, cada una con seis topologías seleccionables (Bell, Low Shelf, High
 Shelf, Low Cut y High Cut de 12 dB/oct, Notch), crossfade sin clicks al
 cambiar de tipo, bypass por banda, estado v4 compatible con sesiones E0, E1a,
 E1b y E2b, la interfaz del diseño aprobado (UI-1, con zoom, botones ON/OFF y
-edición desde los nodos de UI-1.1, medidores IN/OUT reales de UI-2a, analizador espectral de UI-2b) y 152 pruebas que se ejecutan sin DAW.
+edición desde los nodos de UI-1.1, medidores IN/OUT reales de UI-2a, analizador espectral de UI-2b, visualización dinámica y vista DYN de UI-2c) y 163 pruebas que se ejecutan sin DAW.
 E1b.1 limita el Q efectivo de shelves (1) y cortes (2) sin tocar el Q
 guardado. E2a/E2b añaden el motor dinámico (ocho secciones independientes en
 el núcleo DSP, solo para Bells, detección sobre la entrada común y estéreo
@@ -90,6 +90,8 @@ Barrido matemático de respuesta, estabilidad y headroom de shelves y cortes
 | `build/ui2a-mutation`, `build/ui2a-tsan` | UI-2a (árbol de trabajo) | Mutaciones (arm64) y ThreadSanitizer (arm64) |
 | `build/ui2b-release-universal` | UI-2b (árbol de trabajo) | Build instalado en SMOKE-5. No se recompila |
 | `build/ui2b-mutation`, `build/ui2b-tsan` | UI-2b (árbol de trabajo) | Mutaciones (arm64) y ThreadSanitizer (arm64) |
+| `build/ui2c-release-universal` | UI-2c (árbol de trabajo) | Build instalado en SMOKE-6. No se recompila |
+| `build/ui2c-debug`, `build/ui2c-tsan` | UI-2c (árbol de trabajo) | Build Debug de trabajo y ThreadSanitizer (arm64) |
 
 Los SHA-256 de los binarios de referencia E0 y E1a se verificaron sin cambios
 tras E1b, los de E0, E1a y E1b tras E1b.1, los de E0 a E1b.1 tras E2a, y los
@@ -135,6 +137,6 @@ copia el AU a `~/Library/Audio/Plug-Ins/Components`, se niega mientras Logic
 - [docs/DYNAMICS_E2C1.md](docs/DYNAMICS_E2C1.md): parámetros públicos de la dinámica, riesgos y propuesta de detector para E2c.2.
 - [docs/design/README.md](docs/design/README.md): diseño gráfico aprobado APPROVED_01 (congelado).
 - [docs/UI_IMPLEMENTATION.md](docs/UI_IMPLEMENTATION.md): implementación UI-1 y UI-1.1 (arquitectura, assets derivados, controles, zoom, edición desde los nodos).
-- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-2b.
+- [docs/ROADMAP.md](docs/ROADMAP.md): fases y pendientes tras UI-2c.
 - [docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md](docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md): especificación conceptual de INTENTION, PHASE BEHAVIOR y M/S (no autorizada para implementación).
 - [tests/fixtures/README.md](tests/fixtures/README.md): estados reales de E0 y E1a usados en las pruebas de migración.

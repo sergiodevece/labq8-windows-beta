@@ -733,7 +733,7 @@ float levelAt (LabQ8Editor& editor, bool pre, double hz)
 }
 } // namespace
 
-LQ_TEST ("spectrum views: ALL + POST by default; EQ only the curve, SPECTRUM only the spectrum, ALL both; DYN unavailable; per instance, never in the state")
+LQ_TEST ("spectrum views: ALL + POST by default; EQ only the curve, SPECTRUM only the spectrum, ALL both; DYN the curve and its dynamics; per instance, never in the state")
 {
     LabQ8AudioProcessor p;
     setLayout (p, 2);
@@ -754,11 +754,14 @@ LQ_TEST ("spectrum views: ALL + POST by default; EQ only the curve, SPECTRUM onl
     editor->setView (LabQ8Editor::viewSpectrum);
     LQ_CHECK (! editor->getScreen().isVisible() && ! editor->areQHandlesShown() && spectrum.isTraceShown (false), "SPECTRUM: no curve, nodes or handles");
     editor->setView (LabQ8Editor::viewDyn);
-    LQ_CHECK (editor->getView() == LabQ8Editor::viewSpectrum, "DYN is not available");
+    LQ_CHECK (editor->getView() == LabQ8Editor::viewDyn && editor->getScreen().isVisible() && ! spectrum.isTraceShown (false)
+                  && ! p.getPostTap().isActive() && ! p.getPreTap().isActive() && editor->getDynamics().isShown()
+                  && editor->getDynamics().areReadoutsShown() && p.getDynamicsTelemetry().isActive(),
+              "DYN (UI-2c): the curve and its dynamics with readouts; no spectrum, no tap copies audio");
     auto* dynTip = dynamic_cast<juce::TooltipClient*> (&editor->getViewTab (LabQ8Editor::viewDyn));
-    LQ_CHECK (dynTip != nullptr && dynTip->getTooltip().contains ("not available"), "DYN says so");
+    LQ_CHECK (dynTip != nullptr && dynTip->getTooltip() == "View: DYN", "DYN is a view");
 
-    // The tabs select views with the mouse (DYN does nothing).
+    // The tabs select views with the mouse.
     for (const int tab : { LabQ8Editor::viewEq, LabQ8Editor::viewDyn, LabQ8Editor::viewAll })
     {
         auto& c = editor->getViewTab (tab);
@@ -766,7 +769,7 @@ LQ_TEST ("spectrum views: ALL + POST by default; EQ only the curve, SPECTRUM onl
         juce::MouseEvent down (juce::Desktop::getInstance().getMainMouseSource(), centre, juce::ModifierKeys::leftButtonModifier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
                                &c, &c, juce::Time::getCurrentTime(), centre, juce::Time::getCurrentTime(), 1, false);
         c.mouseDown (down);
-        LQ_CHECK (editor->getView() == (tab == LabQ8Editor::viewDyn ? LabQ8Editor::viewEq : tab), str ("click on tab ", tab));
+        LQ_CHECK (editor->getView() == tab, str ("click on tab ", tab));
     }
 
     // Analyzer menu: three sources, the current one ticked; each switches the

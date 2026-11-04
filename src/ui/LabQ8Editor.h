@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/UiModel.h"
+#include "ui/DynamicsOverlay.h"
 #include "ui/LevelMeterView.h"
 #include "ui/SpectrumView.h"
 #include "ui/UiPreferences.h"
@@ -40,7 +41,8 @@ class SpectrumScale;
 //   C. values / states   displays, band header and colour indicator
 //   D. visualisation     static EQ response and nodes (from the parameters),
 //                        IN / OUT sample-peak meters (UI-2a, LevelMeterView),
-//                        spectrum analyzer (UI-2b, SpectrumView)
+//                        spectrum analyzer (UI-2b, SpectrumView), dynamic
+//                        response (UI-2c, DynamicsOverlay)
 //
 // UI-1.1: the eight buttons only switch their band on / off (b{n}_bypass);
 // bands are selected and edited from their nodes on the screen; the zoom
@@ -81,9 +83,9 @@ public:
     juce::PopupMenu createZoomMenu() const;
     void handleZoomMenuResult (int itemId);
 
-    // UI-2b: the screen's view (tab index: 0 EQ, 1 SPECTRUM, 3 ALL; DYN, 2,
-    // is not available yet) and the analyzer's source. Per instance, in
-    // memory: never part of the plugin state.
+    // UI-2b: the screen's view (tab index: 0 EQ, 1 SPECTRUM, 2 DYN since
+    // UI-2c, 3 ALL) and the analyzer's source. Per instance, in memory:
+    // never part of the plugin state.
     static constexpr int viewEq = 0, viewSpectrum = 1, viewDyn = 2, viewAll = 3;
     void setView (int tab);
     int getView() const noexcept { return view; }
@@ -116,6 +118,8 @@ public:
     juce::Component& getScreen();
     LevelMeterView& getMeters() noexcept { return *meters; }
     SpectrumView& getSpectrum() noexcept { return *spectrum; }
+    DynamicsOverlay& getDynamics() noexcept { return *dynamics; }
+    std::array<BandView, 8> getScreenBandsForTesting() const; // what the static curve is drawn from
     juce::Component& getViewTab (int tab);
     juce::Component& getAnalyzerSelector();
     int getScreenPaintCount() const noexcept; // times the EQ curve was really painted
@@ -152,6 +156,7 @@ private:
     std::unique_ptr<SettingsButton> settingsButton;
     std::unique_ptr<LevelMeterView> meters;
     std::unique_ptr<SpectrumView> spectrum;
+    std::unique_ptr<DynamicsOverlay> dynamics;
     std::array<std::unique_ptr<ViewTab>, 4> viewTabs;
     std::unique_ptr<AnalyzerSelector> analyzerSelector;
     std::unique_ptr<SpectrumScale> leftScale, rightScale;

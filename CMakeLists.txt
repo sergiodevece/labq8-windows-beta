@@ -50,6 +50,7 @@ set(LABQ8_HOST_ADAPTER_SOURCES
     src/ui/LevelMeterView.cpp
     src/ui/SpectrumAnalyzer.cpp
     src/ui/SpectrumView.cpp
+    src/ui/DynamicsOverlay.cpp
     src/ui/UiModel.cpp
     src/ui/UiPreferences.cpp)
 
@@ -137,6 +138,7 @@ if(LABQ8_BUILD_TESTS)
         tests/EditorTests.cpp
         tests/MeterTests.cpp
         tests/SpectrumTests.cpp
+        tests/DynamicsTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

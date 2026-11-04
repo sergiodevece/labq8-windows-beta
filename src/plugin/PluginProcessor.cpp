@@ -106,6 +106,22 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
     const auto channels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels());
     preTap.prepare (sampleRate, channels);
     postTap.prepare (sampleRate, channels);
+    dynamicsTelemetry.prepare();
+}
+
+void LabQ8AudioProcessor::offerDynamics (bool hostBypassed) noexcept
+{
+    // Values the DSP has already computed for the last control tick; reading
+    // them changes nothing (const accessors, audio thread).
+    dynamicsTelemetry.offer (hostBypassed, [this] (int b, DynamicsTelemetry::Band& out)
+    {
+        const auto& band = eq.getBand (b);
+        out.staticGainDb = (float) band.getCurrentGainDb();
+        out.reductionDb = (float) eq.getDynamics (b).getGainReductionDb();
+        out.frequencyHz = (float) band.getCurrentFrequencyHz();
+        out.q = (float) band.getCurrentQ();
+        out.bell = band.getActiveFilter() == dsp::FilterType::bell;
+    });
 }
 
 void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -125,7 +141,17 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
 
     pushParametersToCore();
-    eq.process (buffer.getArrayOfWritePointers(), numChannels, buffer.getNumSamples());
+    auto* const* channels = buffer.getArrayOfWritePointers();
+    float* segment[dsp::EqCore::maxChannels] {};
+    const auto segmentChannels = juce::jmin (numChannels, dsp::EqCore::maxChannels);
+    for (int position = 0; position < buffer.getNumSamples(); position += eqSubBlockSamples)
+    {
+        const auto n = juce::jmin (eqSubBlockSamples, buffer.getNumSamples() - position);
+        for (int ch = 0; ch < segmentChannels; ++ch)
+            segment[ch] = channels[ch] + position;
+        eq.process (segment, segmentChannels, n);
+        offerDynamics (false);
+    }
 
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
     postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
@@ -139,6 +165,7 @@ void LabQ8AudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer
     AudioProcessor::processBlockBypassed (buffer, midi);
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
     postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    offerDynamics (true); // nothing was processed: no dynamics to show
 }
 
 juce::AudioProcessorEditor* LabQ8AudioProcessor::createEditor()

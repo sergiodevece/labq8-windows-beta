@@ -15,7 +15,7 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | **UI-1.1** | Ergonomía tras SMOKE-1: zoom en seis tamaños 40–140 % (60 % inicial, preferencia global, menú del icono de configuración, sin tirador de esquina, tamaños que no caben deshabilitados), ocho botones ON/OFF de bypass, selección y edición de bandas desde los nodos con tiradores de Q; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-2 y SMOKE-3 en Logic aprobados (UI_IMPLEMENTATION §9.1, §9.5), zoom en seis tamaños desde §9.4 |
 | **UI-2a** | Medidores IN/OUT reales: pico de muestra antes y después del EQ, transporte lock-free, balística en la interfaz, 26 celdas con la escala del diseño, verde / ámbar / rojo, mono en L y R, bypass del host medido; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-4 en Logic aprobado (UI_IMPLEMENTATION §10.1) |
 | **UI-2b** | Analizador espectral FFT: captura PRE/POST sin bloqueos (seqlock), FFT 8192–32 768 Blackman-Harris, 0 a −96 dBFS, vistas EQ / SPECTRUM / ALL, Analyzer Pre / Post / Pre + Post, curva en caché; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-5 en Logic 5/5 PASS (UI_IMPLEMENTATION §11.1) |
-| UI-2c | Visualización dinámica (DYN, "View") | — |
+| UI-2c | Visualización dinámica real: telemetría coherente por sub-bloques (A2 + A4), respuesta dinámica punteada con relleno, vista DYN con reducciones; "View: EQ + Dyn" retirado; sin cambios de DSP, parámetros ni estado | Cerrada; SMOKE-6 en Logic aprobado (UI_IMPLEMENTATION §12.6) |
 | UI-2 (resto) | Presentación provisional de INTENTION (según decisiones de UI-1) | — |
 | E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
 | E2c (resto) | Detección estéreo no enlazada / M/S | — |

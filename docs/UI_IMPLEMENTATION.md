@@ -841,3 +841,138 @@ avisos, 80 parámetros. Resultado aprobado por el usuario:
 
 UI-2b queda cerrada. Copia de UI-2a (SMOKE-4) en
 `build/ui2b-report/LABQ8.component.smoke4-backup`.
+
+## 12. UI-2c: visualización dinámica real
+
+**Estado:** **cerrada**, sobre `d7840f3`; SMOKE-6 en Logic aprobado (§12.6).
+- **Aprobaciones:** auditoría y decisiones D1–D4 el 04-11-2026, con D3 modificada y D4 restringida; política de lectura A2 + A4 el mismo día.
+- **Capturas aprobadas** el 04-11-2026 (§12.5), con el relleno estático de la banda seleccionada tal como está.
+- **SMOKE-6** en Logic Pro aprobado por el usuario (§12.6).
+- **Sin cambios** en el DSP (`src/dsp/`), los parámetros, los IDs, el estado v4 ni el PNG maestro.
+- **Fuera de alcance:** M/S, INTENTION, PHASE BEHAVIOR y cualquier función DSP nueva.
+
+### 12.1 Qué existe en el DSP (auditoría)
+
+- **Solo Bell sin bypass tiene dinámica.** Lo fija `EqCore::updateEngaged`, y `EqBand::modulationFor` ignora la modulación en shelves, cortes y notch. Un `b{n}_dyn_on` guardado en otro tipo no actúa y no se dibuja.
+- **Solo hay reducción, nunca expansión.** `dynamics::gainReductionDb` va de 0 dB al Range, con un codo de 6 dB. La banda recibe `−reducción` sobre su ganancia estática.
+- **Ganancia efectiva** = clamp(estática − reducción, ±24 dB), el límite del diseñador. Por ejemplo, con estática −20 dB y una reducción de 12 dB solo se oyen 4 dB.
+- **Reducción por banda:** `DynamicSection::getGainReductionDb()` es el valor aplicado en el último tick de 16 muestras. Ya incluye ataque, release, Range y el fundido de 20 ms del interruptor.
+- **Nivel del detector:** no se transmite ni se representa (D4).
+
+### 12.2 Telemetría (`src/plugin/DynamicsTelemetry.h`)
+
+- **Una instantánea** contiene las ocho bandas de un mismo instante:
+  - ganancia estática, frecuencia y Q efectiva tal como las suaviza el DSP (`EqBand::getCurrent…`);
+  - la reducción de la sección;
+  - si el filtro activo es Bell.
+
+  El procesador solo copia valores que el DSP ya ha calculado, con accesores `const` desde el hilo de audio.
+- **A4: sub-bloques.** El procesador llama a `eq.process` en sub-bloques de ≤ 256 muestras (`eqSubBlockSamples`) y ofrece una instantánea tras cada uno.
+  - La salida de `EqCore` no depende de cómo se divide el bloque: su rejilla de control es absoluta.
+  - Los parámetros se siguen leyendo una vez por bloque del host.
+  - El sonido es idéntico bit a bit. Lo comprueban:
+    - una prueba frente a una llamada por bloque, en 9 tamaños de bloque y con automatización;
+    - la compatibilidad estricta frente a las 11 bases.
+- **A2: qué instantánea se muestra.** Entre dos lecturas de la interfaz se conserva la instantánea ofrecida con mayor reducción efectiva total. Tras la lectura, la siguiente oferta la sustituye, sea cual sea su valor.
+  - Se muestra siempre un instante real; nunca se combinan máximos de instantes distintos.
+  - La interfaz marca lo leído por el identificador de la instantánea, así que una lectura que coincide con una escritura no deja un pico pegado (probado).
+- **Seqlock sin espera:**
+  - el escritor pone la secuencia impar, escribe y la vuelve par (release);
+  - el lector copia entre dos lecturas iguales de la secuencia (acquire más fence);
+  - todos los campos son atómicos relaxed, así que ningún acceso es una carrera de datos.
+- **Cuándo escribe:**
+  - solo mientras DYN o ALL están visibles (`setActive`); si no, el hilo de audio solo lee una bandera;
+  - en el bypass del host ofrece "sin dinámica";
+  - `prepareToPlay` abre una generación nueva.
+- **Coste** (`labq8_bench --ui2c`, Apple M5):
+  - una oferta: 80 ns en arm64 y 124 ns en x86_64, como mucho una por 256 muestras (0,0015 % y 0,0023 % de un núcleo a 48 kHz);
+  - A4 frente a una llamada por bloque: sin diferencia medible, dentro del ruido entre ejecuciones.
+
+### 12.3 Por qué A2 + A4: medición dentro del bloque
+
+`labq8_bench --ui2c-intrablock` usa una Bell de 1 kHz con umbral −30 y Range 12 dB, a 48 kHz. La referencia es la reducción de cada tick, y se mide cuánto de cada pico deja de verse en una pantalla a 30 Hz. Pérdida en el peor caso, en dB:
+
+| Señal, ataque/release | bloque | última del bloque | A2 | **A2 + A4** |
+|---|---|---|---|---|
+| ráfagas, 0,5 / 5 ms | 1024 | 9,98 | 0,00 | **0,00** |
+| ráfagas, 0,5 / 5 ms | 4096 | 12,00 | 12,00 | **0,00** |
+| ráfagas, 0,5 / 50 ms | 4096 | 8,81 | 8,81 | **0,00** |
+| ráfagas, 10 / 100 ms | 4096 | 5,70 | 5,70 | **0,11** |
+| percusión, 10 / 100 ms | 4096 | 1,89 | 1,89 | **0,01** |
+
+Con A2 + A4, la pérdida es ≤ 0,11 dB en todos los casos medidos, unos 0,5 px de referencia. La tabla completa está en `build/ui2c-report/ui2c-intrablock.txt`.
+
+### 12.4 Representación (`src/ui/DynamicsOverlay`, D1–D3)
+
+- **Curva estática:** la de siempre, sólida y editable, con los nodos encima. Se calcula desde los parámetros, en la caché de `ResponseScreen`, y la dinámica nunca la repinta (probado).
+- **Respuesta dinámica:** solo para las Bell con reducción efectiva > 0.
+  - Se dibuja la curva estática más la diferencia que la reducción causa en el diseño de cada banda:
+
+    Δ_b(f) = |H(f; g − r_ef)| − |H(f; g)| en dB
+
+    con g, f y Q del DSP. La cascada es un producto, así que las Δ se suman exactamente.
+  - **Trazo:** punteado, con el color de la banda que más mueve la curva en cada tramo.
+  - **Relleno:** con el color de la banda, apilado entre la curva estática y la dinámica.
+  - **Nodos:** en su posición estática.
+- **DYN:** curva, nodos y dinámica, con la reducción efectiva escrita bajo el punto dinámico de cada banda que actúa ("−2.7"). No muestra espectro, y los taps de audio no copian.
+- **ALL:** espectro, curva y dinámica, sin cifras.
+- **EQ y SPECTRUM:** como en UI-2b, sin telemetría.
+- **"View: EQ + Dyn":** sigue retirado (D2).
+- **Refresco:**
+  - unos 30 Hz;
+  - repinta solo si alguna reducción se mueve ≥ 0,01 dB, o si cambian los parámetros o el estado de la banda; en reposo no repinta (probado);
+  - sin suavizado añadido: se ven el ataque y el release reales.
+- **Silencio:** se ve el release real hasta volver exactamente a la curva estática.
+- **Sin bloques durante 100 ms, bypass del host o una generación nueva:** la superposición se retira en el acto, sin inventar ninguna recuperación (D3).
+- **Veracidad (condición 4):**
+  - **estado estacionario:** la curva punteada coincide con `EqCore::magnitudeAt` del DSP con una diferencia de 0,000000 dB, incluido el límite de ±24 dB y dos bandas solapadas;
+  - **durante ráfagas** (ataque de 1 ms), comparada en el mismo instante: como mucho 0,0058 dB.
+- **Limitaciones documentadas:**
+  - dentro de cada tick de 16 muestras el DSP interpola los coeficientes de una muestra a otra; la pantalla muestra el diseño al final del tick;
+  - la curva estática sale de los objetivos de los parámetros, mientras que el DSP los alcanza con rampas de 20 ms, así que al mover un control la referencia se adelanta hasta 20 ms;
+  - durante el fundido de 20 ms de un cambio de tipo desde Bell, la reducción saliente no se dibuja, porque el filtro activo ya no es Bell.
+
+### 12.5 Coste y capturas (aprobadas el 04-11-2026)
+
+Coste medido con `labq8_ui_snapshot --ui2c` en Apple M5, con un editor y la señal de programa: mediana por fotograma de pantalla con densidad Retina, en % de un núcleo a 30 fotogramas/s.
+
+**Aviso sobre la comparación:** en esta sesión, el código UI-2b sin cambios mide unas 2 veces más que el día de su medición (por ejemplo, el FFT tarda 0,080 frente a 0,041 ms). Por eso cada cifra se compara con la referencia sin dinámica medida en la misma pasada.
+
+| Zoom | Vista | Analizador | Sin dinámica (UI-2b) | 2 bandas | 8 bandas |
+|---|---|---|---|---|---|
+| 60 % | ALL | Post | 13,6 % | 16,1 % | 19,1 % |
+| 60 % | ALL | Pre + Post | — | 23,0 % | 23,3 % |
+| 60 % | DYN | — | — | 9,6 % | 12,7 % |
+| 100 % | ALL | Post | 11,2 % | 14,1 % | 17,7 % |
+| 100 % | ALL | Pre + Post | — | 18,7 % | 22,4 % |
+| 100 % | DYN | — | — | 4,3 % | 8,0 % |
+
+- **Cálculo de la curva dinámica:** 0,043 ms con 2 bandas y 0,17 ms con 8, con la respuesta sin reducción de cada banda en caché.
+- **Resto del coste:** el dibujo.
+- **Capturas** (`build/ui2c-captures/`):
+  - las cuatro vistas, a la vez que la señal de programa;
+  - DYN al 100 % y al 60 %, con densidad 1× y Retina;
+  - detalle a 2×;
+  - ALL con Pre + Post;
+  - ocho bandas dinámicas;
+  - vuelta a la curva estática tras el silencio.
+
+**Pruebas de UI-2c:**
+- **Batería completa:** 163/163 en arm64 y x86_64, 11 de ellas nuevas en `tests/DynamicsTests.cpp`.
+- **TSan:** sin avisos.
+- **Compatibilidad estricta:** 11 bases × 2 arquitecturas OK.
+- **Mutación:** 18 de 19 mutantes detectados (`build/ui2c-report/ui2c-mutation.txt`). El superviviente, M11 (el overlay ignora el bypass del host), es equivalente: en el bypass, la telemetría ya ofrece todas las bandas vacías.
+
+### 12.6 SMOKE-6 en Logic Pro: aprobado
+
+**Build instalado** con `tools/install/install_au.sh`, con Logic cerrado:
+- carpeta `build/ui2c-release-universal`;
+- SHA-256 del binario: `77a6da120d1ab03964be1212c2a4c81e6e4e123dc3db938620e58c6805fb44ea`;
+- mismo código que pasó las 163/163 pruebas por arquitectura y la compatibilidad estricta en 11 bases;
+- auval `-strict` en arm64 y x86_64 sin avisos, con 80 parámetros.
+
+Lista de comprobaciones: `build/ui2c-report/UI2C_PRUEBA_LOGIC.md`.
+
+**Resultado:** aprobado físicamente en Logic Pro por el usuario. UI-2c queda cerrada.
+
+**Copia de UI-2b (SMOKE-5):** `build/ui2c-report/LABQ8.component.smoke5-backup`.

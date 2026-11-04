@@ -921,8 +921,8 @@ public:
 // "SPECTRUM": 65 px wide at cap 11, the selected "EQ" 18 px at cap 12,
 // labq8_ui_snapshot --fonts); the selected
 // tab carries the master's lit pill: its light (viewtab_light.png) over the
-// cleaned background, stretched to the tab's width (exact for EQ). DYN is
-// shown disabled until the dynamic view exists.
+// cleaned background, stretched to the tab's width (exact for EQ). DYN was
+// disabled until UI-2c; every tab is available now.
 class ViewTab final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -1153,8 +1153,15 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     content->addChildComponent (*rightScale);
 
     screen = std::make_unique<ResponseScreen> (state, audioProcessor, [this] (int b) { selectBand (b); });
+    // UI-2c: the dynamic response, between the spectrum and the static curve
+    // (which keeps its cached image: the dynamics never repaint it).
+    dynamics = std::make_unique<DynamicsOverlay> (audioProcessor.getDynamicsTelemetry(),
+                                                  [this] { return screen->readBands(); },
+                                                  [this] { return audioProcessor.getSampleRate() > 0 ? audioProcessor.getSampleRate() : 48000.0; });
+    content->addAndMakeVisible (*dynamics);
     screen->onContextMenu = [this] { showZoomMenu (*screen); };
     content->addAndMakeVisible (*screen);
+    dynamics->toBehind (screen.get());
     // The curve and nodes are kept as an image, redrawn only when they
     // change: the spectrum's frames never recompute the eight responses.
     screen->setBufferedToImage (true);
@@ -1203,7 +1210,7 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     const char* tabNames[] = { "EQ", "SPECTRUM", "DYN", "ALL" };
     for (int t = 0; t < 4; ++t)
     {
-        viewTabs[(size_t) t] = std::make_unique<ViewTab> (t, tabNames[t], t != viewDyn, [this] (int tab) { setView (tab); });
+        viewTabs[(size_t) t] = std::make_unique<ViewTab> (t, tabNames[t], true, [this] (int tab) { setView (tab); });
         content->addAndMakeVisible (*viewTabs[(size_t) t]);
     }
     analyzerSelector = std::make_unique<AnalyzerSelector> ([this]
@@ -1341,18 +1348,20 @@ void LabQ8Editor::showZoomMenu (juce::Component& target)
 
 void LabQ8Editor::setView (int tab)
 {
-    if (tab != viewEq && tab != viewSpectrum && tab != viewAll)
-        return; // DYN: not available yet
+    if (tab != viewEq && tab != viewSpectrum && tab != viewDyn && tab != viewAll)
+        return;
     view = tab;
     audioProcessor.setUiView (tab);
     for (int t = 0; t < 4; ++t)
         viewTabs[(size_t) t]->setSelected (t == tab);
     // SPECTRUM: only the spectrum (the curve and nodes, and their editing,
-    // are hidden); EQ: only the curve; ALL: both.
+    // are hidden); EQ: only the curve; DYN: the curve and its dynamic
+    // response (with the reductions written); ALL: everything.
     if (tab == viewSpectrum)
         screen->showHandles (false);
     screen->setVisible (tab != viewSpectrum);
-    spectrum->setShown (tab != viewEq);
+    spectrum->setShown (tab == viewSpectrum || tab == viewAll);
+    dynamics->setShown (tab == viewDyn || tab == viewAll, tab == viewDyn);
     // The scales: EQ +-24 dB on the left (the background's) in EQ and ALL;
     // dBFS on the left in SPECTRUM, discreet on the right in ALL.
     leftScale->setVisible (tab == viewSpectrum);
@@ -1386,6 +1395,7 @@ juce::Component& LabQ8Editor::getViewTab (int tab) { return *viewTabs[(size_t) t
 juce::Component& LabQ8Editor::getSpectrumScale (bool left) { return left ? *leftScale : *rightScale; }
 std::vector<juce::Rectangle<float>> LabQ8Editor::getSpectrumScaleLabels (bool left) const { return (left ? leftScale : rightScale)->labelBounds(); }
 int LabQ8Editor::getScreenPaintCount() const noexcept { return screen->paintCount; }
+std::array<BandView, 8> LabQ8Editor::getScreenBandsForTesting() const { return screen->readBands(); }
 juce::Component& LabQ8Editor::getAnalyzerSelector() { return *analyzerSelector; }
 
 void LabQ8Editor::selectBand (int band)
@@ -1429,6 +1439,7 @@ void LabQ8Editor::refreshFromParameters()
     {
         lastSnapshot = snapshot;
         screen->repaint();
+        dynamics->parametersChanged();
     }
 }
 

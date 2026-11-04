@@ -181,4 +181,45 @@ inline constexpr float meterGlowWidth = 6.0f;
 // meter_lit.png; the editor draws its meters only inside meterArea.
 inline constexpr Rect meterLitSprite { 1389.0f, 302.0f, 162.0f, 176.0f };
 inline constexpr Rect meterArea { 1372.0f, 176.0f, 196.0f, 338.0f };
+
+//==============================================================================
+// UI-2b: the screen's header, measured on the master. The view tabs EQ /
+// SPECTRUM / DYN / ALL sit between these edges (outer border, dividers);
+// the master shows EQ selected (its lit pill spans x 375-439).
+inline constexpr int numViewTabs = 4;
+inline constexpr std::array<float, numViewTabs + 1> viewTabEdges { 372.0f, 443.0f, 539.0f, 611.0f, 684.0f };
+inline constexpr float viewTabTop = 202.0f, viewTabBottom = 229.0f, viewTabCapCentre = 216.0f;
+// The light the lit pill adds to an empty tab (asset viewtab_light.png): the
+// EQ tab's area with the pill's halo, from x = edge - 6 to the next edge + 4,
+// rows 188-246 (the halo reaches the plot's top border).
+inline constexpr Rect viewTabLightSprite { 366.0f, 188.0f, 82.0f, 59.0f };
+inline constexpr float viewTabLeftCap = 20.0f, viewTabRightCap = 17.0f, viewTabMiddleColumn = 41.0f; // in the sprite
+inline constexpr Rgb viewTabTextColour { 146, 200, 128 }, viewTabSelectedTextColour { 1, 3, 1 };
+// The analyzer selector ("Analyzer: Post" in the master); its value is drawn
+// by the editor, the box and its arrow are the background's.
+inline constexpr Rect analyzerBox { 951.0f, 202.0f, 135.0f, 28.0f };
+inline constexpr float analyzerTextLeft = 958.0f, analyzerTextRight = 1066.0f, analyzerCapCentre = 215.5f;
+inline constexpr Rgb analyzerTextColour { 167, 228, 142 };
+// The "View: EQ + Dyn" box, removed from the background until the dynamic
+// view exists (UI-2c).
+inline constexpr Rect removedViewBox { 1093.0f, 198.0f, 165.0f, 37.0f };
+
+// UI-2b: the spectrum on the screen: its own scale, 0 dBFS on the top grid
+// line and -96 dBFS on the bottom one (16 dB per line; approved, 4 px inside
+// the plot's edges), the same in SPECTRUM and ALL; the EQ keeps its +-24 dB.
+// Colours sampled from the master's illustrative spectrum.
+inline constexpr float spectrumTopDb = 0.0f, spectrumBottomDb = -96.0f;
+
+// UI-2b: the screen's vertical scales. The left axis (the +-24 dB of the EQ,
+// drawn into the background) holds its labels at these centres, right edge
+// x 391 (measured). In SPECTRUM the editor covers it with the same strip
+// without labels (asset axis_blank.png) and writes the dBFS scale there in
+// the same font and colour; in ALL a discreet dBFS scale sits inside the
+// plot's right edge.
+inline constexpr std::array<float, 7> axisLabelCentres { 254.0f, 289.0f, 325.0f, 362.0f, 400.0f, 437.0f, 472.0f };
+inline constexpr float axisLabelRight = 391.0f;
+inline constexpr Rect axisBlankSprite { 356.0f, 240.0f, 49.0f, 245.0f };
+inline constexpr float axisUnitCentreY = 238.0f; // "dBFS", above the top label
+inline constexpr float rightScaleRight = 1309.0f, rightScaleLeft = 1284.0f;
+inline constexpr Rgb spectrumLineColour { 154, 209, 155 }, spectrumFillColour { 72, 113, 72 };
 } // namespace labq8::ui::geometry

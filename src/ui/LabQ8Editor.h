@@ -2,6 +2,7 @@
 
 #include "ui/UiModel.h"
 #include "ui/LevelMeterView.h"
+#include "ui/SpectrumView.h"
 #include "ui/UiPreferences.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -25,6 +26,9 @@ class DynamicSwitch;
 class BypassIndicator;
 class ResponseScreen;
 class SettingsButton;
+class ViewTab;
+class AnalyzerSelector;
+class SpectrumScale;
 
 // UI-1 editor: the approved design LABQ8_UI_DESIGN_APPROVED_01, laid out in
 // its 1672 x 941 reference space and scaled as a whole (fixed aspect ratio).
@@ -35,7 +39,8 @@ class SettingsButton;
 //                        buttons, screen nodes and Q handles, settings
 //   C. values / states   displays, band header and colour indicator
 //   D. visualisation     static EQ response and nodes (from the parameters),
-//                        IN / OUT sample-peak meters (UI-2a, LevelMeterView)
+//                        IN / OUT sample-peak meters (UI-2a, LevelMeterView),
+//                        spectrum analyzer (UI-2b, SpectrumView)
 //
 // UI-1.1: the eight buttons only switch their band on / off (b{n}_bypass);
 // bands are selected and edited from their nodes on the screen; the zoom
@@ -76,6 +81,16 @@ public:
     juce::PopupMenu createZoomMenu() const;
     void handleZoomMenuResult (int itemId);
 
+    // UI-2b: the screen's view (tab index: 0 EQ, 1 SPECTRUM, 3 ALL; DYN, 2,
+    // is not available yet) and the analyzer's source. Per instance, in
+    // memory: never part of the plugin state.
+    static constexpr int viewEq = 0, viewSpectrum = 1, viewDyn = 2, viewAll = 3;
+    void setView (int tab);
+    int getView() const noexcept { return view; }
+    void setAnalyzerSource (AnalyzerSource newSource);
+    juce::PopupMenu createAnalyzerMenu() const; // item n + 1 = AnalyzerSource n
+    void handleAnalyzerMenuResult (int itemId);
+
     // Whether the editor at `zoom`, plus the host window allowance, fits in
     // `available` (a display's area without menu bar and Dock).
     static bool zoomFits (float zoom, juce::Rectangle<int> available);
@@ -100,6 +115,15 @@ public:
     juce::Component& getSettingsButton();
     juce::Component& getScreen();
     LevelMeterView& getMeters() noexcept { return *meters; }
+    SpectrumView& getSpectrum() noexcept { return *spectrum; }
+    juce::Component& getViewTab (int tab);
+    juce::Component& getAnalyzerSelector();
+    int getScreenPaintCount() const noexcept; // times the EQ curve was really painted
+    juce::Component& getSpectrumScale (bool left);
+    std::vector<juce::Rectangle<float>> getSpectrumScaleLabels (bool left) const; // 7 labels, then "dBFS"
+    // The 30 Hz poll of the parameters (curve and nodes follow the host's
+    // automation); called by the editor's timer, tests call it directly.
+    void refreshFromParameters();
     bool isBandButtonOn (int band) const;
     juce::Point<float> getNodePosition (int band) const;               // reference space
     std::pair<juce::Point<float>, juce::Point<float>> getQHandleCentres() const; // selected band
@@ -127,6 +151,11 @@ private:
     std::unique_ptr<ResponseScreen> screen;
     std::unique_ptr<SettingsButton> settingsButton;
     std::unique_ptr<LevelMeterView> meters;
+    std::unique_ptr<SpectrumView> spectrum;
+    std::array<std::unique_ptr<ViewTab>, 4> viewTabs;
+    std::unique_ptr<AnalyzerSelector> analyzerSelector;
+    std::unique_ptr<SpectrumScale> leftScale, rightScale;
+    int view = viewAll;
     std::vector<std::unique_ptr<juce::Component>> inactiveAreas;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 7> knobAttachments;
     juce::TooltipWindow tooltips { this, 600 };

@@ -24,12 +24,16 @@
 //   stereo, 1 s x 9 runs: meters (the two measurements alone, as in the
 //   processor, without EQ), and static8 / dyn8 without and with the meters
 //   around the EQ (runs interleaved, so both see the same machine state).
+// - UI-2b (--ui2b): cost of the analyzer's capture on the audio thread
+//   (SpectrumTap::write, PRE + POST, stereo), 1 s x 9 runs: taps active
+//   (analyzer shown) and inactive (one flag read per block).
 // - Load = CPU seconds / audio seconds on one core, single-threaded.
 // Build in Release; Debug numbers are printed with a warning.
 
 #include "dsp/DynamicBellBand.h"
 #include "dsp/EqCore.h"
 #include "plugin/LevelMeter.h"
+#include "plugin/SpectrumTap.h"
 
 #include <algorithm>
 #include <array>
@@ -336,6 +340,29 @@ MeteringResult runMetering (Metering kind, bool dynamics, double fs, int blockSi
     return { elapsed / seconds, l[n / 2] + rr[n / 3] + in.takePeak (0) + out.takePeak (1) };
 }
 
+// UI-2b: the analyzer's capture, as the processor does it (two taps).
+double runCapture (bool active, double fs, int blockSize, const std::vector<float>& left, const std::vector<float>& right)
+{
+    labq8::SpectrumTap pre, post;
+    pre.prepare (fs, 2);
+    post.prepare (fs, 2);
+    pre.setActive (active);
+    post.setActive (active);
+    const auto n = left.size();
+    const auto t0 = std::chrono::steady_clock::now();
+    for (size_t pos = 0; pos < n; pos += (size_t) blockSize)
+    {
+        const auto count = (int) std::min<size_t> ((size_t) blockSize, n - pos);
+        const float* ch[] = { left.data() + pos, right.data() + pos };
+        pre.write (ch, 2, count);
+        post.write (ch, 2, count);
+    }
+    const auto elapsed = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    volatile auto keep = pre.getWritten() + post.getWritten();
+    (void) keep;
+    return elapsed / ((double) n / fs);
+}
+
 std::string machine()
 {
 #if defined(__APPLE__)
@@ -400,6 +427,30 @@ int main (int argc, char** argv)
                 {
                     const auto load = runEightDynamic (sc.k, fs, block, 5, 3.0);
                     std::printf ("%-11s %8.0f %6d %10.4f %14.2f\n", sc.name, fs, block, load * 100.0, load * 1.0e9 / fs);
+                }
+        return 0;
+    }
+
+    if (argc > 1 && std::string (argv[1]) == "--ui2b")
+    {
+        std::printf ("UI-2b analyzer capture (PRE + POST taps), stereo, 1 s per run, median of 9 after 1 warm-up\n\n");
+        std::printf ("%-10s %8s %6s %12s %14s\n", "taps", "fs", "block", "load %", "ns/frame");
+        for (const bool active : { true, false })
+            for (const double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+                for (const int block : { 32, 64, 512 })
+                {
+                    const auto n = (size_t) std::llround (fs);
+                    const auto left = noise (n, 501), right = noise (n, 502);
+                    std::vector<double> loads;
+                    for (int r = 0; r < 10; ++r)
+                    {
+                        const auto load = runCapture (active, fs, block, left, right);
+                        if (r > 0)
+                            loads.push_back (load);
+                    }
+                    std::sort (loads.begin(), loads.end());
+                    const auto m = loads[loads.size() / 2];
+                    std::printf ("%-10s %8.0f %6d %12.5f %14.3f\n", active ? "active" : "inactive", fs, block, m * 100.0, m * 1.0e9 / fs);
                 }
         return 0;
     }

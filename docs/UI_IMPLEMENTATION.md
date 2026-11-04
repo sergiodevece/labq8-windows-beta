@@ -3,7 +3,9 @@
 **Estado:** UI-1 cerrada (`13a810f`). **UI-1.1** (§9) cambia la ergonomía
 tras SMOKE-1: zoom, botones de banda ON/OFF y edición desde los nodos;
 **cerrada**, aprobada en SMOKE-2 y SMOKE-3 (§9.1, §9.5). **UI-2a** (§10)
-añade los medidores IN/OUT reales (cerrada, SMOKE-4 aprobado, §10.1). Lo que
+añade los medidores IN/OUT reales (cerrada, SMOKE-4 aprobado, §10.1).
+**UI-2b** (§11) añade el analizador espectral FFT y las vistas EQ / SPECTRUM /
+ALL (cerrada, SMOKE-5 aprobado, §11.1). Lo que
 UI-1.1 y UI-2a sustituyen está señalado en cada apartado.
 
 UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
@@ -69,10 +71,12 @@ UI-1 sustituye el editor genérico de JUCE por el diseño aprobado
 
 | Archivo | SHA-256 | Contenido |
 |---|---|---|
-| `background.png` | `176895c9…40d69` | El maestro sin los elementos que dependen del estado, con las escalas re-rotuladas |
+| `background.png` | `8c387ca4…0c468` | El maestro sin los elementos que dependen del estado, con las escalas re-rotuladas; desde UI-2b, la cabecera de la pantalla sin la pestaña iluminada, los nombres de las pestañas, el valor del Analyzer ni el recuadro "View" (antes `176895c9…40d69`; idéntico fuera de x 366–1257, y 188–246) |
 | `dynamic_switch_on.png` | `f90fc1d5…d85c23f` | El interruptor del maestro (encendido), recortado a la forma de la píldora |
 | `dynamic_switch_off.png` | `3409d491…846f8` | El mismo, reflejado y desaturado (apagado) |
 | `meter_lit.png` | `7bc0aa5f…ed4d4` | UI-2a: las celdas encendidas de los cuatro medidores del maestro, con su brillo (x 1389–1550, y 302–477) |
+| `axis_blank.png` | `ef78c413…fafaba14` | UI-2b: el eje izquierdo de la pantalla (x 356–404, y 240–484) sin sus siete etiquetas; el editor escribe ahí la escala dBFS en SPECTRUM |
+| `viewtab_light.png` | `ee27e901…a38f99` | UI-2b: la luz que la pestaña iluminada del maestro añade sobre la cabecera limpia (maestro menos fondo, sin el nombre "EQ"; x 366–447, y 188–246) |
 
 **Reproducibilidad:** los tres archivos son idénticos byte a byte generados en
 Debug, en Release arm64 y en Release x86_64.
@@ -160,7 +164,7 @@ aviso emergente provisional: "… not available yet".
 | STEREO MODE (STEREO / M/S / L/R) | Sin M/S ni L/R en el DSP |
 | POLARITY | Sin inversión global de polaridad |
 | INTENTION | Sin INTENTION ni presets. **El texto "Mix Bus - Glue" es ilustrativo, del diseño**: no representa un preset cargado. Su presentación provisional se resolverá antes del smoke definitivo |
-| Pestañas EQ / SPECTRUM / DYN / ALL, Analyzer, View, ajustes | Sin analizador FFT ni vistas |
+| Pestañas EQ / SPECTRUM / DYN / ALL, Analyzer, View, ajustes | ~~Sin analizador FFT ni vistas~~: EQ / SPECTRUM / ALL y Analyzer reales desde UI-2b (§11); DYN deshabilitada y "View: EQ + Dyn" retirado hasta UI-2c |
 | Phase Behavior ("Minimum Phase") | Investigación futura; el DSP actual es de fase mínima |
 | Medidores IN/OUT | ~~Apagados~~: reales desde UI-2a (§10) |
 
@@ -655,3 +659,185 @@ conserva**. UI-2a queda aprobada funcional y musicalmente.
 
 Después del smoke solo cambiaron la prueba de concurrencia y esta
 documentación; el código del plugin es el mismo que se instaló.
+
+## 11. UI-2b: analizador espectral FFT
+
+**Estado:** **cerrada**, sobre `761b7bf`; arquitectura y decisiones aprobadas
+el 30-10-2026; escalas aprobadas el 31-10-2026; capturas aprobadas; **SMOKE-5
+en Logic aprobado** (§11.1). Sin cambios de DSP, parámetros, IDs, estado ni
+PNG maestro. Sin UI-2c (DYN), M/S, INTENTION ni PHASE BEHAVIOR.
+
+**Captura** (`src/plugin/SpectrumTap.h`, adaptador; nada en `src/dsp/`):
+
+- dos puntos, **PRE** (antes de `eq.process`) y **POST** (después: lo que
+  recibe el host), en `processBlock` y en `processBlockBypassed` (bypass del
+  host: PRE = POST = la señal sin procesar); solo lectura;
+- un anillo de 65 536 muestras por canal, reservado una sola vez en el
+  constructor (nunca en `prepareToPlay`); muestras como `std::atomic<float>`
+  relaxed, así que ningún acceso es una carrera de datos;
+- **seqlock sin espera:** el escritor anuncia hasta dónde va a escribir
+  (`claimed`) antes de tocar el anillo y publica lo escrito (`written`,
+  release) después; la interfaz toma `written` (acquire), copia, aplica un
+  fence acquire y comprueba `claimed`: si el escritor pudo sobrescribir algo
+  de lo copiado, la copia se rechaza y se reintenta en el fotograma
+  siguiente;
+- solo copia mientras el analizador se muestra (`setActive`); si no, el hilo
+  de audio solo lee un flag;
+- `prepareToPlay` abre una **generación** nueva (sample rate y canales): la
+  interfaz no muestra nada anterior; al activar una traza tampoco se muestra
+  nada de lo que el anillo tuviera antes.
+
+**Análisis** (`src/ui/SpectrumAnalyzer`, hilo de mensajes):
+
+- FFT real (`juce::dsp::FFT`, vDSP en macOS) de 8192 muestras a 44,1/48 kHz,
+  16 384 a 88,2/96 kHz y 32 768 a 176,4/192 kHz: unos 170 ms y 5,9 Hz por
+  bin a cualquier frecuencia de muestreo;
+- ventana Blackman-Harris de 4 términos (lóbulos a −92 dB); calibrada por su
+  ganancia coherente: un seno de amplitud A marca 20·log10 A dBFS en su pico
+  (como mucho 0,83 dB menos entre dos bins);
+- estéreo: media de potencia de L y R (L = R se lee como un canal; L = −R no
+  se cancela; un canal solo se lee 3 dB por debajo); mono: su canal;
+- puntos de pantalla cada 1,5 px de referencia (los de la curva): el mayor
+  bin dentro del punto cuando lo hay, si no, interpolado en dB;
+- **resolución medida** (dos tonos iguales con un valle de 3 dB, cerca de
+  50 Hz): 13,5 Hz a 48, 96 y 192 kHz, 12,5 Hz a 44,1 kHz. **50 y 60 Hz no se
+  separan.** Con 16 384 muestras a 48 kHz serían 6,5 Hz, pero con una ventana
+  de 341 ms (el doble de lenta) y el doble de coste; no se adopta;
+- balística: subida inmediata; caída lineal de 17,4 dB/s (decaimiento
+  exponencial de potencia con τ = 250 ms) según el tiempo real.
+
+**Pantalla** (`src/ui/SpectrumView`):
+
+- bajo la curva y los nodos; eje horizontal 20 Hz–20 kHz con la misma escala
+  que la curva (un tono de 1 kHz cae en la línea "1k"); eje vertical propio,
+  **0 dBFS en la línea superior de la rejilla (y 251) y −96 dBFS en la
+  inferior (y 474)**, 16 dB por línea, lineal entre líneas (las del maestro
+  están a 36,5–38 px) y sin inclinación; idéntico en SPECTRUM y ALL; la EQ
+  conserva su escala de ±24 dB (ajuste de 4 px respecto a los bordes del
+  gráfico, aprobado el 31-10-2026);
+- **escalas** (aprobadas el 31-10-2026): **EQ**, ±24 dB a la izquierda (la
+  del fondo); **SPECTRUM**, 0 / −16 / −32 / −48 / −64 / −80 / −96 dBFS a la
+  izquierda, sobre el eje sin etiquetas (`axis_blank.png`), con la fuente y el
+  color de las de la EQ (Helvetica Neue Medium 17,75), en sus mismos centros
+  y alineadas a su derecha (x 391), con "dBFS" encima, bajo la cabecera;
+  **ALL**, ±24 dB a la izquierda y la escala dBFS discreta (más pequeña, en el
+  verde del espectro) dentro del borde derecho del gráfico, bajo el icono de
+  ajustes; esta se guarda como imagen, porque el espectro repinta debajo;
+- POST o PRE solos: área verde (colores del espectro ilustrativo del
+  maestro) con contorno más claro; **PRE + POST**: POST como área verde y PRE
+  como contorno claro cálido sin relleno, encima;
+- la traza termina en el último punto por debajo de Nyquist (a 44,1 y
+  48 kHz el extremo derecho del gráfico queda por encima);
+- unos 30 fotogramas por segundo (sobre el refresco de la pantalla). Sin audio
+  nuevo (transporte parado) no se reanaliza el último bloque: el espectro cae
+  hasta el reposo, nunca se congela. En reposo no se repinta;
+- la curva y los nodos se guardan como imagen (`setBufferedToImage`): los
+  fotogramas del espectro no recalculan las ocho respuestas; solo un cambio
+  de la curva lo hace.
+
+**Cabecera:**
+
+- pestañas **EQ** (solo curva y nodos), **SPECTRUM** (solo espectro; sin
+  curva, nodos ni edición) y **ALL** (ambos, **por defecto**); **DYN**
+  atenuada y sin efecto ("DYN: not available yet") hasta UI-2c;
+- la pestaña seleccionada lleva la píldora iluminada del maestro: su luz
+  (`viewtab_light.png`) sobre la cabecera limpia, estirada al ancho de la
+  pestaña (exacta en EQ); nombres en DIN Alternate (15,75; la seleccionada
+  17,25, como el "EQ" del maestro);
+- **Analyzer:** menú Pre / Post / Pre + Post, **Post** por defecto; el
+  recuadro muestra "Analyzer: Pre", "Analyzer: Post" o "Pre + Post"
+  ("Analyzer: Pre + Post" no cabe antes de la flecha); Helvetica Neue Medium
+  16, como el maestro;
+- el recuadro "View: EQ + Dyn" se retira del fondo hasta que exista la vista
+  dinámica, para no sugerir una función inexistente;
+- vista y fuente: por instancia, en memoria (como la banda seleccionada);
+  nunca en el estado ni en los parámetros.
+
+**Verificación** (`build/ui2b-release-universal`, máquina sin otras cargas):
+
+- 151/151 pruebas en Release arm64 y x86_64 (16 nuevas de UI-2b); las de
+  rendimiento del DSP también, repetidas sin compilaciones en paralelo (con
+  el arnés compilando a la vez superaban sus umbrales de tiempo);
+- `run_compat.sh all`: las diez bases OK en arm64 y x86_64, estricta sin
+  diferencias frente a UI-2a (`761b7bf`, base nueva), UI-1.1 y UI-1;
+  repetida frente a UI-2a tras el último cambio del editor, sin diferencias;
+- ThreadSanitizer (`build/ui2b-tsan`, arm64): pruebas del espectro (incluida
+  la de estrés de la captura) y de los medidores, 0 avisos;
+- **captura bajo estrés:** 200 millones de muestras con bloques de 1 a 40 000
+  contra copias continuas: toda copia aceptada es exactamente la secuencia
+  más reciente; las sobrescritas se rechazan (cientos por ejecución); el
+  límite de coherencia se prueba además exactamente en su frontera;
+- **mutaciones**, todas detectadas (24): en la captura (sin comprobar
+  `claimed`, `claimed` sin el bloque nuevo, margen +1 y +4096 muestras, PRE
+  tras el EQ, ignorar el estado inactivo, no cortar la generación) y en el
+  análisis, la vista y la cabecera (ventana rectangular o Hann, sin el factor
+  2 de calibración, suma en vez de media de potencia, suma de amplitudes,
+  primer bin en vez del máximo, dibujar más allá de Nyquist, FFT fija de 4096,
+  caída de 30 dB/s, reanalizar sin audio nuevo, mostrar audio anterior a la
+  activación, ignorar el cambio de sample rate, sin caché de la curva,
+  SPECTRUM con la curva visible, EQ con la captura activa, DYN seleccionable,
+  sondeo de parámetros sin invalidar la caché);
+- **caché de la curva:** tras cambiar Gain, Frequency y Q desde el panel,
+  desde el host (`setValueNotifyingHost`) y como aplica el wrapper la
+  automatización del host (`setValue` y aviso a los listeners), con el
+  espectro funcionando, la curva en caché coincide píxel a píxel con la de un
+  editor recién creado; antes del sondeo de parámetros sigue mostrando la
+  anterior (la caché es real);
+- cabecera frente al maestro (EQ seleccionada, Analyzer: Post): posiciones de
+  la tinta a 1–2 px; diferencia media 5,0 en las pestañas y 10,5 en el
+  recuadro del Analyzer (bordes de glifos: texto dibujado frente a la tinta
+  del maestro).
+
+**Coste medido** (Release arm64, Apple M5, renderizador nativo):
+
+- hilo de audio (`labq8_bench --ui2b`): captura PRE + POST visible
+  0,005–0,035 % de un núcleo (0,005–0,037 % en x86_64); oculta,
+  0,0001–0,002 %;
+- análisis por fotograma (2 copias, 4 FFT y correspondencia a puntos):
+  0,08 ms a 44,1/48 kHz, 0,19 ms a 96 kHz y 0,37 ms a 192 kHz;
+- repintado del gráfico por fotograma (PRE + POST): 0,55 ms al 60 %, 1,5 ms
+  al 100 % y 3,3 ms al 140 % a 1×; en Retina (2×), 2,9 / 2,6 / 9,2 ms; sin el
+  espectro, 0,06–0,3 ms (el dibujo del espectro es casi todo el coste);
+- **al 60 % (tamaño habitual), Retina, 30 fotogramas/s, con todos los
+  editores abiertos a la vez:** POST 6,8 % de un núcleo por instancia (1: 6,8;
+  2: 13,6; 4: 28,9; 8: 54,2 %), PRE + POST 9,1 % (1: 9,1; 2: 18,0; 4: 35,2;
+  8: 69,9 %). Crece de forma lineal con las ventanas abiertas; un editor
+  cerrado, en vista EQ o con el espectro en reposo no cuesta nada. Al 60 % el
+  fondo y la curva en caché se re-muestrean (escala 1,2 en Retina), por eso
+  cuesta algo más que al 100 %.
+
+**Escalas** (tras la aprobación): prueba de qué escala muestra cada vista,
+de las etiquetas en los centros de la rejilla, alineadas a la derecha, sin
+solaparse entre sí, con el gráfico, la cabecera ni el icono de ajustes (tinta
+real de los glifos), de las siete etiquetas dBFS dibujadas en SPECTRUM sin
+restos de las de la EQ, y de que ALL conserva exactamente las de la EQ;
+mutaciones detectadas (5): escala izquierda en ALL, escala derecha ausente,
+correspondencia lineal sin pasar por las líneas, "dBFS" sobre el "0",
+etiquetas alineadas a la izquierda. 152/152 pruebas en arm64 y x86_64;
+compatibilidad estricta frente a UI-2a sin diferencias.
+
+**Capturas** (`labq8_ui_snapshot <maestro> <dir> --ui2b`, programa
+sintético a través del procesador con los ajustes del maestro):
+`ui2b_9/10/11_editor_60_eq|spectrum|all.png`, `ui2b_1_editor_all_post.png`,
+`ui2b_2_all_pre.png`, `ui2b_3_all_pre_post.png`,
+`ui2b_4_spectrum_post.png`, `ui2b_5_eq.png`, `ui2b_6_all_silence.png`,
+`ui2b_7_editor_40.png`, `ui2b_8_editor_140.png` y `ui2b_report.txt`. En
+ellas los medidores IN/OUT aparecen apagados porque la herramienta no avanza
+su refresco (en el editor real se mueven).
+
+### 11.1 SMOKE-5 en Logic Pro: 5/5 PASS
+
+Build instalado con `tools/install/install_au.sh` (Logic cerrado):
+`build/ui2b-release-universal`, SHA-256 del binario
+`0a7b26e2c03e4b980d0c78c13e5f0a8c563d1655ce21e8bb8dbd535991c01c6a`, el código de
+las 152/152 pruebas y de la compatibilidad estricta; auval arm64 y x86_64 sin
+avisos, 80 parámetros. Resultado aprobado por el usuario:
+
+- EQ / SPECTRUM / ALL funcionan; DYN permanece desactivada;
+- PRE / POST / PRE + POST funcionan y muestran las diferencias reales de la EQ;
+- los medidores IN/OUT funcionan a la vez que el analizador;
+- el espectro desaparece al detener la señal, sin congelarse;
+- sonido, zoom, automatización y recuperación de la sesión correctos.
+
+UI-2b queda cerrada. Copia de UI-2a (SMOKE-4) en
+`build/ui2b-report/LABQ8.component.smoke4-backup`.

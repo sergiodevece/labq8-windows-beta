@@ -22,6 +22,7 @@ std::string formatValue (PanelControl control, double value);
 float frequencyToX (double hz);
 double xToFrequency (float x);
 float decibelsToY (double db); // +-24 dB on the seven grid lines
+float spectrumDbToY (double dbfs); // UI-2b: 0 dBFS on the top grid line, -96 dBFS on the bottom one (clamped to the plot)
 
 // One band as the screen sees it (straight from the parameters).
 struct BandView

@@ -103,6 +103,9 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
     eq.prepare (sampleRate, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
     inputMeter.reset();
     outputMeter.reset();
+    const auto channels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels());
+    preTap.prepare (sampleRate, channels);
+    postTap.prepare (sampleRate, channels);
 }
 
 void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -115,23 +118,27 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     for (auto ch = numIn; ch < numOut; ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
-    // The meters only read the buffer: IN before the EQ (it works in
-    // place), OUT after it.
+    // The meters and the analyzer taps only read the buffer: IN / PRE
+    // before the EQ (it works in place), OUT / POST after it.
     const auto numChannels = juce::jmin (numIn, buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
 
     pushParametersToCore();
     eq.process (buffer.getArrayOfWritePointers(), numChannels, buffer.getNumSamples());
 
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
 }
 
 void LabQ8AudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     const auto numChannels = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
     AudioProcessor::processBlockBypassed (buffer, midi);
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
 }
 
 juce::AudioProcessorEditor* LabQ8AudioProcessor::createEditor()

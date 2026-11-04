@@ -18,6 +18,10 @@
 //        processor at known levels (silence, the master's level, over
 //        level in amber and red, mono, independent channels) and the
 //        difference with the master's meters.
+//        --ui2b writes the UI-2b spectrum captures: a synthetic programme
+//        through the processor (the master's EQ settings) in each view and
+//        analyzer source, silence, 40 / 140 % zoom, the header against the
+//        master, and the analysis / painting times.
 // The user's zoom preference is never read or written (kept in memory), and
 // every zoom is allowed whatever the screens of the machine.
 
@@ -318,6 +322,274 @@ int captures (const juce::Image& master, const juce::File& outDir)
     return ok ? 0 : 1;
 }
 } // namespace ui2a
+
+//==============================================================================
+// UI-2b captures: the spectrum after real audio through the processor.
+namespace ui2b
+{
+// A programme-like signal: a bass line with harmonics, a chord, pink noise and
+// a kick, about -10 dBFS peak. Deterministic.
+float programme (int channel, long i, double fs)
+{
+    static thread_local float b0 = 0, b1 = 0, b2 = 0;
+    static thread_local juce::Random random (17);
+    const auto t = (double) i / fs;
+    const auto twoPi = juce::MathConstants<double>::twoPi;
+    double v = 0.0;
+    for (int h = 1; h <= 6; ++h)
+        v += 0.12 / h * std::sin (twoPi * 55.0 * h * t + h);
+    for (const double f : { 220.0, 277.18, 329.63, 440.0, 1318.5 })
+        v += 0.035 * std::sin (twoPi * f * t + f + channel * 0.3);
+    const auto white = random.nextFloat() * 2.0f - 1.0f; // Paul Kellet's economy pink filter
+    b0 = 0.99765f * b0 + white * 0.0990460f;
+    b1 = 0.96300f * b1 + white * 0.2965164f;
+    b2 = 0.57000f * b2 + white * 1.0526913f;
+    v += 0.035 * (b0 + b1 + b2 + white * 0.1848f);
+    const auto beat = std::fmod (t, 0.5);
+    v += 0.25 * std::exp (-beat * 30.0) * std::sin (twoPi * (50.0 + 80.0 * std::exp (-beat * 40.0)) * beat);
+    return (float) v;
+}
+
+struct Shot
+{
+    juce::Image image;
+    double analysisMs = 0.0;
+    int fftSize = 0;
+};
+
+// The editor (view, source, zoom) after `seconds` of the programme (or of
+// silence) at `fs`, with the master's EQ settings.
+Shot render (int view, labq8::ui::AnalyzerSource source, float zoom = 1.0f, bool silent = false, double fs = 48000.0,
+             std::function<void (labq8::ui::LabQ8Editor&, labq8::LabQ8AudioProcessor&, long&)> measure = {})
+{
+    labq8::LabQ8AudioProcessor processor;
+    setMasterState (processor);
+    processor.prepareToPlay (fs, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base (processor.createEditor());
+    auto* editor = dynamic_cast<labq8::ui::LabQ8Editor*> (base.get());
+    editor->setZoom (zoom);
+    editor->setView (view);
+    editor->setAnalyzerSource (source);
+
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    long pos = 0;
+    const auto total = (long) (1.5 * fs);
+    while (pos < total)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < 512; ++i)
+                buffer.setSample (ch, i, silent ? 0.0f : programme (ch, pos + i, fs));
+        processor.processBlock (buffer, midi);
+        pos += 512;
+        editor->getSpectrum().advance (512.0 / fs);
+    }
+    if (measure)
+        measure (*editor, processor, pos);
+    Shot shot;
+    shot.analysisMs = editor->getSpectrum().getLastAnalysisMs();
+    shot.fftSize = editor->getSpectrum().getFftSize();
+    shot.image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f).convertedToFormat (juce::Image::RGB);
+    return shot;
+}
+
+juce::Image screen (const juce::Image& editor)
+{
+    return editor.getClippedImage ({ 355, 186, 975, 330 });
+}
+
+int captures (const juce::Image& master, const juce::File& outDir)
+{
+    using labq8::ui::AnalyzerSource;
+    using labq8::ui::LabQ8Editor;
+    bool ok = true;
+    auto save = [&] (const juce::Image& image, const char* name) { ok = writePng (image, outDir.getChildFile (name)) && ok; };
+
+    const auto allPost = render (LabQ8Editor::viewAll, AnalyzerSource::post);
+    save (allPost.image, "ui2b_1_editor_all_post.png");
+    save (screen (render (LabQ8Editor::viewAll, AnalyzerSource::pre).image), "ui2b_2_all_pre.png");
+    save (screen (render (LabQ8Editor::viewAll, AnalyzerSource::both).image), "ui2b_3_all_pre_post.png");
+    save (screen (render (LabQ8Editor::viewSpectrum, AnalyzerSource::post).image), "ui2b_4_spectrum_post.png");
+    const auto eqView = render (LabQ8Editor::viewEq, AnalyzerSource::post);
+    save (screen (eqView.image), "ui2b_5_eq.png");
+    save (screen (render (LabQ8Editor::viewAll, AnalyzerSource::post, 1.0f, true).image), "ui2b_6_all_silence.png");
+    save (render (LabQ8Editor::viewEq, AnalyzerSource::post, 0.6f).image, "ui2b_9_editor_60_eq.png");
+    save (render (LabQ8Editor::viewSpectrum, AnalyzerSource::post, 0.6f).image, "ui2b_10_editor_60_spectrum.png");
+    save (render (LabQ8Editor::viewAll, AnalyzerSource::post, 0.6f).image, "ui2b_11_editor_60_all.png");
+    save (render (LabQ8Editor::viewAll, AnalyzerSource::both, 0.4f).image, "ui2b_7_editor_40.png");
+    save (render (LabQ8Editor::viewAll, AnalyzerSource::both, 1.4f).image, "ui2b_8_editor_140.png");
+
+    // The header in the master's state (EQ selected, Analyzer: Post) against
+    // the master: tabs and analyzer box (the removed View box excluded).
+    juce::String report;
+    for (const auto& [label, area] : { std::pair { "tabs (x 362-690, y 188-246)", juce::Rectangle<int> (362, 188, 329, 59) },
+                                       std::pair { "analyzer box (x 948-1088, y 198-234)", juce::Rectangle<int> (948, 198, 141, 37) } })
+    {
+        double sum = 0.0;
+        int worst = 0, count = 0, over16 = 0;
+        for (int y = area.getY(); y < area.getBottom(); ++y)
+            for (int x = area.getX(); x < area.getRight(); ++x)
+            {
+                const auto a = eqView.image.getPixelAt (x, y), b = master.getPixelAt (x, y);
+                const auto d = std::max ({ std::abs (a.getRed() - b.getRed()), std::abs (a.getGreen() - b.getGreen()), std::abs (a.getBlue() - b.getBlue()) });
+                sum += d;
+                worst = std::max (worst, d);
+                over16 += d > 16 ? 1 : 0;
+                ++count;
+            }
+        report << "header vs master, " << label << ": mean |difference| " << juce::String (sum / count, 2) << ", max " << worst
+               << ", pixels over 16: " << over16 << " of " << count << "\n";
+    }
+
+    // Times: analysis of one frame (both traces) and painting the plot (as a
+    // spectrum frame repaints it: background, spectrum, cached curve).
+    for (const double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (const auto zoom : { 0.6f, 1.0f, 1.4f })
+        {
+            if (fs != 48000.0 && zoom != 1.0f)
+                continue;
+            double analysis = 0.0;
+            std::vector<double> paints, retina;
+            int fft = 0;
+            // The same plot without the spectrum (EQ view), for comparison.
+            double withoutSpectrum = 0.0;
+            render (LabQ8Editor::viewEq, AnalyzerSource::post, zoom, false, fs, [&] (LabQ8Editor& editor, labq8::LabQ8AudioProcessor&, long&)
+            {
+                const auto plot = editor.getSpectrum().getBounds().toFloat().transformedBy (juce::AffineTransform::scale (editor.getScale())).getSmallestIntegerContainer();
+                std::vector<double> t;
+                for (int i = 0; i < 60; ++i)
+                {
+                    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                    const auto image = editor.createComponentSnapshot (plot, true, 1.0f);
+                    t.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+                    juce::ignoreUnused (image);
+                }
+                std::sort (t.begin(), t.end());
+                withoutSpectrum = t[t.size() / 2];
+            });
+            render (LabQ8Editor::viewAll, AnalyzerSource::both, zoom, false, fs, [&] (LabQ8Editor& editor, labq8::LabQ8AudioProcessor& processor, long& pos)
+            {
+                // Each frame with a display frame's worth of new audio, so
+                // both traces copy and analyse (one FFT per channel each).
+                const auto block = (int) std::lround (fs / 60.0);
+                juce::AudioBuffer<float> audio (2, block);
+                juce::MidiBuffer none;
+                std::vector<double> frames;
+                for (int i = 0; i < 60; ++i)
+                {
+                    for (int ch = 0; ch < 2; ++ch)
+                        for (int k = 0; k < block; ++k)
+                            audio.setSample (ch, k, programme (ch, pos + k, fs));
+                    pos += block;
+                    processor.processBlock (audio, none);
+                    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                    editor.getSpectrum().advance (1.0 / 60.0);
+                    frames.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+                }
+                std::sort (frames.begin(), frames.end());
+                analysis = frames[frames.size() / 2];
+                fft = editor.getSpectrum().getFftSize();
+                const auto plot = editor.getSpectrum().getBounds().toFloat().transformedBy (juce::AffineTransform::scale (editor.getScale())).getSmallestIntegerContainer();
+                for (int i = 0; i < 60; ++i)
+                {
+                    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                    const auto image = editor.createComponentSnapshot (plot, true, 1.0f);
+                    paints.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+                    juce::ignoreUnused (image);
+                }
+                // Retina (2 x the pixels per point).
+                for (int i = 0; i < 30; ++i)
+                {
+                    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+                    const auto image = editor.createComponentSnapshot (plot, true, 2.0f);
+                    retina.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+                    juce::ignoreUnused (image);
+                }
+            });
+            std::sort (retina.begin(), retina.end());
+            std::sort (paints.begin(), paints.end());
+            report << juce::String (fs / 1000.0, 1) << " kHz, zoom " << juce::roundToInt (zoom * 100.0f) << " %, FFT " << fft
+                   << ": frame (2 copies + 4 FFTs + mapping) median " << juce::String (analysis, 3)
+                   << " ms; plot repaint median " << juce::String (paints[paints.size() / 2], 3) << " ms, 95th "
+                   << juce::String (paints[paints.size() * 95 / 100], 3) << " ms (without the spectrum: " << juce::String (withoutSpectrum, 3) << " ms); Retina 2x median "
+                   << juce::String (retina[retina.size() / 2], 3) << " ms\n";
+        }
+    // Several instances at the usual 60 % (and 100 %): N independent
+    // processors and editors, each with its own audio; per display frame of
+    // the spectrum (1/30 s): every instance processes its audio, advances its
+    // spectrum and repaints its plot. Totals for all instances.
+    for (const auto zoom : { 0.6f, 1.0f })
+        for (const auto source : { AnalyzerSource::post, AnalyzerSource::both })
+            for (const int n : { 1, 2, 4, 8 })
+            {
+                const double fs = 48000.0;
+                std::vector<std::unique_ptr<labq8::LabQ8AudioProcessor>> processors;
+                std::vector<std::unique_ptr<juce::AudioProcessorEditor>> editors;
+                for (int i = 0; i < n; ++i)
+                {
+                    processors.push_back (std::make_unique<labq8::LabQ8AudioProcessor>());
+                    setMasterState (*processors.back());
+                    processors.back()->prepareToPlay (fs, 1600);
+                    editors.emplace_back (processors.back()->createEditor());
+                    auto* e = dynamic_cast<LabQ8Editor*> (editors.back().get());
+                    e->setZoom (zoom);
+                    e->setView (LabQ8Editor::viewAll);
+                    e->setAnalyzerSource (source);
+                }
+                juce::AudioBuffer<float> audio (2, 1600);
+                juce::MidiBuffer none;
+                long pos = 0;
+                std::vector<double> frames1x, frames2x, analysisOnly;
+                // One pass per display density (a window always draws at one:
+                // alternating them would rebuild the cached curve every frame).
+                for (const float density : { 1.0f, 2.0f })
+                    for (int frame = 0; frame < 75; ++frame)
+                    {
+                        for (int ch = 0; ch < 2; ++ch)
+                            for (int k = 0; k < 1600; ++k)
+                                audio.setSample (ch, k, programme (ch, pos + k, fs));
+                        pos += 1600;
+                        double analysis = 0.0, paint = 0.0;
+                        for (int i = 0; i < n; ++i)
+                        {
+                            auto copy = audio;
+                            processors[(size_t) i]->processBlock (copy, none);
+                            auto* e = dynamic_cast<LabQ8Editor*> (editors[(size_t) i].get());
+                            auto t0 = juce::Time::getMillisecondCounterHiRes();
+                            e->getSpectrum().advance (1.0 / 30.0);
+                            analysis += juce::Time::getMillisecondCounterHiRes() - t0;
+                            const auto plot = e->getSpectrum().getBounds().toFloat().transformedBy (juce::AffineTransform::scale (e->getScale())).getSmallestIntegerContainer();
+                            t0 = juce::Time::getMillisecondCounterHiRes();
+                            juce::ignoreUnused (e->createComponentSnapshot (plot, true, density));
+                            paint += juce::Time::getMillisecondCounterHiRes() - t0;
+                        }
+                        if (frame >= 15) // settled
+                        {
+                            if (density == 1.0f)
+                            {
+                                analysisOnly.push_back (analysis);
+                                frames1x.push_back (analysis + paint);
+                            }
+                            else
+                                frames2x.push_back (analysis + paint);
+                        }
+                    }
+                for (auto* v : { &analysisOnly, &frames1x, &frames2x })
+                    std::sort (v->begin(), v->end());
+                auto median = [] (const std::vector<double>& v) { return v[v.size() / 2]; };
+                report << "instances: " << n << " at " << juce::roundToInt (zoom * 100.0f) << " %, "
+                       << (source == AnalyzerSource::post ? "POST" : "PRE + POST") << ": per spectrum frame, all instances: analysis "
+                       << juce::String (median (analysisOnly), 3) << " ms; analysis + paint "
+                       << juce::String (median (frames1x), 3) << " ms (1x), " << juce::String (median (frames2x), 3)
+                       << " ms (Retina 2x) = " << juce::String (median (frames2x) * 30.0 / 10.0, 1) << " % of one core at 30 frames/s (Retina)\n";
+            }
+
+    ok = outDir.getChildFile ("ui2b_report.txt").replaceWithText (report) && ok;
+    std::printf ("%s", report.toRawUTF8());
+    std::printf ("%s\n", ok ? "UI-2b captures written" : "FAILED");
+    return ok ? 0 : 1;
+}
+} // namespace ui2b
 } // namespace
 
 
@@ -335,7 +607,8 @@ int main (int argc, char** argv)
     {
         // Font study: rendered size of the master's sample texts. Master:
         // "820 Hz" 54 x 13 px (cap 12), "BAND 4" 76 x 15 (cap 14),
-        // "Bell" 23 x 12 (cap 11). Printed: height used, rendered w x h of
+        // "Bell" 23 x 12 (cap 11); UI-2b: "SPECTRUM" 65 x 11 (cap 11),
+        // "Analyzer: Post" 90 x 14 (cap 11), selected "EQ" 18 x 14 (cap 12). Printed: height used, rendered w x h of
         // the ink (cap = ink height of "H").
         auto ink = [] (const juce::Font& font, const juce::String& text)
         {
@@ -358,7 +631,8 @@ int main (int argc, char** argv)
             {
                 juce::String line;
                 line << family << " " << style << ":";
-                for (const auto& [text, cap] : { std::pair { "820 Hz", 12 }, std::pair { "BAND 4", 14 }, std::pair { "Bell", 11 } })
+                for (const auto& [text, cap] : { std::pair { "820 Hz", 12 }, std::pair { "BAND 4", 14 }, std::pair { "Bell", 11 },
+                                                std::pair { "SPECTRUM", 11 }, std::pair { "Analyzer: Post", 11 }, std::pair { "EQ", 12 } })
                 {
                     // Height that gives the wanted cap height (ink of "H").
                     float height = 10.0f;
@@ -382,6 +656,8 @@ int main (int argc, char** argv)
         return ui11::captures (outDir);
     if (argc > 3 && juce::String (argv[3]) == "--ui2a")
         return ui2a::captures (master, outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--ui2b")
+        return ui2b::captures (master, outDir);
 
     labq8::LabQ8AudioProcessor processor;
     processor.prepareToPlay (48000.0, 512);

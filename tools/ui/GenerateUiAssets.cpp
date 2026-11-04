@@ -24,6 +24,11 @@
 //                      screen's dB axis likewise for +-24 dB (right-aligned);
 //  10. Dynamic EQ pill erased (the editor draws its on / off / disabled
 //                      state); the sprites are cut to the pill's shape.
+//  11. screen header   (UI-2b) the lit EQ pill and the four tab names
+//                      erased (the editor draws the selected tab and the
+//                      names), the analyzer's "Analyzer: Post" erased (the
+//                      editor draws its value), and the "View: EQ + Dyn"
+//                      box removed until the dynamic view exists.
 //
 // Everything else (chassis, logo, labels, scales, inactive controls) is the
 // master's pixels, untouched. Output (PNG):
@@ -34,6 +39,12 @@
 //                          approved 29-10-2026)
 //   meter_lit.png          the master's lit meter cells with their glow
 //                          (UI-2a: the editor shows them up to the level)
+//   axis_blank.png         the screen's left axis without its seven labels
+//                          (UI-2b: the editor writes the dBFS scale there in
+//                          SPECTRUM)
+//   viewtab_light.png      the light the lit pill adds to an empty tab
+//                          (master minus the cleaned header, EQ tab, its
+//                          name removed), UI-2b
 //
 // Usage: labq8_ui_assetgen <master.png> <output_dir>
 
@@ -327,6 +338,85 @@ void eraseMeters (Canvas& out, const Canvas& src)
     }
 }
 
+// UI-2b: the screen header. Every replacement is taken from the same rows of
+// the master (the header has a vertical gradient), from columns without ink.
+void eraseDisplayHeader (Canvas& out, const Canvas& src)
+{
+    const auto top = (int) g::viewTabLightSprite.y, bottom = top + (int) g::viewTabLightSprite.h - 1;
+    const auto left = (int) g::viewTabLightSprite.x, right = left + (int) g::viewTabLightSprite.w - 1;
+    // The EQ tab without its lit pill: the outer border mirrored from the
+    // right end of the group, the inside from an empty column of SPECTRUM,
+    // the divider from the SPECTRUM / DYN one.
+    const auto rightEdge = (int) g::viewTabEdges[4], leftEdge = (int) g::viewTabEdges[0];
+    const auto dividerShift = (int) (g::viewTabEdges[2] - g::viewTabEdges[1]);
+    for (int y = top; y <= bottom; ++y)
+    {
+        const bool inBox = y >= (int) g::viewTabTop && y <= (int) g::viewTabBottom;
+        for (int x = left; x <= right; ++x)
+        {
+            // Outside the box only the halo is replaced (from under SPECTRUM);
+            // the screen's left edge (x < 369) has none.
+            if (! inBox && x < 369)
+                continue;
+            const auto source = ! inBox ? x + dividerShift
+                              : x <= leftEdge + 2 ? leftEdge + rightEdge - x
+                              : x <= (int) g::viewTabEdges[1] - 3 ? 450
+                              : x + dividerShift;
+            out.at (x, y) = src.get (source, y);
+        }
+    }
+
+    // A run of columns [x0, x1] replaced, row by row, by the line between two
+    // ink-free columns (averaged over 3 px).
+    auto bridge = [&] (int x0, int x1, int y0, int y1, int refLeft, int refRight)
+    {
+        for (int y = y0; y <= y1; ++y)
+        {
+            auto average = [&] (int c) { const auto a = src.get (c - 1, y), b = src.get (c, y), d = src.get (c + 1, y);
+                                          return Pixel { (a.r + b.r + d.r) / 3, (a.gr + b.gr + d.gr) / 3, (a.b + b.b + d.b) / 3 }; };
+            const auto l = average (refLeft), r = average (refRight);
+            for (int x = x0; x <= x1; ++x)
+                out.at (x, y) = lerp (l, r, (float) (x - x0) / (float) std::max (1, x1 - x0));
+        }
+    };
+    bridge (457, 525, 209, 223, 450, 531); // SPECTRUM
+    bridge (562, 589, 209, 223, 549, 600); // DYN
+    bridge (636, 661, 209, 223, 621, 671); // ALL
+    bridge (955, 1050, 207, 225, 1054, 1060); // "Analyzer: Post" (the arrow stays)
+    bridge ((int) g::removedViewBox.x, (int) (g::removedViewBox.x + g::removedViewBox.w) - 1, (int) g::removedViewBox.y,
+            (int) (g::removedViewBox.y + g::removedViewBox.h) - 1, 1090, 1262); // "View: EQ + Dyn" box
+}
+
+// The light of the lit EQ pill over the cleaned tab, with the EQ name taken
+// out (row-wise interpolation of the light across it).
+juce::Image viewTabLight (const Canvas& master, const Canvas& cleaned)
+{
+    const auto x0 = (int) g::viewTabLightSprite.x, y0 = (int) g::viewTabLightSprite.y;
+    const auto w = (int) g::viewTabLightSprite.w, h = (int) g::viewTabLightSprite.h;
+    std::vector<Pixel> light ((size_t) (w * h));
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const auto m = master.get (x0 + x, y0 + y), c = cleaned.get (x0 + x, y0 + y);
+            light[(size_t) (y * w + x)] = { std::max (0.0f, m.r - c.r), std::max (0.0f, m.gr - c.gr), std::max (0.0f, m.b - c.b) };
+        }
+    const auto nameLeft = 395 - x0, nameRight = 418 - x0;
+    for (int y = 208 - y0; y <= 225 - y0; ++y)
+        for (int x = nameLeft + 1; x < nameRight; ++x)
+            light[(size_t) (y * w + x)] = lerp (light[(size_t) (y * w + nameLeft)], light[(size_t) (y * w + nameRight)],
+                                                (float) (x - nameLeft) / (float) (nameRight - nameLeft));
+
+    juce::Image image (juce::Image::RGB, w, h, false);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const auto& p = light[(size_t) (y * w + x)];
+            auto q = [] (float v) { return (juce::uint8) std::clamp ((int) std::lround (v), 0, 255); };
+            image.setPixelAt (x, y, juce::Colour (q (p.r), q (p.gr), q (p.b)));
+        }
+    return image;
+}
+
 // Ink bounding box of `text` drawn with `font` (pixels above half brightness).
 juce::Rectangle<int> inkBounds (const juce::Font& font, const juce::String& text)
 {
@@ -404,6 +494,25 @@ void relabelScales (juce::Image& image, const Canvas& src)
 
     relabel (image, src, g::scaleLabels, font);
     relabel (image, src, g::screenAxisLabels, font);
+    // The editor writes the spectrum's dBFS scale with this font (UI-2b).
+    std::printf ("screen axis labels: Helvetica Neue Medium %.2f\n", height);
+}
+
+// UI-2b: the left axis strip of the finished background without its seven
+// labels: each label's rows interpolated between two ink-free columns.
+juce::Image axisBlank (const juce::Image& background)
+{
+    const auto x0 = (int) g::axisBlankSprite.x, y0 = (int) g::axisBlankSprite.y;
+    auto strip = background.getClippedImage ({ x0, y0, (int) g::axisBlankSprite.w, (int) g::axisBlankSprite.h }).createCopy();
+    juce::Image::BitmapData bitmap (strip, juce::Image::BitmapData::readWrite);
+    for (const auto centre : g::axisLabelCentres)
+        for (int y = (int) centre - 8; y <= (int) centre + 8; ++y)
+        {
+            const auto a = background.getPixelAt (357, y), b = background.getPixelAt (403, y);
+            for (int x = 358; x <= 402; ++x)
+                bitmap.setPixelColour (x - x0, y - y0, a.interpolatedWith (b, (float) (x - 357) / 46.0f));
+        }
+    return strip;
 }
 
 void eraseSwitch (Canvas& out, const Canvas& src)
@@ -491,6 +600,7 @@ int main (int argc, char** argv)
     eraseScreen (out, src);
     eraseMeters (out, src);
     eraseSwitch (out, src);
+    eraseDisplayHeader (out, src);
 
     const auto on = cutToPill (crop (master.convertedToFormat (juce::Image::ARGB), g::dynamicSwitchSprite));
     auto background = out.toImage();
@@ -499,7 +609,9 @@ int main (int argc, char** argv)
     const bool ok = writePng (background, outDir.getChildFile ("background.png"))
                  && writePng (on, outDir.getChildFile ("dynamic_switch_on.png"))
                  && writePng (switchOff (on), outDir.getChildFile ("dynamic_switch_off.png"))
-                 && writePng (crop (master.convertedToFormat (juce::Image::ARGB), g::meterLitSprite), outDir.getChildFile ("meter_lit.png"));
+                 && writePng (crop (master.convertedToFormat (juce::Image::ARGB), g::meterLitSprite), outDir.getChildFile ("meter_lit.png"))
+                 && writePng (viewTabLight (src, out), outDir.getChildFile ("viewtab_light.png"))
+                 && writePng (axisBlank (background), outDir.getChildFile ("axis_blank.png"));
     std::printf ("%s\n", ok ? "assets written" : "FAILED to write assets");
     return ok ? 0 : 1;
 }

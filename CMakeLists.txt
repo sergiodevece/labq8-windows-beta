@@ -48,6 +48,8 @@ set(LABQ8_HOST_ADAPTER_SOURCES
     src/parameters/StateMigration.cpp
     src/ui/LabQ8Editor.cpp
     src/ui/LevelMeterView.cpp
+    src/ui/SpectrumAnalyzer.cpp
+    src/ui/SpectrumView.cpp
     src/ui/UiModel.cpp
     src/ui/UiPreferences.cpp)
 
@@ -61,7 +63,9 @@ juce_add_binary_data(labq8_ui_assets
         assets/ui/background.png
         assets/ui/dynamic_switch_on.png
         assets/ui/dynamic_switch_off.png
-        assets/ui/meter_lit.png)
+        assets/ui/meter_lit.png
+        assets/ui/viewtab_light.png
+        assets/ui/axis_blank.png)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -98,6 +102,7 @@ target_link_libraries(LABQ8
         labq8_dsp
         labq8_ui_assets
         juce::juce_audio_processors
+        juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -131,6 +136,7 @@ if(LABQ8_BUILD_TESTS)
         tests/ProcessorDynamicTests.cpp
         tests/EditorTests.cpp
         tests/MeterTests.cpp
+        tests/SpectrumTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 
@@ -146,6 +152,7 @@ if(LABQ8_BUILD_TESTS)
             labq8_dsp
             labq8_ui_assets
             juce::juce_audio_processors
+            juce::juce_dsp
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)
@@ -170,7 +177,7 @@ if(LABQ8_BUILD_TESTS)
     target_sources(labq8_ui_snapshot PRIVATE tools/ui/UiSnapshot.cpp ${LABQ8_HOST_ADAPTER_SOURCES})
     target_include_directories(labq8_ui_snapshot PRIVATE src)
     target_compile_definitions(labq8_ui_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-    target_link_libraries(labq8_ui_snapshot PRIVATE labq8_dsp labq8_ui_assets juce::juce_audio_processors juce::juce_recommended_config_flags)
+    target_link_libraries(labq8_ui_snapshot PRIVATE labq8_dsp labq8_ui_assets juce::juce_audio_processors juce::juce_dsp juce::juce_recommended_config_flags)
 
     # Shelf and cut response sweep (E1b.1). Not part of ctest: run it explicitly.
     add_executable(labq8_sweep tests/bench/ResonanceSweep.cpp)

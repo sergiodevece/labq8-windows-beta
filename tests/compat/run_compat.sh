@@ -13,7 +13,8 @@
 #   tests/compat/run_compat.sh e2c1  # E2c.1 (3041019): strict, any difference fails
 #   tests/compat/run_compat.sh ui1   # UI-1 (13a810f): strict, any difference fails
 #   tests/compat/run_compat.sh ui11  # UI-1.1 (13df851): strict, any difference fails
-#   tests/compat/run_compat.sh       # all nine
+#   tests/compat/run_compat.sh ui2a  # UI-2a (761b7bf): strict, any difference fails
+#   tests/compat/run_compat.sh       # all ten
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -57,7 +58,8 @@ case "${1:-all}" in
     e2c1) run_base e2c1 3041019 --strict ;;
     ui1) run_base ui1 13a810f --strict ;;
     ui11) run_base ui11 13df851 --strict ;;
-    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict; run_base e2b 5623dc5 --strict; run_base e2c1 3041019 --strict; run_base ui1 13a810f --strict; run_base ui11 13df851 --strict ;;
-    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|e2b|e2c1|ui1|ui11|all]"; exit 2 ;;
+    ui2a) run_base ui2a 761b7bf --strict ;;
+    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict; run_base e2b 5623dc5 --strict; run_base e2c1 3041019 --strict; run_base ui1 13a810f --strict; run_base ui11 13df851 --strict; run_base ui2a 761b7bf --strict ;;
+    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|e2b|e2c1|ui1|ui11|ui2a|all]"; exit 2 ;;
 esac
 exit $status

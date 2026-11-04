@@ -101,6 +101,18 @@ std::vector<double> cascadeResponseDb (const std::array<BandView, 8>& bands, dou
     }
     return total;
 }
+float spectrumDbToY (double dbfs)
+{
+    // On the grid: 0 dBFS on the top line, -16 on the next ... -96 on the
+    // bottom one, linear between lines (the master's lines are 36.5 to 38 px
+    // apart), extended beyond them; clamped to the plot.
+    const auto& rows = g::plotGridRows;
+    const auto line = (g::spectrumTopDb - dbfs) / ((g::spectrumTopDb - g::spectrumBottomDb) / 6.0);
+    const auto segment = std::clamp ((int) std::floor (line), 0, 5);
+    const auto y = rows[(size_t) segment] + (line - segment) * (rows[(size_t) segment + 1] - rows[(size_t) segment]);
+    return (float) std::clamp (y, (double) g::plotArea.y, (double) (g::plotArea.y + g::plotArea.h));
+}
+
 //==============================================================================
 double meterCellThresholdDb (int cellFromBottom)
 {

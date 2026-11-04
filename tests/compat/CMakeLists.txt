@@ -27,7 +27,9 @@ juce_add_binary_data(labq8_compat_ui_assets
         "${LABQ8_ROOT}/assets/ui/background.png"
         "${LABQ8_ROOT}/assets/ui/dynamic_switch_on.png"
         "${LABQ8_ROOT}/assets/ui/dynamic_switch_off.png"
-        "${LABQ8_ROOT}/assets/ui/meter_lit.png")
+        "${LABQ8_ROOT}/assets/ui/meter_lit.png"
+        "${LABQ8_ROOT}/assets/ui/viewtab_light.png"
+        "${LABQ8_ROOT}/assets/ui/axis_blank.png")
 
 function(labq8_compat_target name side src_dir)
     file(GLOB sources "${src_dir}/dsp/*.cpp" "${src_dir}/parameters/*.cpp" "${src_dir}/plugin/*.cpp" "${src_dir}/ui/*.cpp")
@@ -36,7 +38,7 @@ function(labq8_compat_target name side src_dir)
     target_include_directories(${name} PRIVATE "${src_dir}")
     target_compile_definitions(${name} PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 LABQ8_COMPAT_SIDE="${side}")
-    target_link_libraries(${name} PRIVATE juce::juce_audio_processors juce::juce_recommended_config_flags)
+    target_link_libraries(${name} PRIVATE juce::juce_audio_processors juce::juce_dsp juce::juce_recommended_config_flags)
     if(EXISTS "${src_dir}/ui")
         target_link_libraries(${name} PRIVATE labq8_compat_ui_assets)
     endif()

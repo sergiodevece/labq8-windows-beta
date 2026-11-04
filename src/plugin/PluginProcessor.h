@@ -3,6 +3,7 @@
 #include "dsp/EqCore.h"
 #include "parameters/StateMigration.h"
 #include "plugin/LevelMeter.h"
+#include "plugin/SpectrumTap.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -58,12 +59,24 @@ public:
     // not saved, no effect on audio.
     int getUiSelectedBand() const noexcept { return uiSelectedBand; }
     void setUiSelectedBand (int band) noexcept { uiSelectedBand = band; }
+    // UI-2b: the screen's view tab and the analyzer's source, the same way
+    // (per instance, in memory only; the editor gives them their meaning).
+    int getUiView() const noexcept { return uiView; }
+    void setUiView (int view) noexcept { uiView = view; }
+    int getUiAnalyzerSource() const noexcept { return uiAnalyzerSource; }
+    void setUiAnalyzerSource (int analyzerSource) noexcept { uiAnalyzerSource = analyzerSource; }
 
     // UI-2a: sample peak of the input (before the EQ) and of the output
     // (what the host receives). Written by the audio thread, taken by the
     // editor; they never change the audio.
     LevelMeter& getInputMeter() noexcept { return inputMeter; }
     LevelMeter& getOutputMeter() noexcept { return outputMeter; }
+
+    // UI-2b: the audio before the EQ (PRE) and after it (POST, what the host
+    // receives), for the editor's spectrum analyzer. Copied only while the
+    // analyzer is shown; they never change the audio.
+    SpectrumTap& getPreTap() noexcept { return preTap; }
+    SpectrumTap& getPostTap() noexcept { return postTap; }
 
 private:
     struct BandParameters
@@ -93,7 +106,10 @@ private:
     std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
     dsp::EqCore eq;
     int uiSelectedBand = 0;
+    int uiView = 3;           // ALL
+    int uiAnalyzerSource = 1; // POST
     LevelMeter inputMeter, outputMeter;
+    SpectrumTap preTap, postTap;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

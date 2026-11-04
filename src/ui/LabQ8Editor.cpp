@@ -654,8 +654,11 @@ public:
 
     void mouseUp (const juce::MouseEvent&) override { endDrag(); }
 
+    int paintCount = 0; // tests: how often the curve really was recomputed
+
     void paint (juce::Graphics& gr) override
     {
+        ++paintCount;
         gr.addTransform (juce::AffineTransform::translation (-(float) getX(), -(float) getY()));
         const auto plot = rectOf (g::plotArea);
         gr.reduceClipRegion (plot.toNearestInt());
@@ -914,6 +917,221 @@ public:
 };
 
 //==============================================================================
+// UI-2b: the header's view tabs. Names in DIN Alternate (the master's
+// "SPECTRUM": 65 px wide at cap 11, the selected "EQ" 18 px at cap 12,
+// labq8_ui_snapshot --fonts); the selected
+// tab carries the master's lit pill: its light (viewtab_light.png) over the
+// cleaned background, stretched to the tab's width (exact for EQ). DYN is
+// shown disabled until the dynamic view exists.
+class ViewTab final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    ViewTab (int tabIndex, const char* tabName, bool isAvailable, std::function<void (int)> onSelect)
+        : index (tabIndex), name (tabName), available (isAvailable), select (std::move (onSelect))
+    {
+        const auto left = (int) g::viewTabEdges[(size_t) index], right = (int) g::viewTabEdges[(size_t) index + 1];
+        const auto& sprite = g::viewTabLightSprite;
+        setBounds (left - 6, (int) sprite.y, right - left + 11, (int) sprite.h);
+        box = juce::Rectangle<int> (left, (int) g::viewTabTop, right - left, (int) (g::viewTabBottom - g::viewTabTop) + 1) - getPosition();
+        setTitle (name);
+        setTooltip (available ? juce::String ("View: ") + name : juce::String (name) + ": not available yet");
+        if (available)
+            buildLitImage();
+    }
+
+    void setSelected (bool shouldBeSelected)
+    {
+        if (shouldBeSelected != selected)
+        {
+            selected = shouldBeSelected;
+            repaint();
+        }
+    }
+    bool isSelected() const noexcept { return selected; }
+
+    bool hitTest (int x, int y) override { return box.contains (x, y); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (available && ! e.mods.isPopupMenu())
+            select (index);
+    }
+
+    void paint (juce::Graphics& gr) override
+    {
+        if (selected)
+            gr.drawImageAt (lit, 0, 0);
+        // The selected name is larger (the master's "EQ": cap 12, the others 11),
+        // on the same baseline.
+        gr.setFont (juce::Font (juce::FontOptions ("DIN Alternate", selected ? 17.25f : 15.75f, 0)));
+        gr.setColour (selected ? colourOf (g::viewTabSelectedTextColour)
+                               : colourOf (g::viewTabTextColour, available ? 1.0f : 0.35f));
+        // Centring corrections measured against the master's ink (DYN, ALL).
+        const int nudge[] = { 0, 0, 1, 2 };
+        gr.drawSingleLineText (name, box.getCentreX() + nudge[index], (int) (g::viewTabCapCentre + 6.0f) - getY(), juce::Justification::horizontallyCentred);
+    }
+
+private:
+    void buildLitImage()
+    {
+        const auto background = juce::ImageCache::getFromMemory (LabQ8Assets::background_png, LabQ8Assets::background_pngSize);
+        const auto light = juce::ImageCache::getFromMemory (LabQ8Assets::viewtab_light_png, LabQ8Assets::viewtab_light_pngSize);
+        const auto w = getWidth(), h = getHeight(), spriteW = light.getWidth();
+        lit = juce::Image (juce::Image::RGB, w, h, false);
+        for (int x = 0; x < w; ++x)
+        {
+            const auto source = w == spriteW ? x
+                               : x < (int) g::viewTabLeftCap ? x
+                               : x >= w - (int) g::viewTabRightCap ? spriteW - (w - x)
+                               : (int) g::viewTabMiddleColumn;
+            for (int y = 0; y < h; ++y)
+            {
+                const auto b = background.getPixelAt (getX() + x, getY() + y), l = light.getPixelAt (source, y);
+                lit.setPixelAt (x, y, juce::Colour ((juce::uint8) juce::jmin (255, b.getRed() + l.getRed()),
+                                                    (juce::uint8) juce::jmin (255, b.getGreen() + l.getGreen()),
+                                                    (juce::uint8) juce::jmin (255, b.getBlue() + l.getBlue())));
+            }
+        }
+    }
+
+    const int index;
+    const char* name;
+    const bool available;
+    std::function<void (int)> select;
+    juce::Rectangle<int> box;
+    juce::Image lit;
+    bool selected = false;
+};
+
+// UI-2b: the header's analyzer selector: its value over the background's box
+// and arrow (Helvetica Neue Medium, as the master's "Analyzer: Post", 90 x 14
+// px). "Analyzer: Pre + Post" does not fit the box: both read "Pre + Post".
+class AnalyzerSelector final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit AnalyzerSelector (std::function<void()> onOpen) : open (std::move (onOpen))
+    {
+        setBounds (rectOf (g::analyzerBox).toNearestInt());
+        setTitle ("Analyzer");
+        setTooltip ("Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)");
+    }
+
+    static juce::String textFor (AnalyzerSource s)
+    {
+        return s == AnalyzerSource::pre ? "Analyzer: Pre" : s == AnalyzerSource::post ? "Analyzer: Post" : "Pre + Post";
+    }
+
+    void setSource (AnalyzerSource s)
+    {
+        source = s;
+        repaint();
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { open(); }
+
+    void paint (juce::Graphics& gr) override
+    {
+        gr.setFont (designFont (16.0f, "Medium"));
+        gr.setColour (colourOf (g::analyzerTextColour));
+        gr.drawSingleLineText (textFor (source), (int) g::analyzerTextLeft - getX(), (int) (g::analyzerCapCentre + 5.5f) - getY());
+    }
+
+private:
+    std::function<void()> open;
+    AnalyzerSource source = AnalyzerSource::post;
+};
+
+// UI-2b: the spectrum's dBFS scale (0 to -96, one label per grid line, at
+// the centres of the EQ's labels). Left, in SPECTRUM: over the axis strip
+// without labels (axis_blank.png), in the EQ labels' font and colour, so the
+// +-24 dB of the EQ never describe the spectrum. Right, in ALL: discreet,
+// inside the plot's right edge, in the spectrum's colour; kept as an image,
+// since the spectrum's frames repaint under it.
+class SpectrumScale final : public juce::Component
+{
+public:
+    enum class Side { left, right };
+
+    explicit SpectrumScale (Side s) : side (s)
+    {
+        const auto top = (int) g::axisUnitCentreY - 8, bottom = (int) (g::axisBlankSprite.y + g::axisBlankSprite.h);
+        if (side == Side::left)
+        {
+            setBounds ((int) g::axisBlankSprite.x, top, (int) g::axisBlankSprite.w, bottom - top);
+            blank = juce::ImageCache::getFromMemory (LabQ8Assets::axis_blank_png, LabQ8Assets::axis_blank_pngSize);
+        }
+        else
+        {
+            setBounds ((int) g::rightScaleLeft - 4, top, (int) (g::plotArea.x + g::plotArea.w) - (int) g::rightScaleLeft + 4, bottom - top);
+            setBufferedToImage (true);
+        }
+        setInterceptsMouseClicks (false, false);
+    }
+
+    static juce::String label (int line)
+    {
+        return line == 0 ? juce::String ("0") : juce::String::fromUTF8 ("\xe2\x88\x92") + juce::String (16 * line);
+    }
+
+    // The ink of the labels (reference space), for tests.
+    std::vector<juce::Rectangle<float>> labelBounds() const
+    {
+        std::vector<juce::Rectangle<float>> boxes;
+        for (int line = 0; line <= 7; ++line)
+        {
+            const auto text = line < 7 ? label (line) : juce::String ("dBFS");
+            const auto f = line < 7 ? labelFont() : unitFont();
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText (f, text, 0.0f, 0.0f);
+            const auto ink = glyphs.getBoundingBox (0, -1, false);
+            const auto [x, baseline] = origin (line, ink.getWidth(), f);
+            boxes.push_back (ink.translated (x, baseline));
+        }
+        return boxes;
+    }
+
+    void paint (juce::Graphics& gr) override
+    {
+        gr.addTransform (juce::AffineTransform::translation (-(float) getX(), -(float) getY()));
+        if (side == Side::left)
+            gr.drawImageAt (blank, (int) g::axisBlankSprite.x, (int) g::axisBlankSprite.y);
+        const auto colour = side == Side::left ? juce::Colour (94, 142, 87) : colourOf (g::spectrumLineColour, 0.72f);
+        gr.setColour (colour);
+        for (int line = 0; line <= 7; ++line)
+        {
+            const auto text = line < 7 ? label (line) : juce::String ("dBFS");
+            const auto f = line < 7 ? labelFont() : unitFont();
+            juce::GlyphArrangement glyphs;
+            glyphs.addLineOfText (f, text, 0.0f, 0.0f);
+            const auto [x, baseline] = origin (line, glyphs.getBoundingBox (0, -1, false).getWidth(), f);
+            gr.setFont (f);
+            gr.drawSingleLineText (text, juce::roundToInt (x), juce::roundToInt (baseline));
+        }
+    }
+
+private:
+    // Left: the font of the EQ's axis labels (Helvetica Neue Medium 17.75,
+    // labq8_ui_assetgen); right: smaller, discreet.
+    juce::Font labelFont() const { return designFont (side == Side::left ? 17.75f : 13.0f, "Medium"); }
+    juce::Font unitFont() const { return designFont (side == Side::left ? 12.0f : 10.5f, "Medium"); }
+
+    // Ink right edge on the scale's right edge, ink centred on the label's
+    // centre (the unit above the top label); glyph ink, not line boxes.
+    std::pair<float, float> origin (int line, float inkWidth, const juce::Font& f) const
+    {
+        juce::GlyphArrangement digits;
+        digits.addLineOfText (f, line < 7 ? "0" : "dBFS", 0.0f, 0.0f);
+        const auto ink = digits.getBoundingBox (0, -1, false);
+        const auto centre = line < 7 ? g::axisLabelCentres[(size_t) line] : g::axisUnitCentreY;
+        const auto right = side == Side::left ? g::axisLabelRight : g::rightScaleRight;
+        return { right - inkWidth, centre - (ink.getY() + ink.getHeight() * 0.5f) };
+    }
+
+    const Side side;
+    juce::Image blank;
+};
+
+//==============================================================================
 LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     : AudioProcessorEditor (p), audioProcessor (p), state (p.getValueTreeState())
 {
@@ -928,9 +1146,18 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     content = std::move (chassis);
     addAndMakeVisible (*content);
 
+    // UI-2b: the spectrum under the EQ curve and its nodes.
+    spectrum = std::make_unique<SpectrumView> (audioProcessor.getPreTap(), audioProcessor.getPostTap());
+    content->addAndMakeVisible (*spectrum);
+    rightScale = std::make_unique<SpectrumScale> (SpectrumScale::Side::right);
+    content->addChildComponent (*rightScale);
+
     screen = std::make_unique<ResponseScreen> (state, audioProcessor, [this] (int b) { selectBand (b); });
     screen->onContextMenu = [this] { showZoomMenu (*screen); };
     content->addAndMakeVisible (*screen);
+    // The curve and nodes are kept as an image, redrawn only when they
+    // change: the spectrum's frames never recompute the eight responses.
+    screen->setBufferedToImage (true);
 
     for (int i = 0; i < 7; ++i)
     {
@@ -962,7 +1189,7 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     // Present in the design, not implemented in UI-1.
     const std::pair<const char*, juce::Rectangle<int>> pending[] = {
         { "Stereo Mode", { 458, 80, 310, 58 } },     { "Polarity", { 816, 80, 98, 58 } },
-        { "Intention", { 988, 80, 244, 58 } },       { "Display view", { 370, 198, 940, 36 } },
+        { "Intention", { 988, 80, 244, 58 } },
         { "Phase Behavior", { 1320, 619, 230, 43 } },
     };
     for (const auto& [name, area] : pending)
@@ -972,6 +1199,23 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     }
 
     // Above the inactive "Display view" strip that surrounds it.
+    // UI-2b: the header's view tabs and analyzer selector.
+    const char* tabNames[] = { "EQ", "SPECTRUM", "DYN", "ALL" };
+    for (int t = 0; t < 4; ++t)
+    {
+        viewTabs[(size_t) t] = std::make_unique<ViewTab> (t, tabNames[t], t != viewDyn, [this] (int tab) { setView (tab); });
+        content->addAndMakeVisible (*viewTabs[(size_t) t]);
+    }
+    analyzerSelector = std::make_unique<AnalyzerSelector> ([this]
+    {
+        juce::Component::SafePointer<LabQ8Editor> self (this);
+        createAnalyzerMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (analyzerSelector.get()),
+                                            [self] (int result) { if (self != nullptr) self->handleAnalyzerMenuResult (result); });
+    });
+    content->addAndMakeVisible (*analyzerSelector);
+    leftScale = std::make_unique<SpectrumScale> (SpectrumScale::Side::left);
+    content->addChildComponent (*leftScale);
+
     // UI-2a: the IN / OUT meters show the processor's real sample peaks.
     meters = std::make_unique<LevelMeterView> (audioProcessor.getInputMeter(), audioProcessor.getOutputMeter());
     content->addAndMakeVisible (*meters);
@@ -980,6 +1224,8 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     content->addAndMakeVisible (*settingsButton);
 
     selectBand (juce::jlimit (0, 7, audioProcessor.getUiSelectedBand()));
+    setView (audioProcessor.getUiView());
+    setAnalyzerSource ((AnalyzerSource) juce::jlimit (0, 2, audioProcessor.getUiAnalyzerSource()));
 
     // No resize corner and no resizing by the host: the size only changes
     // through the zoom menu. Opens at the stored zoom, or at the largest
@@ -1093,6 +1339,55 @@ void LabQ8Editor::showZoomMenu (juce::Component& target)
                                     [self] (int result) { if (self != nullptr) self->handleZoomMenuResult (result); });
 }
 
+void LabQ8Editor::setView (int tab)
+{
+    if (tab != viewEq && tab != viewSpectrum && tab != viewAll)
+        return; // DYN: not available yet
+    view = tab;
+    audioProcessor.setUiView (tab);
+    for (int t = 0; t < 4; ++t)
+        viewTabs[(size_t) t]->setSelected (t == tab);
+    // SPECTRUM: only the spectrum (the curve and nodes, and their editing,
+    // are hidden); EQ: only the curve; ALL: both.
+    if (tab == viewSpectrum)
+        screen->showHandles (false);
+    screen->setVisible (tab != viewSpectrum);
+    spectrum->setShown (tab != viewEq);
+    // The scales: EQ +-24 dB on the left (the background's) in EQ and ALL;
+    // dBFS on the left in SPECTRUM, discreet on the right in ALL.
+    leftScale->setVisible (tab == viewSpectrum);
+    rightScale->setVisible (tab == viewAll);
+}
+
+void LabQ8Editor::setAnalyzerSource (AnalyzerSource newSource)
+{
+    audioProcessor.setUiAnalyzerSource ((int) newSource);
+    spectrum->setSource (newSource);
+    analyzerSelector->setSource (newSource);
+}
+
+juce::PopupMenu LabQ8Editor::createAnalyzerMenu() const
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Analyzer");
+    const char* names[] = { "Pre (before the EQ)", "Post (after the EQ)", "Pre + Post" };
+    for (int i = 0; i < 3; ++i)
+        menu.addItem (i + 1, names[i], true, (int) spectrum->getSource() == i);
+    return menu;
+}
+
+void LabQ8Editor::handleAnalyzerMenuResult (int itemId)
+{
+    if (itemId >= 1 && itemId <= 3)
+        setAnalyzerSource ((AnalyzerSource) (itemId - 1));
+}
+
+juce::Component& LabQ8Editor::getViewTab (int tab) { return *viewTabs[(size_t) tab]; }
+juce::Component& LabQ8Editor::getSpectrumScale (bool left) { return left ? *leftScale : *rightScale; }
+std::vector<juce::Rectangle<float>> LabQ8Editor::getSpectrumScaleLabels (bool left) const { return (left ? leftScale : rightScale)->labelBounds(); }
+int LabQ8Editor::getScreenPaintCount() const noexcept { return screen->paintCount; }
+juce::Component& LabQ8Editor::getAnalyzerSelector() { return *analyzerSelector; }
+
 void LabQ8Editor::selectBand (int band)
 {
     selectedBand = juce::jlimit (0, 7, band);
@@ -1122,7 +1417,13 @@ void LabQ8Editor::attachPanel()
 
 void LabQ8Editor::timerCallback()
 {
-    // Host automation of any band moves the curve and nodes.
+    refreshFromParameters();
+}
+
+void LabQ8Editor::refreshFromParameters()
+{
+    // Host automation of any band moves the curve and nodes (and redraws
+    // the cached curve image: repaint() invalidates it).
     const auto snapshot = parameterSnapshot();
     if (snapshot != lastSnapshot)
     {

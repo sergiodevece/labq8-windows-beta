@@ -287,7 +287,7 @@ int main (int argc, char** argv)
                     snapshot.setPixelAt (i, j, juce::Colour (bytes[k + 2], bytes[k + 1], bytes[k]));
                     lit += (bytes[k] + bytes[k + 1] + bytes[k + 2]) > 60 ? 1 : 0;
                 }
-            juce::File file (juce::String (argv[2]));
+            const juce::File file { juce::String (argv[2]) };
             file.deleteFile();
             {
                 auto stream = file.createOutputStream();

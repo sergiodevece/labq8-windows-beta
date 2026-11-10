@@ -378,7 +378,7 @@ LQ_TEST ("ui editor: audio is bit-identical with the editor open, closed and swi
     LQ_CHECK (identical, "the editor changed the audio");
 }
 
-LQ_TEST ("ui editor: loading a state with the editor open restores all 80 parameters and the panel follows")
+LQ_TEST ("ui editor: loading a state with the editor open restores every parameter and the panel follows")
 {
     LabQ8AudioProcessor source;
     randomise (source, 41);
@@ -396,7 +396,7 @@ LQ_TEST ("ui editor: loading a state with the editor open restores all 80 parame
         const auto id = dynamic_cast<juce::RangedAudioParameter*> (parameter)->paramID.toRawUTF8();
         restored = restored && getParam (p, id) == getParam (source, id);
     }
-    LQ_CHECK (restored, "80 parameters restored with the editor open");
+    LQ_CHECK (restored, "every parameter restored with the editor open");
     bool panel = true;
     for (const auto c : allControls)
         panel = panel && (float) editor->getKnob (c).getValue() == getParam (p, idFor (6, c));

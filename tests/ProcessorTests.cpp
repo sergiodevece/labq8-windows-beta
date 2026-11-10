@@ -70,9 +70,9 @@ LQ_TEST ("processor: parameter layout exposes stable IDs, ranges and defaults")
 {
     LabQ8AudioProcessor p;
     // Was 4 in E0 (band 1 only), 32 in E1a (4 per band), 40 in E1b (+ b1..b8_type),
-    // 80 in E2c.1 (+ 5 dynamic parameters per band).
-    // Band 1 checks below are unchanged.
-    LQ_CHECK (p.getParameters().size() == 80, str ("expected 80 parameters, got ", p.getParameters().size()));
+    // 80 in E2c.1 (+ 5 dynamic parameters per band), 241 in E4a (+ proc_mode
+    // and the MID / SIDE banks, appended). Band 1 checks below are unchanged.
+    LQ_CHECK (p.getParameters().size() == 241, str ("expected 241 parameters, got ", p.getParameters().size()));
 
     struct Expected { const char* id; float lo, hi, def; };
     const Expected expected[] = {

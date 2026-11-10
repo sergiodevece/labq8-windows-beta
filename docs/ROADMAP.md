@@ -20,7 +20,12 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | E2c.2 | Mejora del detector: Q del detector limitada en graves (propuesta medida en DYNAMICS_E2C1.md) | — |
 | E2c (resto) | Detección estéreo no enlazada / M/S | — |
 | E3 | Validación de formatos (auval, pluginval, Logic) en entorno aislado, empaquetado y firma | — |
-| E4 | M/S y colocación L/R/M/S por banda (dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §1) | — |
+| E4 | M/S con tres bancos independientes STEREO / MID / SIDE (auditoría aprobada: `docs/MIDSIDE_E4_AUDIT.md`; dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §1) | En curso |
+| **E4a** | Contrato de 241 parámetros (80 STEREO intactos, `proc_mode`, 80 MID, 80 SIDE; hint 5, índices 80–240), estado v5 con migración, inventario congelado, fixtures UI-2c auténticos, compatibilidad estricta con UI-2c; sin DSP M/S, crossfade ni cambios gráficos (`docs/MIDSIDE_E4A.md`) | En revisión |
+| E4b | Motor M/S, cambio de modo y pruebas de audio | — |
+| E4c | Interfaz MID/SIDE y gestión de bancos | — |
+| E4d | Medidores, FFT y visualización dinámica por banco | — |
+| E4e | Pruebas completas, versión 0.1.0 y smoke físico en Logic | — |
 | E5 | Analysis Engine: FFT fuera del hilo de audio (FIFO lock-free) | — |
 | E6 | UI definitiva: completar lo que UI-1 deja pendiente (analizador, M/S, INTENTION en pantalla) | — |
 | E7 | Intention Engine: perfiles como sugerencias (dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §2) | — |

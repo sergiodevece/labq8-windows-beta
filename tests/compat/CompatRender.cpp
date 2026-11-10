@@ -17,8 +17,9 @@
 //              shelf had Q > 1 or a cut Q > 2 (the documented E1b -> E1b.1
 //              effective-Q limit). Any other difference fails.
 //
-// Cases that need eight bands are skipped when the base has only one, and
-// cases that need filter types when the base has none (before E1b).
+// Cases that need eight bands are skipped when the base has only one,
+// cases that need filter types when the base has none (before E1b), and
+// cases that need dynamics when the base has none (before E2c.1).
 //
 // Usage: compat_<side> render <base_dir> <out_dir> [fixtures_dir]
 //        compat_<side> compare <base_out> <new_out> [--strict] [--qlimit]
@@ -56,6 +57,7 @@ struct Case
     Automation automate; // called before every block, t = block start (s)
     bool needsEightBands = false;
     bool needsTypes = false;
+    bool needsDynamics = false; // E2c.1 and later bases only (b{n}_dyn_on exists)
 };
 
 void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float value)
@@ -207,7 +209,42 @@ std::vector<Case> cases()
                   setParam (p, "b4_q", q);
               });
 
+    // Dynamic sessions (E2c.1 and later bases only; added in E4a): genuine
+    // UI-2c (152d46c) states and automation of the dynamic parameters.
+    auto addDynamic = [&] (std::string name, std::string fixture, Automation a = {})
+    { c.push_back ({ std::move (name), std::move (fixture), {}, std::move (a), true, true, true }); };
+
+    addDynamic ("fixture_ui2c_default", "ui2c_default.bin");
+    addDynamic ("fixture_ui2c_custom", "ui2c_custom.bin");
+
+    addDynamic ("auto_dynamics_random", "ui2c_custom.bin",
+                [] (labq8::LabQ8AudioProcessor& p, double t)
+                {
+                    std::mt19937 rng ((unsigned) std::llround (t * 1.0e6) + 17u);
+                    std::uniform_real_distribution<float> u (0.0f, 1.0f);
+                    const auto prefix = "b" + std::to_string ((int) (u (rng) * 7.999f) + 1) + "_";
+                    setParam (p, (prefix + "dyn_on").c_str(), u (rng) < 0.7f ? 1.0f : 0.0f);
+                    setParam (p, (prefix + "threshold").c_str(), -60.0f + 60.0f * u (rng));
+                    setParam (p, (prefix + "range").c_str(), 24.0f * u (rng));
+                    setParam (p, (prefix + "attack").c_str(), 0.5f * std::pow (1000.0f, u (rng)));
+                    setParam (p, (prefix + "release").c_str(), 5.0f * std::pow (1000.0f, u (rng)));
+                    setParam (p, (prefix + "gain").c_str(), -12.0f + 24.0f * u (rng));
+                });
+
+    addDynamic ("auto_dynamics_enable_toggles", "ui2c_custom.bin",
+                [] (labq8::LabQ8AudioProcessor& p, double t)
+                {
+                    for (int band = 1; band <= 8; ++band)
+                        setParam (p, ("b" + std::to_string (band) + "_dyn_on").c_str(),
+                                  ((int) std::floor (t / (0.07 + 0.03 * band)) % 2) ? 1.0f : 0.0f);
+                });
+
     return c;
+}
+
+bool hasDynamics (labq8::LabQ8AudioProcessor& p)
+{
+    return p.getValueTreeState().getParameter ("b1_dyn_on") != nullptr;
 }
 
 bool hasEightBands (labq8::LabQ8AudioProcessor& p)
@@ -300,7 +337,8 @@ int render (const juce::File& baseDir, const juce::File& outDir, const juce::Fil
         if (side == "base") // the base plugin creates the session
         {
             labq8::LabQ8AudioProcessor author;
-            if ((k.needsEightBands && ! hasEightBands (author)) || (k.needsTypes && ! hasTypes (author)))
+            if ((k.needsEightBands && ! hasEightBands (author)) || (k.needsTypes && ! hasTypes (author))
+                || (k.needsDynamics && ! hasDynamics (author)))
             {
                 stateFile.deleteFile();
                 continue;

@@ -157,7 +157,8 @@ LQ_TEST ("e2c processor: 80 parameters; the 40 dynamic ones appended as indices 
 {
     LabQ8AudioProcessor p;
     const auto& all = p.getParameters();
-    LQ_CHECK (all.size() == 80 && params::numParameters == 80, str ("parameter count ", all.size()));
+    // 80 in E2c.1; E4a appends 161 after them (indices 0..79 unchanged).
+    LQ_CHECK (all.size() == 241 && params::numParameters == 241 && params::numParametersV4 == 80, str ("parameter count ", all.size()));
 
     // 0..39 unchanged (checked in detail by the E1a/E1b tests): spot-check ends.
     const auto idAt = [&] (int i)
@@ -219,8 +220,10 @@ LQ_TEST ("e2c state: v4 round-trip of the eight bands' dynamic parameters (4)")
     const auto block = save (a);
 
     const auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
-    LQ_CHECK (xml != nullptr && xml->getIntAttribute (params::stateVersionProperty) == 4 && xml->getNumChildElements() == 80,
-              "saved state is v4 with 80 parameters");
+    // v4 with 80 parameters in E2c.1; v5 with 241 since E4a.
+    LQ_CHECK (xml != nullptr && xml->getIntAttribute (params::stateVersionProperty) == params::currentStateVersion
+                  && xml->getNumChildElements() == params::numParameters,
+              "saved state is the current version with every parameter");
 
     LabQ8AudioProcessor b;
     load (b, block);
@@ -303,12 +306,13 @@ LQ_TEST ("e2c state: every earlier state (E0, E1a, E1b, E1b.1/E2a/E2b) loads wit
         const auto a = save (fresh), b = save (used);
         LQ_CHECK (a == b, str (file, ": migrated state depends on instance history"));
         const auto migrated = juce::AudioProcessor::getXmlFromBinary (a.getData(), (int) a.getSize());
-        bool allValues = migrated != nullptr && migrated->getIntAttribute (params::stateVersionProperty) == 4
-                      && migrated->getNumChildElements() == 80;
+        // Re-saved as v4 with 80 values in E2c.1; as v5 with 241 since E4a.
+        bool allValues = migrated != nullptr && migrated->getIntAttribute (params::stateVersionProperty) == params::currentStateVersion
+                      && migrated->getNumChildElements() == params::numParameters;
         if (migrated != nullptr)
             for (auto* child : migrated->getChildIterator())
                 allValues = allValues && child->hasAttribute ("value");
-        LQ_CHECK (allValues, str (file, ": re-saved as v4 with 80 explicit values"));
+        LQ_CHECK (allValues, str (file, ": re-saved as the current version with every value explicit"));
 
         // Old sessions play exactly the static E2b path: no section active.
         LabQ8AudioProcessor player;

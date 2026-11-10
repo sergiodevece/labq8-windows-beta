@@ -139,6 +139,7 @@ if(LABQ8_BUILD_TESTS)
         tests/MeterTests.cpp
         tests/SpectrumTests.cpp
         tests/DynamicsTests.cpp
+        tests/E4aParameterTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

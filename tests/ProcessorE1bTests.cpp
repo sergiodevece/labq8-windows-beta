@@ -112,7 +112,8 @@ LQ_TEST ("e1b processor: b1..b8_type appended after the 32 E1a parameters, hint 
 {
     LabQ8AudioProcessor p;
     const auto& all = p.getParameters();
-    LQ_CHECK (all.size() == params::numParameters && params::numParameters == 80, str ("parameter count ", all.size()));
+    // 80 until E2c.1; E4a appends 161 after them (indices 0..79 unchanged).
+    LQ_CHECK (all.size() == params::numParameters && params::numParameters == 241, str ("parameter count ", all.size()));
 
     // Host indices 0..31: exactly the E1a order and hints.
     int index = 0;

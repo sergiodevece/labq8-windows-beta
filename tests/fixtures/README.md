@@ -1,4 +1,4 @@
-# Fixtures de estado E0, E1a, E1b y E2b
+# Fixtures de estado E0, E1a, E1b, E2b, UI-2c y E4a
 
 Estados reales del plugin generados con las fuentes de cada commit
 (`git archive <commit> src`), compiladas con JUCE 9.0.3 en un directorio
@@ -49,3 +49,23 @@ formato v3 que E1b.
 | Archivo | Contenido | SHA-256 del .bin |
 |---|---|---|
 | `e2b_custom.bin` | 8 bandas distintas con los seis tipos; b6 en bypass | `31c9e3c9eb61e3503c186a9d0daa834bcc5ce5ca2371277eddf6bca38b10ec61` |
+
+## UI-2c (`152d46c`, estado v4) — [ui2c_state_dump.cpp.txt](ui2c_state_dump.cpp.txt)
+
+Para la migración v4 → v5 de E4a. Compilado con `tests/ParameterContract.h`
+de E4a, que solo usa `juce::AudioProcessor`. Escritos en arm64. En x86_64,
+los valores en la rejilla de 0,01 dB difieren en un ulp (FMA), como siempre.
+
+| Archivo | Contenido | SHA-256 |
+|---|---|---|
+| `ui2c_default.bin` | instancia nueva sin tocar (80 parámetros) | `b0ecd63920886b9a0edbd918648e1352f4d0dc6629f665b92a56dfefe7501440` |
+| `ui2c_custom.bin` | 8 bandas distintas, los seis tipos, b6 y b8 en bypass, dinámica activa con ajustes distintos en b1, b2, b3, b5 y b8 (en b8 sobre una banda en bypass) | `90b8b89343edcaf63886778949c8500890c0d8a015a966d6e9d55019ea92bf73` |
+| `contract_v4_ui2c.txt` | contrato v4 congelado: 80 líneas de `contract::describe` (idéntico en arm64 y x86_64) | `5461c5d996fb9a85ab26bb01665d746d0e6ccbc6087f333d73cf42bb8fe94310` |
+| `ui2c_resaved_from_v5.bin` | `e4a_custom_v5.bin` abierto en 152d46c y guardado de nuevo (`ui2c_state_dump resave`): etiqueta 4, las 241 entradas conservadas | `54a2a893b8e4640d43546e4fc872ec1a3a63bbd2428b7b801c0c1db503d355fe` |
+
+## E4a (estado v5) — escritos por la prueba "e4a fixtures" con `LABQ8_WRITE_FIXTURES=<dir>`
+
+| Archivo | Contenido | SHA-256 |
+|---|---|---|
+| `e4a_custom_v5.bin` | `ui2c_custom` en STEREO, todos los parámetros MID y SIDE fuera de su valor por defecto, `proc_mode = Mid/Side` (`makeE4aCustom` en `tests/E4aParameterTests.cpp`) | `9c10eb1b773bbaa6a8c6ee6e26dbba1039229d137a180023b9718c561562013b` |
+| `contract_v5_e4a.txt` | inventario revisado de los 241 parámetros (las líneas 0–79 son idénticas a `contract_v4_ui2c.txt`) | `94888db7db012ce0b400a2729a71b705bd7c0c2c4f5743ab63acd62e1d9ac59d` |

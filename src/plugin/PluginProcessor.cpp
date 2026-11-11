@@ -26,22 +26,33 @@ LabQ8AudioProcessor::LabQ8AudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, stateType, params::createParameterLayout())
 {
-    for (size_t band = 0; band < bandParameters.size(); ++band)
+    // E4b: the three banks, each from its own IDs (params::bankOf); the
+    // STEREO bank is the 80 pre-E4 parameters.
+    static_assert ((int) dsp::StereoBank::stereo == (int) params::Bank::stereo
+                   && (int) dsp::StereoBank::mid == (int) params::Bank::mid
+                   && (int) dsp::StereoBank::side == (int) params::Bank::side);
+    for (int b = 0; b < params::numBanks; ++b)
     {
-        const auto& ids = params::bandIDs[band];
-        bandParameters[band] = { rawParameter (parameters, ids.frequency),
-                                 rawParameter (parameters, ids.gain),
-                                 rawParameter (parameters, ids.q),
-                                 rawParameter (parameters, ids.bypass),
-                                 rawParameter (parameters, ids.type) };
+        const auto ids = params::bankOf (static_cast<params::Bank> (b));
+        auto& bank = bankParameters[(size_t) b];
+        for (size_t band = 0; band < bank.bands.size(); ++band)
+        {
+            const auto& s = ids.bands[band];
+            bank.bands[band] = { rawParameter (parameters, s.frequency),
+                                 rawParameter (parameters, s.gain),
+                                 rawParameter (parameters, s.q),
+                                 rawParameter (parameters, s.bypass),
+                                 rawParameter (parameters, s.type) };
 
-        const auto& dyn = params::dynamicIDs[band];
-        dynamicParameters[band] = { rawParameter (parameters, dyn.enabled),
+            const auto& dyn = ids.dynamics[band];
+            bank.dynamics[band] = { rawParameter (parameters, dyn.enabled),
                                     rawParameter (parameters, dyn.threshold),
                                     rawParameter (parameters, dyn.range),
                                     rawParameter (parameters, dyn.attack),
                                     rawParameter (parameters, dyn.release) };
+        }
     }
+    procMode = rawParameter (parameters, params::procModeID);
 }
 
 bool LabQ8AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -88,11 +99,22 @@ dsp::DynamicSettings LabQ8AudioProcessor::readDynamicSettings (const DynamicPara
 
 void LabQ8AudioProcessor::pushParametersToCore() noexcept
 {
-    for (size_t band = 0; band < bandParameters.size(); ++band)
+    // STEREO first, exactly as before E4b (same values, same order); then
+    // the MID and SIDE banks and the mode. Each core receives only its own
+    // bank's parameters.
+    for (int b = 0; b < dsp::StereoModeEngine::numBanks; ++b)
     {
-        eq.setBandTargets (static_cast<int> (band), readBandSettings (bandParameters[band]));
-        eq.setBandDynamics (static_cast<int> (band), readDynamicSettings (dynamicParameters[band]));
+        const auto bank = static_cast<dsp::StereoBank> (b);
+        const auto& source = bankParameters[(size_t) b];
+        for (size_t band = 0; band < source.bands.size(); ++band)
+        {
+            engine.setBandTargets (bank, static_cast<int> (band), readBandSettings (source.bands[band]));
+            engine.setBandDynamics (bank, static_cast<int> (band), readDynamicSettings (source.dynamics[band]));
+        }
     }
+
+    const auto mode = static_cast<int> (std::lround (procMode->load (std::memory_order_relaxed)));
+    engine.setMode (mode == static_cast<int> (params::ProcMode::midSide) ? dsp::StereoMode::midSide : dsp::StereoMode::stereo);
 }
 
 void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
@@ -100,7 +122,7 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
     // Targets first so prepare() snaps to the current host values (no ramp
     // from defaults when playback starts).
     pushParametersToCore();
-    eq.prepare (sampleRate, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
+    engine.prepare (sampleRate, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
     inputMeter.reset();
     outputMeter.reset();
     const auto channels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels());
@@ -111,9 +133,17 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
 
 void LabQ8AudioProcessor::offerDynamics (bool hostBypassed) noexcept
 {
+    // E4b: the editor still shows only the STEREO bank (MID / SIDE telemetry
+    // is E4d). Its dynamics are offered only while the STEREO path is the
+    // one heard, with no mode change in progress; otherwise the screen is
+    // told there is nothing to show (as in the host's bypass), so it never
+    // draws the STEREO bank's reductions over an M/S sound.
+    const bool stereoHeard = engine.getHeardMode() == dsp::StereoMode::stereo && ! engine.isFading();
+    const auto& eq = engine.getCore (dsp::StereoBank::stereo);
+
     // Values the DSP has already computed for the last control tick; reading
     // them changes nothing (const accessors, audio thread).
-    dynamicsTelemetry.offer (hostBypassed, [this] (int b, DynamicsTelemetry::Band& out)
+    dynamicsTelemetry.offer (hostBypassed || ! stereoHeard, [&eq] (int b, DynamicsTelemetry::Band& out)
     {
         const auto& band = eq.getBand (b);
         out.staticGainDb = (float) band.getCurrentGainDb();
@@ -149,7 +179,7 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const auto n = juce::jmin (eqSubBlockSamples, buffer.getNumSamples() - position);
         for (int ch = 0; ch < segmentChannels; ++ch)
             segment[ch] = channels[ch] + position;
-        eq.process (segment, segmentChannels, n);
+        engine.process (segment, segmentChannels, n);
         offerDynamics (false);
     }
 

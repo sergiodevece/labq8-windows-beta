@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsp/EqCore.h"
+#include "dsp/StereoModeEngine.h"
 #include "parameters/StateMigration.h"
 #include "plugin/DynamicsTelemetry.h"
 #include "plugin/LevelMeter.h"
@@ -92,8 +92,10 @@ public:
     static constexpr int eqSubBlockSamples = 256;
     DynamicsTelemetry& getDynamicsTelemetry() noexcept { return dynamicsTelemetry; }
 
-    // Tests: the EQ core (read only; never while audio runs on another thread).
-    const dsp::EqCore& getEqCoreForTesting() const noexcept { return eq; }
+    // Tests: the STEREO bank's EQ core and the whole engine (read only; never
+    // while audio runs on another thread).
+    const dsp::EqCore& getEqCoreForTesting() const noexcept { return engine.getCore (dsp::StereoBank::stereo); }
+    const dsp::StereoModeEngine& getEngineForTesting() const noexcept { return engine; }
 
 private:
     struct BandParameters
@@ -119,10 +121,18 @@ private:
     void pushParametersToCore() noexcept;
     void offerDynamics (bool hostBypassed) noexcept;
 
+    // E4b: one set per bank (STEREO, MID, SIDE: params::bankOf), in
+    // dsp::StereoBank order.
+    struct BankParameters
+    {
+        std::array<BandParameters, dsp::EqCore::numBands> bands;
+        std::array<DynamicParameters, dsp::EqCore::numBands> dynamics;
+    };
+
     juce::AudioProcessorValueTreeState parameters;
-    std::array<BandParameters, dsp::EqCore::numBands> bandParameters;
-    std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
-    dsp::EqCore eq;
+    std::array<BankParameters, dsp::StereoModeEngine::numBanks> bankParameters;
+    std::atomic<float>* procMode = nullptr;
+    dsp::StereoModeEngine engine;
     int uiSelectedBand = 0;
     int uiView = 3;           // ALL
     int uiAnalyzerSource = 1; // POST

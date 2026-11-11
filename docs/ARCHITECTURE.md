@@ -6,6 +6,7 @@
 |---|---|---|---|---|
 | 1 | Plugin Host Adapter | JUCE `AudioProcessor`, buses, parámetros → ajustes DSP, estado y migración | Implementado | `src/plugin/`, `src/parameters/` |
 | 2 | EQ Core | Filtros, suavizado, crossfades de tipo, bypass, cascada | 8 bandas × 6 topologías | `src/dsp/` |
+| 2b | Stereo Mode Engine | Bancos STEREO / MID / SIDE (tres `EqCore`), codificación M/S, ruta plana, cambio de modo | E4b ([MIDSIDE_E4B.md](MIDSIDE_E4B.md)) | `src/dsp/StereoModeEngine.*`, `src/dsp/MidSide.h` |
 | 3 | Dynamic Engine | Detectores, envolventes, control dinámico por banda | Ocho secciones en `EqCore` (E2b), con parámetros públicos desde E2c.1 ([DYNAMICS_E2A.md](DYNAMICS_E2A.md), [DYNAMICS_E2B.md](DYNAMICS_E2B.md)) | `src/dsp/Dynamic*`, `EqCore` |
 | 4 | Analysis Engine | FFT, medición | No iniciado | — |
 | 5 | Intention Engine | Perfiles musicales, sugerencias | No iniciado | — |
@@ -36,6 +37,17 @@ Host/DAW ──► LabQ8AudioProcessor ──► APVTS (40 parámetros, estado v
                     (cada ruta: biquad con rampas, coeficientes y estado por canal,
                      o ruta "seca" sin filtro)
 ```
+
+## Motor STEREO / MID/SIDE (E4b)
+
+Desde E4b el procesador no llama a un `EqCore` sino a
+`dsp::StereoModeEngine`, que tiene tres `EqCore` independientes: STEREO
+(estéreo, el motor anterior), MID y SIDE (mono). En Stereo, la ruta
+escuchada es exactamente la llamada anterior a E4b. En Mid/Side se codifica
+M = (L+R)/2, S = (L−R)/2 y se decodifica L = M+S, R = M−S. La ruta que no se
+escucha sigue procesando una copia de la entrada (reserva), y el cambio de
+modo es un fundido lineal de 20 ms. Detalle, medidas y pruebas:
+[MIDSIDE_E4B.md](MIDSIDE_E4B.md).
 
 ## Arquitectura multi-filtro (E1b)
 

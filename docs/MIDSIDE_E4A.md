@@ -354,3 +354,26 @@ ida y vuelta, así que la elección queda para E4b.
   estricta contra 152d46c OK de nuevo.
 - **Diffs de revisión:** `build/e4a-report/e4a-code.diff` y
   `build/e4a-report/e4a-docs.diff`.
+
+## SMOKE-7 en Logic Pro: aprobado (11-11-2026)
+
+**Build instalado** con `tools/install/install_au.sh`, con Logic cerrado:
+- carpeta `build/e4a-smoke-release-universal`, commit `c9ea214` (árbol limpio);
+- SHA-256 del binario AU: `f274c663ecc826e7ff8d234f0409f0bacd31790945c8c65760a596e3baa282ef`;
+- 176/176 pruebas en arm64 y x86_64; compatibilidad estricta en 12 bases × 2
+  arquitecturas; verificación de los binarios VST3 reales contra SMOKE-6;
+- auval `-strict` en arm64 y x86_64: AU VALIDATION SUCCEEDED, 241 parámetros
+  en el orden AU del contrato, con los 80 primeros en el mismo orden que en
+  SMOKE-6;
+- versión AU 0.0.1, sin cambios: JUCE no persiste la lista de parámetros y
+  Logic la lee del plugin al abrirlo.
+
+Lista de comprobaciones: `build/e4a-smoke-report/E4A_PRUEBA_LOGIC.md`
+(apertura, sesiones anteriores, ocho bandas y controles, EQ estática y
+dinámica Bell, medidores, FFT, DYN, automatización y bypass, zoom y
+preferencias, guardar y reabrir, sin alteraciones sonoras). MID/SIDE no se
+evaluó como función: no existe hasta E4b.
+
+**Resultado:** PASS, 10/10 comprobaciones manuales superadas en Logic Pro. E4a queda cerrada.
+
+**Copia de UI-2c (SMOKE-6):** `build/e4a-smoke-report/LABQ8.component.smoke6-backup`.

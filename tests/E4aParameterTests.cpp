@@ -1,7 +1,9 @@
 // E4a: the 241-parameter contract (80 STEREO, proc_mode, 80 MID, 80 SIDE),
-// state v5 and its migration. No M/S processing exists yet: these tests pin
-// the parameters, the saved state and the fact that the STEREO sound does
-// not depend on anything E4a added. See docs/MIDSIDE_E4A.md.
+// state v5 and its migration: the parameters, the saved state and the fact
+// that the STEREO sound does not depend on the MID / SIDE banks. See
+// docs/MIDSIDE_E4A.md. The M/S processing itself (E4b) is tested in
+// tests/MidSideTests.cpp; the E4a-only test "proc_mode is stored but not
+// processed" was retired when E4b implemented it.
 //
 // Fixtures (tests/fixtures/README.md): contract_v4_ui2c.txt and the genuine
 // v4 states ui2c_*.bin were written by the 152d46c sources;
@@ -641,15 +643,4 @@ LQ_TEST ("e4a audio: in Stereo the output is bit-identical whatever the MID / SI
                 LQ_CHECK (identical (render (plain, channels, fs, blockSize), render (busy, channels, fs, blockSize)),
                           str ("MID / SIDE values changed the STEREO sound: ", channels, " ch, ", fs, " Hz, block ", blockSize));
             }
-}
-
-LQ_TEST ("e4a audio (E4a only, until E4b): proc_mode = Mid/Side is stored but not processed yet; the sound stays the STEREO bank's")
-{
-    // When E4b implements M/S this test is replaced by the M/S tests; it
-    // documents that an E4a build never processes M/S.
-    LabQ8AudioProcessor stereo, midSide;
-    makeE4aCustom (midSide);
-    load (stereo, loadFixture ("ui2c_custom.bin"));
-    LQ_CHECK (getParam (midSide, params::procModeID) == 1.0f, "Mid/Side stored");
-    LQ_CHECK (identical (render (stereo, 2, 48000.0, 480), render (midSide, 2, 48000.0, 480)), "E4a must not process M/S");
 }

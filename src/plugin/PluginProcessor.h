@@ -66,6 +66,12 @@ public:
     void setUiView (int view) noexcept { uiView = view; }
     int getUiAnalyzerSource() const noexcept { return uiAnalyzerSource; }
     void setUiAnalyzerSource (int analyzerSource) noexcept { uiAnalyzerSource = analyzerSource; }
+    // E4c: the bank the editor edits while the mode is Mid/Side (1 = MID,
+    // 2 = SIDE: params::Bank), the same way: per instance, in memory, never
+    // part of the plugin state (v5 unchanged). In Stereo the editor always
+    // shows the STEREO bank.
+    int getUiEditBank() const noexcept { return uiEditBank; }
+    void setUiEditBank (int bank) noexcept { uiEditBank = bank == 2 ? 2 : 1; }
 
     // UI-2a: sample peak of the input (before the EQ) and of the output
     // (what the host receives). Written by the audio thread, taken by the
@@ -136,6 +142,7 @@ private:
     int uiSelectedBand = 0;
     int uiView = 3;           // ALL
     int uiAnalyzerSource = 1; // POST
+    int uiEditBank = 1;       // MID
     LevelMeter inputMeter, outputMeter;
     SpectrumTap preTap, postTap;
     DynamicsTelemetry dynamicsTelemetry;

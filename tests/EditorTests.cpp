@@ -58,13 +58,16 @@ std::vector<float> allValues (LabQ8AudioProcessor& p)
     return v;
 }
 
-// Every band different, random but reproducible.
+// Every band different, random but reproducible. The mode stays Stereo:
+// these UI-1..UI-2c tests are about the STEREO bank (E4c's bank tests are in
+// tests/EditorBankTests.cpp); the MID / SIDE banks are randomised too.
 void randomise (LabQ8AudioProcessor& p, unsigned seed)
 {
     std::mt19937 rng (seed);
     std::uniform_real_distribution<float> u (0.0f, 1.0f);
     for (auto* parameter : p.getParameters())
         parameter->setValueNotifyingHost (u (rng));
+    p.getValueTreeState().getParameter (params::procModeID)->setValueNotifyingHost (0.0f);
 }
 
 const char* idFor (int band, PanelControl c)
@@ -411,7 +414,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
     const auto before = allValues (p);
     int found = 0;
     for (auto* child : editor->getContent().getChildren())
-        for (const auto* name : { "Stereo Mode", "Polarity", "Intention", "Phase Behavior" })
+        for (const auto* name : { "Polarity", "Intention", "Phase Behavior" }) // STEREO MODE real since E4c
             if (child->getTitle() == name)
             {
                 ++found;
@@ -419,7 +422,7 @@ LQ_TEST ("ui editor: controls of the design without implementation change nothin
                 auto* tip = dynamic_cast<juce::TooltipClient*> (child);
                 LQ_CHECK (tip != nullptr && tip->getTooltip().contains ("not available"), str (name, " explains it is not available"));
             }
-    LQ_CHECK (found == 4, str (found, " of 4 inactive areas (meters real since UI-2a; view tabs and analyzer since UI-2b, DYN since UI-2c)"));
+    LQ_CHECK (found == 3, str (found, " of 3 inactive areas (meters real since UI-2a; view tabs and analyzer since UI-2b, DYN since UI-2c; STEREO MODE since E4c)"));
     LQ_CHECK (allValues (p) == before && editor->getSelectedBand() == 0, "inactive controls changed something");
     LQ_CHECK (editor->getView() == LabQ8Editor::viewAll, "the view is unchanged");
 }

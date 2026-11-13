@@ -976,3 +976,17 @@ Lista de comprobaciones: `build/ui2c-report/UI2C_PRUEBA_LOGIC.md`.
 **Resultado:** aprobado físicamente en Logic Pro por el usuario. UI-2c queda cerrada.
 
 **Copia de UI-2b (SMOKE-5):** `build/ui2c-report/LABQ8.component.smoke5-backup`.
+
+## 13. E4c: interfaz STEREO / MID / SIDE
+
+Detalle, decisiones, pruebas y capturas: [MIDSIDE_E4C.md](MIDSIDE_E4C.md)
+(auditoría: [MIDSIDE_E4C_AUDIT.md](MIDSIDE_E4C_AUDIT.md)).
+
+- **El bloque STEREO MODE deja de ser un área inactiva.** STEREO y M/S
+  escriben `proc_mode`. MID y SIDE, en el antiguo hueco de L/R, eligen el
+  banco que se edita en M/S.
+- **Nuevos assets** derivados del maestro: `mode_face_lit.png` y
+  `mode_face_unlit.png`. En `background.png` solo cambia el hueco de L/R.
+- **Banco mostrado:** todo el panel, los botones ON/OFF y la pantalla siguen
+  al banco mostrado. En M/S se añaden la curva gris del otro banco (EQ y
+  ALL) y la nota "M/S dynamics display: E4d" (DYN y ALL).

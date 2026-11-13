@@ -24,6 +24,9 @@
 //                      screen's dB axis likewise for +-24 dB (right-aligned);
 //  10. Dynamic EQ pill erased (the editor draws its on / off / disabled
 //                      state); the sprites are cut to the pill's shape.
+//  12. L/R button      (E4c) erased: the editor draws MID and SIDE in its
+//                      place, and the STEREO / M/S buttons over the master's
+//                      (row-wise interpolation of the dark housing).
 //  11. screen header   (UI-2b) the lit EQ pill and the four tab names
 //                      erased (the editor draws the selected tab and the
 //                      names), the analyzer's "Analyzer: Post" erased (the
@@ -45,6 +48,9 @@
 //   viewtab_light.png      the light the lit pill adds to an empty tab
 //                          (master minus the cleaned header, EQ tab, its
 //                          name removed), UI-2b
+//   mode_face_lit.png      the master's lit STEREO button without its text
+//   mode_face_unlit.png    the master's M/S button without its text (E4c;
+//                          the editor 9-slices both and writes the names)
 //
 // Usage: labq8_ui_assetgen <master.png> <output_dir>
 
@@ -544,6 +550,28 @@ juce::Image cutToPill (const juce::Image& sprite)
     return out;
 }
 
+void eraseLrButton (Canvas& out, const Canvas& src)
+{
+    const auto& r = g::lrButtonEraseArea;
+    fillRows (out, src, (int) r.x, (int) (r.x + r.w) - 1, (int) r.y, (int) (r.y + r.h) - 1);
+}
+
+// A mode button's frame and face without its name: every column between the
+// caps is replaced by one clean column of the same button (the face only
+// shades vertically).
+juce::Image textFreeFace (const juce::Image& master, const g::Rect& r, float cleanColumn)
+{
+    juce::Image face (juce::Image::RGB, (int) r.w, (int) r.h, false);
+    const auto cap = (int) g::modeFaceCap;
+    for (int y = 0; y < (int) r.h; ++y)
+        for (int x = 0; x < (int) r.w; ++x)
+        {
+            const auto sx = (x < cap || x >= (int) r.w - cap) ? (int) r.x + x : (int) cleanColumn;
+            face.setPixelAt (x, y, master.getPixelAt (sx, (int) r.y + y));
+        }
+    return face;
+}
+
 juce::Image crop (const juce::Image& image, const g::Rect& r)
 {
     return image.getClippedImage ({ (int) r.x, (int) r.y, (int) r.w, (int) r.h }).createCopy();
@@ -601,6 +629,7 @@ int main (int argc, char** argv)
     eraseMeters (out, src);
     eraseSwitch (out, src);
     eraseDisplayHeader (out, src);
+    eraseLrButton (out, src);
 
     const auto on = cutToPill (crop (master.convertedToFormat (juce::Image::ARGB), g::dynamicSwitchSprite));
     auto background = out.toImage();
@@ -611,7 +640,9 @@ int main (int argc, char** argv)
                  && writePng (switchOff (on), outDir.getChildFile ("dynamic_switch_off.png"))
                  && writePng (crop (master.convertedToFormat (juce::Image::ARGB), g::meterLitSprite), outDir.getChildFile ("meter_lit.png"))
                  && writePng (viewTabLight (src, out), outDir.getChildFile ("viewtab_light.png"))
-                 && writePng (axisBlank (background), outDir.getChildFile ("axis_blank.png"));
+                 && writePng (axisBlank (background), outDir.getChildFile ("axis_blank.png"))
+                 && writePng (textFreeFace (master, g::modeFaceLitSprite, g::modeFaceLitCleanColumn), outDir.getChildFile ("mode_face_lit.png"))
+                 && writePng (textFreeFace (master, g::modeFaceUnlitSprite, g::modeFaceUnlitCleanColumn), outDir.getChildFile ("mode_face_unlit.png"));
     std::printf ("%s\n", ok ? "assets written" : "FAILED to write assets");
     return ok ? 0 : 1;
 }

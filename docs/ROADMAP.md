@@ -23,7 +23,7 @@ Cada fase termina con build limpia, pruebas reproducibles y un informe de revisi
 | E4 | M/S con tres bancos independientes STEREO / MID / SIDE (auditoría aprobada: `docs/MIDSIDE_E4_AUDIT.md`; dirección de producto: `docs/specs/LABQ8_INTENTION_PHASE_MS_v01.md`, §1) | En curso |
 | **E4a** | Contrato de 241 parámetros (80 STEREO intactos, `proc_mode`, 80 MID, 80 SIDE; hint 5, índices 80–240), estado v5 con migración, inventario congelado, fixtures UI-2c auténticos, compatibilidad estricta con UI-2c; sin DSP M/S, crossfade ni cambios gráficos (`docs/MIDSIDE_E4A.md`) | Cerrada (`c9ea214`); SMOKE-7 en Logic: PASS, 10/10 comprobaciones manuales (MIDSIDE_E4A.md, SMOKE-7) |
 | E4b | Motor DSP MID/SIDE real: `dsp::StereoModeEngine` con tres `EqCore` independientes, codificación M/S, ruta plana bit a bit, ruta no escuchada en reserva y fundido de 20 ms elegido con medidas; sin interfaz ni telemetría M/S (`docs/MIDSIDE_E4B.md`) | Cerrada (commit local); revisión técnica aprobada: 192/192 Release arm64/x86_64, TSan sin avisos, compatibilidad 13 bases, mutaciones 12/12; smoke físico pendiente |
-| E4c | Interfaz MID/SIDE y gestión de bancos | — |
+| E4c | Interfaz MID/SIDE: STEREO / M/S reales (`proc_mode`), MID / SIDE en el hueco de L/R, todos los controles, nodos y botones ON/OFF ligados al banco mostrado, curva gris del banco contrario, comandos de copia; sin cambios de DSP, parámetros ni estado (`docs/MIDSIDE_E4C.md`) | En revisión visual y técnica |
 | E4d | Medidores, FFT y visualización dinámica por banco | — |
 | E4e | Pruebas completas, versión 0.1.0 y smoke físico en Logic | — |
 | E5 | Analysis Engine: FFT fuera del hilo de audio (FIFO lock-free) | — |

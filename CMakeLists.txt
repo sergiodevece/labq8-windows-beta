@@ -67,7 +67,9 @@ juce_add_binary_data(labq8_ui_assets
         assets/ui/dynamic_switch_off.png
         assets/ui/meter_lit.png
         assets/ui/viewtab_light.png
-        assets/ui/axis_blank.png)
+        assets/ui/axis_blank.png
+        assets/ui/mode_face_lit.png
+        assets/ui/mode_face_unlit.png)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -142,6 +144,7 @@ if(LABQ8_BUILD_TESTS)
         tests/DynamicsTests.cpp
         tests/E4aParameterTests.cpp
         tests/MidSideTests.cpp
+        tests/EditorBankTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

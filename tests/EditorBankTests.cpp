@@ -626,6 +626,7 @@ LQ_TEST ("e4c copy: STEREO -> MID + SIDE copies all 80 values of the eight bands
     LQ_CHECK (std::all_of (changed.begin(), changed.end(), [&] (const juce::String& id) { return allowed.count (id) == 1; }), "only MID / SIDE written");
 
     int exact = 0, logUlp = 0, wrong = 0;
+    double worstCents = 0.0, worstQPercent = 0.0;
     for (const auto bank : { Bank::mid, Bank::side })
         for (int b = 0; b < 8; ++b)
         {
@@ -641,10 +642,16 @@ LQ_TEST ("e4c copy: STEREO -> MID + SIDE copies all 80 values of the eight bands
                 if (a == c) ++exact;
                 else if ((juce::String (from).endsWith ("_freq") || juce::String (from).endsWith ("_q")) && std::abs (a - c) <= 1.0e-6f * std::abs (a)) ++logUlp;
                 else ++wrong;
+                if (juce::String (from).endsWith ("_freq"))
+                    worstCents = std::max (worstCents, std::abs (1200.0 * std::log2 ((double) c / a)));
+                if (juce::String (from).endsWith ("_q"))
+                    worstQPercent = std::max (worstQPercent, 100.0 * std::abs ((double) c / a - 1.0));
             }
         }
     LQ_CHECK (wrong == 0, str (wrong, " values not copied"));
-    ctx.note (str ("160 copied values: ", exact, " exact, ", logUlp, " frequency / Q within a few ulp (log mapping)"));
+    ctx.note (str ("160 copied values: ", exact, " exact, ", logUlp, " frequency / Q within a few ulp (log mapping); worst frequency deviation ",
+                   worstCents, " cents, worst Q deviation ", worstQPercent, " %"));
+    LQ_CHECK (worstCents < 1.0e-3 && worstQPercent < 1.0e-4, "frequency / Q deviations of the copy are negligible");
     int written = 0;
     for (auto& [index, n] : rec.changes)
         written += n;
@@ -728,4 +735,76 @@ LQ_TEST ("e4c copy: after STEREO -> MID + SIDE (static bank), switching to M/S s
         if (it.getItem().itemID > 0)
             items.add (it.getItem().text);
     LQ_CHECK (items.size() == 9 && items[0] == "40 %" && items[5] == "140 %" && items[6].startsWith ("Copy STEREO"), items.joinIntoString ("|").toStdString());
+}
+
+LQ_TEST ("e4c routing: at every zoom (40 % included) clicks at the centre and near the edges of STEREO, M/S, MID and SIDE reach that button")
+{
+    LabQ8AudioProcessor p;
+    setMode (p, params::ProcMode::midSide);
+    auto e = openEditor (p);
+    e->setVisible (true); // hit testing skips invisible components
+    for (const float zoom : LabQ8Editor::zoomChoices)
+    {
+        LQ_CHECK (e->setZoom (zoom), str ("zoom ", zoom));
+        const auto s = e->getScale();
+        auto at = [&] (float x, float y) { return e->getComponentAt (juce::Point<float> (x * s, y * s).roundToInt()); };
+        const std::pair<const geo::Rect*, juce::Component*> buttons[] = {
+            { &geo::modeButtonStereo, &e->getModeButton (0) }, { &geo::modeButtonMidSide, &e->getModeButton (1) },
+            { &geo::bankButtonMid, &e->getBankButton (Bank::mid) }, { &geo::bankButtonSide, &e->getBankButton (Bank::side) } };
+        for (const auto& [r, button] : buttons)
+        {
+            const auto cx = r->x + r->w * 0.5f, cy = r->y + r->h * 0.5f;
+            // Centre, and 6 px (reference) inside each edge of the frame.
+            for (const auto& [dx, dy] : { std::pair { 0.0f, 0.0f }, std::pair { -(r->w * 0.5f - 6.0f), 0.0f }, std::pair { r->w * 0.5f - 6.0f, 0.0f },
+                                          std::pair { 0.0f, -(r->h * 0.5f - 6.0f) }, std::pair { 0.0f, r->h * 0.5f - 6.0f } })
+                LQ_CHECK (at (cx + dx, cy + dy) == button, str (button->getTitle(), " at ", zoom, " (", dx, ", ", dy, ")"));
+        }
+    }
+    ctx.note (str ("MID / SIDE frames at 40 %: ", geo::bankButtonMid.w * 0.4f, " x ", geo::bankButtonMid.h * 0.4f, " pt"));
+}
+
+
+LQ_TEST ("e4c copy: after Copy STEREO -> MID + SIDE with dynamics on, the MID and SIDE detectors stay independent (tone in M reduces MID only; tone in S reduces SIDE only)")
+{
+    for (const bool toneInMid : { true, false })
+    {
+        LabQ8AudioProcessor p;
+        // One dynamic Bell in the STEREO bank (band 3, 300 Hz), the rest flat.
+        const auto& s = params::bankOf (Bank::stereo).bands[2];
+        const auto& d = params::bankOf (Bank::stereo).dynamics[2];
+        hostSet (p, s.frequency, 300.0f);
+        hostSet (p, s.gain, 0.0f);
+        hostSet (p, s.q, 2.0f);
+        hostSet (p, d.enabled, 1.0f);
+        hostSet (p, d.threshold, -40.0f);
+        hostSet (p, d.range, 9.0f);
+        hostSet (p, d.attack, 2.0f);
+        auto e = openEditor (p);
+        e->handleSettingsMenuResult (LabQ8Editor::copyStereoToMidSideItem);
+        setMode (p, params::ProcMode::midSide);
+
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add (juce::AudioChannelSet::stereo());
+        layout.outputBuses.add (juce::AudioChannelSet::stereo());
+        p.setBusesLayout (layout);
+        p.prepareToPlay (48000.0, 480);
+        juce::MidiBuffer midi;
+        for (int k = 0; k < 100; ++k)
+        {
+            juce::AudioBuffer<float> buffer (2, 480);
+            for (int i = 0; i < 480; ++i)
+            {
+                const auto v = 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 300.0 * (k * 480 + i) / 48000.0);
+                buffer.setSample (0, i, v);
+                buffer.setSample (1, i, toneInMid ? v : -v);
+            }
+            p.processBlock (buffer, midi);
+        }
+        const auto& engine = p.getEngineForTesting();
+        const auto mid = engine.getCore (labq8::dsp::StereoBank::mid).getDynamics (2).getGainReductionDb();
+        const auto side = engine.getCore (labq8::dsp::StereoBank::side).getDynamics (2).getGainReductionDb();
+        LQ_CHECK (toneInMid ? (mid > 5.0 && side == 0.0) : (side > 5.0 && mid == 0.0),
+                  str ("tone in ", toneInMid ? "M" : "S", ": MID reduction ", mid, " dB, SIDE reduction ", side, " dB"));
+        ctx.note (str ("tone in ", toneInMid ? "M" : "S", " after the copy: MID reduction ", mid, " dB, SIDE ", side, " dB"));
+    }
 }

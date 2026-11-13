@@ -1,7 +1,8 @@
 # LABQ8 E4c — Interfaz STEREO / MID / SIDE
 
-**Base:** `d27b9b1` (E4b). **Estado:** implementado y en revisión visual y
-técnica, sin commit. Auditoría y decisiones:
+**Base:** `d27b9b1` (E4b); checkpoint `500b381`. **Estado:** revisión técnica
+y visual **aprobadas** (13-11-2026), con el prefijo de la cabecera a
+mayúscula 11. Smoke físico pendiente de autorización. Auditoría y decisiones:
 [MIDSIDE_E4C_AUDIT.md](MIDSIDE_E4C_AUDIT.md).
 
 **Sin cambios:**
@@ -20,7 +21,7 @@ técnica, sin commit. Auditoría y decisiones:
 |---|---|
 | **D1** | STEREO y M/S son botones reales, enlazados a `proc_mode` con un gesto completo por clic. El encendido usa la **cara verde del maestro**. El banco seleccionado (MID o SIDE) también se marca con la cara verde |
 | **D2** | "MID" y "SIDE" usan Helvetica Neue Condensed Bold con mayúscula de 13 px, igual que "M/S" |
-| **D3 (provisional)** | En M/S la cabecera muestra "SIDE  BAND 4": prefijo pequeño en el gris de las etiquetas del chasis, y "BAND n" sin cambios. Acaba como mucho en x 292 ("SIDE  BAND 8"), lejos de "Filter Type" (x 346) |
+| **D3 (revisado)** | En M/S la cabecera muestra "SIDE  BAND 4": prefijo pequeño en el gris de las etiquetas del chasis, y "BAND n" sin cambios. Tras la revisión visual, el prefijo tiene **mayúscula de 11 px de referencia** (antes 9; ver §4). Acaba como mucho en x 299 ("SIDE  BAND 8"), lejos de "Filter Type" (x 346) |
 | **D4** | En STEREO, MID y SIDE aparecen atenuados y no responden, y el banco STEREO se edita como siempre |
 | **D5** | Curva compuesta del banco contrario: gris (200,200,190, 40 %), de 1 px, sin relleno ni nodos ni clics. Solo en M/S y en las vistas EQ y ALL, con la etiqueta "MID" o "SIDE" pequeña en su extremo izquierdo |
 | **D6** | El banco editado es estado de interfaz por instancia (`getUiEditBank`, MID por defecto). No es un parámetro y no forma parte del estado v5. Una sesión restaurada muestra el banco que corresponde a su modo: STEREO, o MID/SIDE |
@@ -80,7 +81,7 @@ y 86–132** (el hueco de L/R). **El PNG maestro no cambia** (SHA-256
 
 | | Resultado |
 |---|---|
-| **Suite Release** (`build/e4b-release-universal`) | **207/207 en arm64 y 207/207 en x86_64.** Hay 208 pruebas; la omitida es el generador de fixtures. 15 son nuevas (`tests/EditorBankTests.cpp`) |
+| **Suite Release** (`build/e4b-release-universal`) | **209/209 en arm64 y 209/209 en x86_64** tras la revisión visual. Hay 210 pruebas; la omitida es el generador de fixtures. 17 son nuevas (`tests/EditorBankTests.cpp`). En la primera entrega eran 207/207, con 15 |
 | Pruebas UI-1…UI-2c existentes | Solo dos ajustes: el ayudante `randomise()` fija el modo Stereo (esas pruebas tratan del banco STEREO), y el área inactiva "Stereo Mode" se retira de su lista |
 | **T1** Escrituras por banco | En STEREO, MID y SIDE, y en 3 bandas cada uno: 7 potenciómetros más su reinicio, tipo, interruptor dinámico, arrastre de nodo, tirador de Q y los 8 botones ON/OFF. **El conjunto de IDs cambiados es exactamente el esperado del banco mostrado** |
 | **T2** Botones | STEREO y M/S escriben solo `proc_mode`, con 1 gesto. El encendido, MID y SIDE no escriben nada ni abren gestos |
@@ -89,7 +90,8 @@ y 86–132** (el hueco de L/R). **El PNG maestro no cambia** (SHA-256
 | **T6** Arrastre y modo | Potenciómetro y nodo: el cambio espera, los gestos quedan equilibrados y no se escribe nada fuera de la banda MID arrastrada ni en el banco STEREO |
 | **T7** | En STEREO, MID y SIDE no responden y el banco STEREO es editable |
 | **T8** | El audio es idéntico bit a bit con el editor abierto o cerrado mientras cambia de banco, banda y vista, en Stereo y en M/S |
-| **T9** Geometría | Los cuatro botones están en sus marcos medidos, sin solaparse. La cabecera no se recorta y acaba en x 292 como máximo |
+| **T9** Geometría | Los cuatro botones están en sus marcos medidos, sin solaparse. La cabecera no se recorta y acaba en x 299 como máximo |
+| Enrutado | En los seis zooms, 40 % incluido, los clics en el centro y a 6 px de cada borde de STEREO, M/S, MID y SIDE llegan a ese botón. MID y SIDE miden 18,8 × 17,2 pt al 40 % |
 | **T10** Sesiones | El banco editado sobrevive a cerrar y abrir el editor; una instancia nueva empieza en MID. Una sesión v5 en M/S abre en MID y una v4 en STEREO. Una sesión cargada con el editor abierto también se sigue |
 | **T11** Mono | SIDE se puede seleccionar y editar en una pista mono, y sus cambios no alteran el audio |
 | Cambios rápidos | 600 acciones aleatorias (botones, automatización del modo, bandas): el panel siempre muestra el banco correcto, solo se escribe `proc_mode` y los gestos quedan equilibrados |
@@ -141,11 +143,35 @@ ejecutan por acción explícita del usuario.
 - **Qué no toca:** nunca escribe el banco de origen, `proc_mode` ni el banco
   mostrado (probado). Cambiar de modo o seleccionar un banco nunca copia
   nada (T3).
-- **Exactitud:** 154 de 160 valores son exactos. Los 6 restantes son
-  frecuencia o Q, a unos pocos ulp, por el mapeo logarítmico de JUCE (el
-  mismo efecto que en una ida y vuelta de guardado). Tras copiar STEREO →
-  MID + SIDE con un banco estático, el M/S difiere del STEREO en
-  **4,8·10⁻⁷** para un pico de 2,36.
+- **Exactitud de los valores:** 154 de 160 son exactos. Los 6 restantes son
+  todos frecuencias, a unos pocos ulp de float, por el mapeo logarítmico de
+  JUCE (el mismo efecto que en una ida y vuelta de guardado). La mayor
+  desviación es de **0,00074 cents** en frecuencia y **0 %** en Q (prueba).
+  El umbral de percepción de frecuencia está en torno a 5 cents, más de
+  6000 veces por encima.
+- **Diferencia de audio "4,8·10⁻⁷", unidades y método:**
+  - **Prueba:** "e4c copy: after STEREO -> MID + SIDE (static bank)…".
+  - **Montaje:** 241 parámetros aleatorios, con la dinámica de STEREO
+    apagada para comparar la parte estática. Copy STEREO → MID + SIDE desde
+    el menú.
+  - **Entrada:** la misma en los dos casos, 1 s a 48 kHz (100 bloques de
+    480): ruido ±0,3 más dos senos, estéreo.
+  - **Proceso:** primero en Stereo y, tras un `prepareToPlay`, en Mid/Side.
+  - **Métrica:** máximo de |salida Stereo − salida M/S| en todas las
+    muestras de los dos canales, en **valor de muestra float lineal (1,0 =
+    0 dBFS)**.
+  - **Resultado:** **4,77·10⁻⁷ = 2⁻²¹** (−126,4 dBFS), para un pico de salida
+    de 2,36 (+7,5 dBFS, por las ganancias aleatorias). Es **−133,9 dB
+    relativo al pico**, unos 2 ulp de float a esa amplitud.
+  - **Origen:** el redondeo del codificador M/S (≤ 1 ulp) más esos pocos ulp
+    de frecuencia.
+  - **Lectura:** no es un cambio audible ni significativo.
+- **Detectores tras copiar:** con dinámica activa copiada a MID y SIDE, un
+  tono solo en M reduce MID 9 dB y SIDE 0 dB, y un tono solo en S al revés
+  (prueba). Copiar ajustes no une los detectores.
+- **No se refactoriza** para eliminar esos pocos ulp: no hay ninguna
+  necesidad audible ni funcional, y obligaría a escribir valores sin pasar
+  por la vía normal de parámetros del host.
 - **Persistencia:** el banco copiado se recupera tras guardar y reabrir
   (probado).
 - **Contrato público:** sin cambios. Se usan los parámetros y el estado v5
@@ -175,14 +201,28 @@ Generadas con el editor real: `labq8_ui_snapshot … --e4c`, salida en
 
 **Legibilidad y geometría:**
 
-| Zoom | Valoración |
-|---|---|
-| 100 % y 60 % | Botones y cabecera claros. Al 60 % el prefijo "SIDE" de la cabecera es pequeño (mayúscula de 5,4 px), pero legible |
-| 40 % en Retina | Legible |
-| 40 % en 1x | MID/SIDE se distinguen igual que STEREO y M/S, que ya eran así. **El prefijo "SIDE" de la cabecera (mayúscula de 3,6 px) es apenas legible**; el banco sigue identificado por su botón verde |
+**Prefijo de la cabecera, antes y después** (`header_before_after.png`;
+altura de mayúscula en píxeles de pantalla):
 
-**Pendiente de decidir para consolidar D3:** subir el prefijo a una
-mayúscula de 11 px, que sigue cabiendo antes de "Filter Type".
+| Zoom | Mayúscula 9 (1ª entrega) | **Mayúscula 11 (actual)** | Valoración |
+|---|---|---|---|
+| 40 % en 1x | 3,6 px, apenas legible | **4,4 px**, legible | Mejora clara |
+| 40 % en Retina | 7,2 px | **8,8 px** | Legible en los dos casos |
+| 60 % en 1x | 5,4 px | **6,6 px** | Mejora |
+| 100 % en 1x | 9 px | **11 px** | Claro en los dos casos |
+
+- **El cambio afecta solo a una constante** (`bankPrefixCapHeight`), usada
+  únicamente por `BandHeader`.
+- **Sin cambios:** el color, la posición de inicio, la separación y "BAND n".
+- **Ancho:** el texto más largo pasa de x 292 a x 299, frente a los 346 de
+  "Filter Type".
+
+**Botones STEREO, M/S, MID y SIDE:**
+- Claros al 100 y al 60 %.
+- Al 40 % en 1x, MID y SIDE se leen igual que STEREO y M/S, que ya eran así
+  en el diseño.
+- Al 40 % siguen siendo utilizables: 18,8 × 17,2 pt, con los clics
+  verificados en el centro y junto a los bordes.
 
 ---
 

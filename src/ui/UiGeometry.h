@@ -248,7 +248,7 @@ inline constexpr Rgb modeTextColour { 182, 174, 163 }, modeLitTextColour { 9, 32
 // chassis labels' grey ("SIDE  BAND 4"); the label must end before the
 // chassis' "Filter Type" (x 346).
 inline constexpr Rgb chassisLabelColour { 188, 188, 166 };
-inline constexpr float bankPrefixCapHeight = 9.0f;
+inline constexpr float bankPrefixCapHeight = 11.0f; // 9 in the first E4c delivery: too small at 40 % (1x)
 inline constexpr float bankPrefixGap = 9.0f;
 inline constexpr float filterTypeLabelLeft = 346.0f;
 } // namespace labq8::ui::geometry

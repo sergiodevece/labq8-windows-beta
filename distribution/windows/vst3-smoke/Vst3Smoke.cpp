@@ -1,5 +1,5 @@
 // LABQ8 Windows beta: loads the REAL built LABQ8.vst3 through JUCE's VST3 host
-// and checks identity, the 80 public parameters, stereo and mono processing
+// and checks identity, the 241 public parameters, stereo and mono processing
 // (static Bell and dynamic Bell), state round trip, automation, and the
 // editor (with audio running on another thread, as in a host), capturing
 // the native Windows window. Adapted from HARMOHIT MASTER R2's VST3Smoke.
@@ -114,25 +114,29 @@ int main (int argc, char** argv)
             return p;
         };
 
-        // The 80 public parameters, by name.
+        // E4d contract: 241 public parameters (80 STEREO "Band n ...",
+        // "Stereo Mode", 80 "Mid Band n ...", 80 "Side Band n ..."), plus the
+        // bypass parameter JUCE's VST3 wrapper adds for the host.
         auto a = create();
-        // The 80 public parameters, plus the bypass parameter JUCE's VST3
-        // wrapper adds for the host (not one of the plugin's own).
-        int own = 0;
+        int stereo = 0, mid = 0, side = 0, mode = 0;
         juce::StringArray others;
         for (auto* p : a->getParameters())
         {
-            if (p->getName (128).startsWith ("Band "))
-                ++own;
-            else
-                others.add (p->getName (128));
+            const auto name = p->getName (128);
+            if (name.startsWith ("Band ")) ++stereo;
+            else if (name.startsWith ("Mid Band ")) ++mid;
+            else if (name.startsWith ("Side Band ")) ++side;
+            else if (name == "Stereo Mode") ++mode;
+            else others.add (name);
         }
-        std::cout << "parameters: " << a->getParameters().size() << " (" << own << " Band n ..., others: " << others.joinIntoString (", ") << ")\n";
-        check (own == 80 && others.size() <= 1, "80 public parameters (+ the VST3 host bypass)");
-        for (int band = 1; band <= 8; ++band)
-            for (const auto* control : { "Frequency", "Gain", "Q", "Bypass", "Type", "Dynamic EQ", "Threshold", "Range", "Attack", "Release" })
-                param (a, "Band " + juce::String (band) + " " + control);
-        std::cout << "PASS 80 parameters (Band 1..8: Frequency, Gain, Q, Bypass, Type, Dynamic EQ, Threshold, Range, Attack, Release)\n";
+        std::cout << "parameters: " << a->getParameters().size() << " (STEREO " << stereo << ", Stereo Mode " << mode << ", MID " << mid << ", SIDE " << side
+                  << ", others: " << others.joinIntoString (", ") << ")\n";
+        check (stereo == 80 && mode == 1 && mid == 80 && side == 80 && others.size() <= 1, "241 public parameters (+ the VST3 host bypass)");
+        for (const juce::String prefix : { "Band ", "Mid Band ", "Side Band " })
+            for (int band = 1; band <= 8; ++band)
+                for (const auto* control : { "Frequency", "Gain", "Q", "Bypass", "Type", "Dynamic EQ", "Threshold", "Range", "Attack", "Release" })
+                    param (a, prefix + juce::String (band) + " " + control);
+        std::cout << "PASS 241 parameters (STEREO, MID and SIDE Band 1..8: Frequency, Gain, Q, Bypass, Type, Dynamic EQ, Threshold, Range, Attack, Release; Stereo Mode)\n";
 
         // Stereo: a flat EQ passes the sine unchanged; a +6 dB Bell at 1 kHz
         // gives +6 dB at 1 kHz; with dynamics (threshold -40, range 6) the
@@ -309,7 +313,7 @@ int main (int argc, char** argv)
         editor.reset();
         for (auto* p : { &a, &b, &c, &m })
             (*p)->releaseResources();
-        std::cout << "PASS LABQ8 VST3: identity, 80 parameters, stereo/mono static and dynamic Bell, state, automation, editor with audio; "
+        std::cout << "PASS LABQ8 VST3: identity, 241 parameters, stereo/mono static and dynamic Bell, state, automation, editor with audio; "
                   << checks << " checks\n";
         std::cout << "This is a JUCE test host: NOT Pro Tools, NOT Blue Cat PatchWork, NOT the Steinberg validator.\n";
     }

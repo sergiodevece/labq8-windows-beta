@@ -1,0 +1,21 @@
+LABQ8 E4d — SMOKE EN WINDOWS (portátil Intel, VST3 x64)
+Proyecto nuevo o copia, 48 kHz, volumen prudente. OK / FALLO + nota.
+
+[ ] 1. CARGA: el host encuentra LABQ8 y abre la interfaz completa.
+[ ] 2. AUDIO: con todo plano, STEREO y M/S suenan igual que sin el plugin;
+       una banda subida se oye. Pista estéreo y pista mono.
+[ ] 3. MODOS: STEREO ↔ M/S durante la reproducción, sin clics (fundido de
+       20 ms). En M/S, MID y SIDE editan bancos independientes.
+[ ] 4. ANALIZADOR: en STEREO "Analyzer: …" como siempre. En M/S el selector
+       dice "MID …" o "SIDE …" según el banco; "Output → L/R Post (output)"
+       muestra la salida L/R. Pre + Post con banco plano: trazas iguales.
+[ ] 5. DINÁMICA POR BANCO: Dynamic EQ en una Bell de MID y otra de SIDE; DYN y
+       ALL muestran solo la del banco editado. Al cambiar de modo desaparece
+       un momento y vuelve con los valores correctos.
+[ ] 6. ZOOM 40 / 60 / 100 %: selector y cabecera legibles; nada se descoloca.
+[ ] 7. SESIÓN: guarda, cierra, reabre: modo, bancos y sonido iguales.
+[ ] 8. ESTABILIDAD: automatiza, para y arranca el transporte, cambia de
+       buffer y de frecuencia de muestreo, varias instancias. Anota la CPU.
+
+Anota: Windows, host y versión, frecuencia, buffer, pantalla (escala de
+Windows) y capturas de la interfaz.

@@ -1,0 +1,229 @@
+dsp: 0 dB gain is a bit-exact identity
+dsp: band bypass is bit-exact once settled, and un-bypass restores the curve
+dsp: Bell coefficients match the analog prototype and are stable
+dsp: measured sine response matches the design (float I/O)
+dsp: frequency and Q changes ramp smoothly to the new response
+dsp: stereo channels are independent and match mono processing
+dsp: limits and invalid values keep the band stable and finite
+dsp: output is bit-identical for any host block size
+dsp: non-finite input samples are contained
+dsp: fast random automation stays finite, bounded and recovers
+dsp: gain steps and bypass toggles are click-free
+processor: parameter layout exposes stable IDs, ranges and defaults
+processor: state round-trip restores every parameter
+processor: corrupt or foreign state is ignored
+processor: only matching mono or stereo layouts are supported
+processor: audio path matches the DSP core (mono and stereo, 44.1/48/96 kHz)
+processor: follows host automation between blocks
+processor: development editor can be created
+eq: each of the 8 bands shapes the response on its own
+eq: cascade response equals the sum of the 8 band responses (dB)
+eq: neutral settings are bit-exact transparent (mono and stereo)
+eq: individual band bypass removes exactly that band
+eq: simultaneous automation of all bands ramps in lockstep
+eq: random automation of all bands stays finite, stable and recovers
+eq: channels and bands keep independent state
+eq: cascade output is bit-identical for any host block size
+eq: non-finite input is contained through the cascade
+eq: extreme settings stacked in all 8 bands stay stable and decay
+processor: 8-band layout keeps E0 IDs and adds b2..b8 with version hint 2
+processor: default and all-0 dB states are bit-exact transparent
+processor: 8-band audio path matches the EQ core (mono and stereo, 44.1/48/96 kHz)
+processor: output is bit-identical for any host block size with 8-band automation
+processor: simultaneous host automation of several bands
+state: genuine E0 states migrate with deterministic defaults for bands 2..8
+state: migrated E0 sessions sound like E0
+state: v2 round-trip restores all 32 parameters exactly
+state: partial, unversioned and unknown content is handled deterministically
+rt: the allocation counter detects allocations (self-test)
+rt: no heap allocation while processing (EQ core and processor)
+perf: 8-band EQ core CPU load (stereo, reproducible)
+filter: every topology matches its analog prototype (A, D)
+filter: frequency, gain and Q mean what the schema says (B)
+filter: measured sine response through EqBand matches the design (float I/O)
+filter: limits, Nyquist and invalid input keep every topology stable (C)
+filter: shelf overshoot and cut resonance across the Q range (measured, informative)
+band: Bell type is bit-identical to the frozen E0 BellBand (automation and bypass)
+band: Bell and shelves at 0 dB are bit-exact transparent and idle (G)
+band: Cut and Notch stay active at 0 dB and ignore gain entirely (H)
+band: individual bypass fades every topology to the dry signal and back (G)
+crossfade: output is the linear mix of two independent paths, convex, exact at the end (K)
+crossfade: lasts round(20 ms * fs) samples at every rate and is block-size independent (K, L)
+crossfade: policy for requests during a fade (J)
+crossfade: smoothed type changes reduce discontinuities vs an abrupt topology switch (K)
+crossfade: phase cancellation during a fade matches theory (K, measured)
+type changes: fast random changes with automation stay finite, stable and converge (J)
+band: output bit-identical for any block size with type changes, mid-fade requests and bypass (L)
+band: non-finite input is contained in single-path and crossfade modes (M)
+band: stereo equals two monos through type changes; no crosstalk (E)
+multi: eight bands of different types in cascade (F)
+band: frequency, Q and gain automation ramps every topology like Bell (I)
+e1b processor: b1..b8_type appended after the 32 E1a parameters, hint 3, frozen indices
+e1b processor: audio path equals the EQ core with mixed types (mono and stereo, 44.1/48/96 kHz)
+e1b processor: type automation is block-size independent and gain survives type changes
+state: genuine E1a states load as eight Bells with their values, deterministically (N)
+state: E1a sessions sound exactly like E1a (eight frozen BellBands) (N)
+state: v3 round-trip of all 40 parameters; out-of-range type values are sanitised
+rt: no heap allocation with type changes and crossfades (EQ core and processor) (M)
+perf: worst case, all 8 bands crossfading continuously (stereo, Release)
+q limit: effective Q per type; inside the limit the stored Q is used bit for bit
+q limit: shelf overshoot and cut resonance with stored Q 18, every rate and extreme frequency (1, 2)
+q limit: worst-case headroom at extreme settings is that of the limit, not of Q 18 (3)
+q limit: stored Q above the limit changes nothing; crossing it ramps like any Q change (4)
+q limit: a type change uses the effective Q of each path
+q limit: processor keeps the stored Q in parameters and state; only the DSP uses the effective Q (5)
+state: genuine E1b sessions keep their stored Q; inside the limits nothing changes (N)
+dyn detector: a sine at f0 reads its sine-peak dBFS level for any f0, Q and rate (1)
+dyn detector: signals outside the region are rejected as the 4th-order band-pass predicts (2)
+dyn law: knee, slope and range of the transfer law; steady state below and above the threshold (3, 5)
+dyn ballistics: attack and release time constants (4)
+dyn transients: bursts and impulses stay bounded, no lookahead, full recovery (6)
+dyn at rest: low level, silence and dynamics off are bit-identical to the static band (7, 13)
+dyn extremes: signals above 0 dBFS are not clipped or limited; NaN/Inf are contained (8)
+dyn automation: fast random changes of every setting stay finite, bounded, allocation-free and converge (9)
+dyn blocks: output bit-identical for any block size with dynamics active and automation (10)
+dyn modulation: gain changes are interpolated per sample; no significant clicks; time-varying filter stays stable (11)
+dyn stereo: linked detection applies one reduction to both channels; link modes
+dyn perf: CPU of one dynamic band against the static band (stereo, Release) (12)
+dyn8: eight dynamic Bells at once, each with its own threshold and range (1, 6)
+dyn8: detectors read the common original input: independent of every other band, no feedback (2, 3)
+dyn8: one dynamic band among seven static ones equals an independent per-segment reference (4)
+dyn8: automating all eight sections and bands is block-size independent, finite and allocation-free (5, 12, 14)
+dyn8: attack and release are independent per band (7)
+dyn8: max-linked stereo, panning and L/R differences (8, 9)
+dyn8: type changes away from a dynamic Bell leave no modulation and no discontinuity (10)
+dyn8: enabling, disabling and bypassing dynamics during playback is smooth and exact (11)
+dyn8: extreme frequency and Q, above 0 dBFS, NaN and Inf: bounded and finite (13, 14, 15)
+dyn8: several bands modulating at once match a per-sample reference; no extra artefacts (16)
+dyn8 perf: eight dynamic bands, stereo, Release
+e2c processor: 80 parameters; the 40 dynamic ones appended as indices 40..79 with hint 4 and their defaults (1, 2, 3)
+e2c state: v4 round-trip of the eight bands' dynamic parameters (4)
+e2c state: every earlier state (E0, E1a, E1b, E1b.1/E2a/E2b) loads with dynamics off, deterministically (5)
+e2c processor: eight bands automated independently equal the core fed band by band, mono and stereo (6, 8, 12)
+e2c processor: host automation is independent of the host block size (12)
+e2c processor: Dynamic Enable during playback is smooth; dynamics only on Bell (7, 9)
+e2c processor: dynamics off is transparent and equals the static path, whatever the dynamic settings (10, 11)
+e2c rt: no allocation and finite output with eight dynamic bands, automation and NaN/Inf input (13)
+e2c perf: processor with eight dynamic bands off and on (stereo, Release) (14)
+ui model: display texts, axes and the static response equal the DSP's
+ui editor: opens and closes repeatedly; default 60 %, no resize corner, proportional hit boxes at every zoom
+ui editor: selecting each band shows exactly its parameters and changes none
+ui editor: panel edits reach only the selected band
+ui editor: host automation updates the panel; automation of other bands is kept
+ui editor: audio is bit-identical with the editor open, closed and switching bands
+ui editor: loading a state with the editor open restores every parameter and the panel follows
+ui editor: controls of the design without implementation change nothing
+ui bypass: each band button switches only its own band on / off, with one gesture; BAND n is an indicator only
+ui routing: at every zoom the mouse reaches each band button, the settings icon and the screen; no corner
+ui bypass: host automation, save and restore update the indicator
+ui dynamic: the switch is disabled for non-Bell types and the stored bN_dyn_on is kept
+ui zoom: menu of the settings icon, 40-140 % in six sizes, remembered globally; never part of the plugin state
+ui zoom: sizes that do not fit the screen are disabled, never applied, and the editor opens at the largest that fits
+ui nodes: a click selects the band and shows its Q handles; other node switches, empty screen and chassis hide
+ui nodes: dragging moves FREQUENCY horizontally, GAIN vertically, both diagonally; one gesture each; panel follows
+ui Q handles: Bell / Notch on their real band edges; shelves / cuts a pure Q control within the effective range
+ui nodes: editing from the screen leaves the audio path to the parameters (bit-identical to the same automation)
+meter: silence reads exactly 0; sample peaks of known signals, IN before and OUT after the EQ, above 0 dBFS too
+meter: channels are independent; a mono track measures its one channel and nothing else
+meter: a one-sample peak is caught at any position and block size; held until taken, then reset
+meter: host bypass passes the signal through unchanged and meters it (IN = OUT); NaN / Inf read as above the scale
+meter rt: lock-free atomics; no allocation while metering in processBlock and processBlockBypassed
+meter concurrency: the editor taking the peaks at any moment never loses one and never reads one twice
+meter scale: 26 cells on the printed scale; green up to 0 dBFS, amber to +6, red above
+meter ballistics: instant rise, linear fall of 11.8 dB/s independent of the frame rate, then rest
+meter view: real levels light the right cells; mono in both columns; nothing repainted at rest; old peaks dropped
+meter view: at the master's level the meters are drawn exactly as in the approved design
+spectrum tap: PRE holds exactly the input and POST exactly the output, any block size, across the ring's wrap
+spectrum tap: inactive writes nothing; the audio is bit-identical with the taps on and off; host bypass gives PRE = POST = input
+spectrum tap: a new stream (prepareToPlay) starts a generation; nothing older, and nothing before `from`, is given
+spectrum tap rt: lock-free; no allocation while capturing in processBlock and processBlockBypassed
+spectrum tap coherence: a copy is intact exactly while the writer has not claimed the sample that overwrites its oldest one
+spectrum tap concurrency: every accepted copy is exactly the latest samples, contiguous, under stress; overwritten copies are refused
+spectrum analysis: FFT size by rate; sines read their dBFS level at their frequency's line, centred on a bin or between two
+spectrum analysis: dynamic range (-90 dBFS next to 0 dBFS) and frequency resolution, measured
+spectrum analysis: white noise at its theoretical level; a sweep is followed; channels combine in power (no cancellation)
+spectrum ballistics: rises at once, falls 17.4 dB/s whatever the frame rate, only falls without new audio, then rests
+spectrum analysis: the result depends only on the latest samples, not on the host's block size
+spectrum views: ALL + POST by default; EQ only the curve, SPECTRUM only the spectrum, ALL both; DYN the curve and its dynamics; per instance, never in the state
+spectrum view: a real sine at its level; PRE vs POST through a +12 dB Bell; silence and a stopped transport fade to rest (never frozen)
+spectrum view: a new sample rate re-sizes the FFT and starts afresh; mono; switching a trace on shows nothing from before
+spectrum view: the EQ curve is cached; spectrum frames never recompute it; a change of the curve does; header texts fit
+spectrum view: the cached curve follows Gain, Frequency and Q from the panel, the host and host automation, while the spectrum runs
+spectrum scales: EQ +-24 dB, SPECTRUM dBFS on the left, ALL dBFS on the right; on the grid, no overlaps, the EQ labels hidden only in SPECTRUM
+dynamics telemetry: up to 256 samples each block shows exactly what the DSP applied at its end, for all eight bands
+dynamics telemetry: in longer blocks (A4 + A2) the shown instant is the most reducing 256-sample sub-block end, all bands of that instant
+dynamics telemetry: A2 keeps the most reducing offer until the editor reads it, then follows the next one, whatever its value
+dynamics telemetry: inactive offers nothing; host bypass shows no dynamics; prepareToPlay starts a new generation
+dynamics telemetry: a type change away from Bell stops showing dynamics at once; band bypass releases it within the 20 ms fade
+dynamics telemetry: offering never allocates and the output is bit-identical with the telemetry active or not
+dynamics telemetry: under a concurrent writer every accepted snapshot is one instant, never a mix; a read peak never sticks
+dynamics A4: the processor's 256-sample sub-blocks give the same output, bit for bit, as one EQ call per host block (with automation)
+dynamics view: in steady state the dotted curve is the EQ's real response (EqCore::magnitudeAt), clamp included; transitions measured
+dynamics view: only Bells that really reduce; silence returns to the static curve; 100 ms without audio, host bypass or a new stream remove it
+dynamics view: the static curve's cache is never repainted by the dynamics; nothing repaints at rest; DYN readouts sit under their points
+e4a fixtures: write e4a_custom_v5 and contract_v5_e4a (only with LABQ8_WRITE_FIXTURES)
+e4a contract: host indices 0..79 are exactly the v4 contract of 152d46c (IDs, names, hints, host IDs, ranges, defaults, texts)
+e4a contract: all 241 parameters match the reviewed v5 inventory (contract_v5_e4a.txt)
+e4a contract: proc_mode at 80, MID at 81..160 and SIDE at 161..240, band by band, hint 5, IDs and names as specified
+e4a contract: every MID and SIDE parameter means exactly what its STEREO counterpart means
+e4a contract: IDs unique, no reserved ID reused; VST3 / AU host IDs unique, not JUCE's reserved ones; AU order of the 80 v4 parameters unchanged
+e4a state: every earlier state (v1..v4, incl. genuine UI-2c) loads as v5: Stereo, MID / SIDE at defaults, stored values unchanged, deterministic
+e4a state: v5 serialisation: root LABQ8, labq8StateVersion=5, one PARAM per parameter (241, explicit values), nothing else
+e4a state: v5 round trip restores all 241 parameters exactly and is a fixed point (random sessions)
+e4a state: genuine v5 fixture restores every value; partial v5, unknown IDs and a newer version are handled deterministically
+e4a state: a v5 session opened and saved again by the v4 build (152d46c) keeps its MID, SIDE and proc_mode values
+e4a parameters: writing any one of the 241 parameters (host automation path) changes that parameter only
+e4a audio: in Stereo the output is bit-identical whatever the MID / SIDE banks hold (mono and stereo, 3 rates, 2 block sizes)
+e4b A: in Stereo the engine is bit-identical to the bare STEREO core, whatever MID / SIDE hold (standby running), mono and stereo, 4 block sizes
+e4b B: M/S with flat MID and SIDE banks is bit-exact transparent (stereo and mono, 3 rates, 4 block sizes, STEREO bank active or flat)
+e4b B: entering the flat path when a band returns to 0 dB gives exactly the input, at the same sample for every host block size
+e4b C: M/S output equals the reference (encode, two separate EqCores, decode) bit for bit: static and dynamic random banks, 3 rates, 4 block sizes
+e4b C: banks are independent: changing every MID setting leaves the SIDE core's trajectory bit-identical, and vice versa; detectors read their own signal
+e4b D: a mono signal (L = R) never gets SIDE content: L' = R' bit for bit with any SIDE bank, and it equals the STEREO path with the same bank
+e4b D: on a mono bus (1 channel) MID processes the channel and SIDE has no effect
+e4b E: an antiphase signal (R = -L) never gets MID content: L' = -R' bit for bit, and MID settings change nothing
+e4b F: codec levels: L-only / R-only / mono / antiphase sines through MID +6 dB and SIDE -6 dB give the analytic amplitudes (0.01 dB)
+e4b G: mode change during playback: identical to Stereo before, 20 ms convex crossfade, exactly M/S after; reversal returns exactly to Stereo; 4 block sizes
+e4b G: host bypass and band bypass in M/S; the telemetry shows the STEREO bank only while it is heard
+e4b H: v5 sessions with different settings in the three banks restore their values and sound (restored sound a fixed point, bit for bit; Stereo and M/S, fixture included)
+e4b robustness: silence stays exactly silent, non-finite input is contained, 1-sample blocks, sample-rate changes
+e4b I: stress: random automation of all 241 parameters and mode toggles, random block sizes 1..2048; finite, bounded, no allocation
+e4b I: concurrency: parameters (mode included) written from another thread while the audio thread processes
+e4b standby: under rapid automation, host bypass, transport gaps and a sample-rate change, the path not heard follows exactly: after the switch it equals a processor that heard it all along (both directions)
+e4b flat path: it never skips pending work: enabling dynamics, a gain, a type change or a bypass on flat banks leaves it in that same block, and the output equals the reference from then on
+e4c T1: in each bank (STEREO, MID, SIDE) every knob, reset, type, dynamic switch, band button, node and Q handle writes exactly the expected IDs of that bank
+e4c T2: STEREO / M/S write only proc_mode, one gesture; the lit one and MID / SIDE write nothing and open no gesture
+e4c T3: switching bank or mode from the editor changes none of the 241 values (except proc_mode by the mode buttons) and the panel shows exactly the new bank
+e4c T4/T5: host automation of proc_mode switches the bank shown on the next refresh; automation of the other bank moves only the grey curve
+e4c T6: a mode change during a knob or node drag waits; the gesture closes on its own bank and nothing reaches the new bank
+e4c T7: in Stereo MID / SIDE are dimmed and take no clicks; the STEREO bank stays fully editable
+e4c T8: the audio is bit-identical with and without the editor while it switches modes' views, banks, bands and views (no parameter writes)
+e4c T9: geometry: the four buttons sit on their measured frames inside the housing; the header always ends before "Filter Type"
+e4c T10: the edited bank survives closing the editor; a new instance edits MID; restored v4 / v5 sessions show the bank of their mode
+e4c T11: on a mono track in M/S, SIDE can be selected and edited (no blocking); the engine keeps SIDE inaudible
+e4c rapid: 600 random clicks of mode / bank buttons, host mode automation and refreshes keep the panel on the right bank, write only proc_mode, gestures balanced
+e4d views: in M/S the dynamic overlay follows the bank shown (DYN / ALL), the grey curve stays in EQ / ALL, the analyzer analyses the edited bank or the L/R output; STEREO unchanged
+e4c copy: STEREO -> MID + SIDE copies all 80 values of the eight bands, never writes STEREO or proc_mode, one gesture per written parameter
+e4c copy: MID -> SIDE and SIDE -> MID write only the target bank; the source and STEREO are untouched; restored after save and reopen
+e4c copy: after STEREO -> MID + SIDE (static bank), switching to M/S sounds like STEREO (within the copy's ulp); the menu keeps the six zoom choices
+e4c routing: at every zoom (40 % included) clicks at the centre and near the edges of STEREO, M/S, MID and SIDE reach that button
+e4c copy: after Copy STEREO -> MID + SIDE with dynamics on, the MID and SIDE detectors stay independent (tone in M reduces MID only; tone in S reduces SIDE only)
+e4d F1: a sine of amplitude A only in M (L = R) reads 20 log10 A in MID PRE / POST and nothing in SIDE; only in S (L = -R) the reverse
+e4d F2/F3: a mono signal shows no SIDE even with an extreme SIDE bank; MID +6 dB at f0 reads POST - PRE = +6 dB in MID, 0 dB in SIDE
+e4d F4 + sync: with flat banks MID / SIDE POST equals PRE bit for bit (aligned at the same stream position), impulses at the same index, for 5 block sizes
+e4d F6/F7: mono track: MID is the channel, SIDE nothing; silence draws nothing; host bypass: PRE = POST; a sample-rate change re-analyses at the new rate
+e4d F5: in STEREO the analyzer is the UI-2b one (L/R, unaligned read, mean power of the channels)
+e4d D1/D2: with different dynamics in STEREO, MID and SIDE, the bank shown gets exactly its own core's reduction; a tone in M reduces MID only, in S SIDE only
+e4d D: all eight Bell bands of MID and of SIDE show their own real reduction
+e4d D3: during the 20 ms mode fade the data is unavailable (not 0 dB); a bank change never shows the previous bank's values; afterwards the real values return
+e4d D3 guards: a mode change by automation while MID is shown is unavailable during the fade (the outgoing path is not shown as live); a late snapshot of the previous bank is never drawn
+e4d D3 telemetry: an unread snapshot of another bank is replaced by the watched bank's, even with less reduction; an unavailable offer replaces a live one
+e4d D3 restart: after any bank change the overlay waits for an offer made after the change; MID -> SIDE -> MID with no audio in between does not redraw MID's earlier snapshot
+e4d D3 rapid: 300 random MID / SIDE and STEREO / M/S changes during playback: every drawn reduction belongs to the bank shown and its path is heard
+e4d D4/D5: the drawn reduction is the effective one (+-24 dB clamp); host bypass and silence draw nothing; SIDE on a mono track draws nothing
+e4d U1: analyzer texts and menu: MID / SIDE Pre, Post, Pre + Post and L/R Post in M/S; the STEREO menu and texts unchanged
+e4d T1/T2: no allocation in processBlock with the editor open in M/S (analyzer PRE + POST, dynamics) through mode and bank changes; the audio is bit-identical with the editor open and closed
+e4d instances: two instances watching MID and SIDE keep their own telemetry and analyzer; nothing is shared
+e4d sync prepare: after prepare (a new stream) a tap accepts no alignment until it has written in the new generation; its stream position restarts
+e4d sync stress: two instances, variable block sizes, transport stops, prepareToPlay restarts, sample-rate changes, rapid MID / SIDE and PRE / POST changes: PRE is only analysed aligned with POST, and never with samples of a previous stream
+e4d sync: read between the PRE and POST writes of a block (the audio thread is mid-block): MID PRE stays aligned with POST by stream position; the plain read would be one block ahead

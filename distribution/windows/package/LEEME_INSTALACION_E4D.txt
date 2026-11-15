@@ -1,0 +1,39 @@
+VITAPLUG LABQ8 E4d — BETA PRIVADA PARA SMOKE INTERNO — NO DISTRIBUIR
+Windows x64 (Intel / AMD de 64 bits) · VST3
+=====================================================================
+
+Contenido: ecualizador dinámico de 8 bandas con modos STEREO y M/S (bancos
+MID y SIDE independientes), analizador FFT PRE/POST (en M/S, de MID o SIDE)
+y dinámica por banco. Versión y origen exactos en VERSION.txt.
+
+REQUISITOS
+- Windows 10 u 11 de 64 bits.
+- Un host VST3 de 64 bits (Reaper, Cubase, Studio One, Ableton Live, Bitwig…).
+- Puede hacer falta el Microsoft Visual C++ Redistributable x64 (VS 2022) si
+  Windows avisa de que falta MSVCP140.dll o VCRUNTIME140.dll. Solo desde
+  Microsoft: https://learn.microsoft.com/es-es/cpp/windows/latest-supported-vc-redist
+
+INSTALACIÓN
+1. Cierra el host.
+2. Descomprime el ZIP. Si quieres, comprueba los archivos con SHA256.txt
+   (PowerShell: Get-FileHash -Algorithm SHA256 <archivo>).
+3. Si había una beta anterior, borra antes
+   C:\Program Files\Common Files\VST3\LABQ8.vst3
+4. Copia la carpeta COMPLETA "LABQ8.vst3" (no solo el archivo de dentro) a
+       C:\Program Files\Common Files\VST3\
+   Windows puede pedir permiso de administrador.
+5. Abre el host y vuelve a explorar los plugins VST3. Busca "LABQ8"
+   (fabricante VitaPlug).
+
+DESINSTALAR / VOLVER ATRÁS
+- Con el host cerrado, borra C:\Program Files\Common Files\VST3\LABQ8.vst3 y
+  vuelve a copiar, si quieres, la beta anterior.
+- Trabaja siempre sobre copias de proyecto: el estado E4d (v5) no se puede
+  abrir con betas anteriores.
+
+SI NO CARGA
+- Comprueba que copiaste la carpeta LABQ8.vst3 completa y que el host es de
+  64 bits.
+- Si falta MSVCP140 / VCRUNTIME140, instala el Redistributable de arriba.
+- Windows puede avisar porque el binario no lleva firma digital.
+- En Windows la tipografía puede verse algo distinta de macOS.

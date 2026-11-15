@@ -1,0 +1,29 @@
+LABQ8 — BETA PRIVADA — PRUEBAS PARA MIGUELO (Pro Tools + Blue Cat PatchWork x64)
+Usa una sesión nueva o una copia, 48 kHz, volumen de escucha prudente.
+Marca cada punto OK / FALLO y, si falla, di en qué paso.
+
+[ ] 1. EL PLUGIN ABRE: carga en PatchWork y muestra la interfaz completa
+       (verde, rack, pantalla con curva y 8 nodos).
+[ ] 2. EL AUDIO SE PROCESA: con todas las bandas a 0 dB suena igual que sin el
+       plugin; al subir una banda se oye el cambio. Prueba en estéreo y en mono.
+[ ] 3. LAS OCHO BANDAS: pulsa cada nodo, mueve frecuencia, ganancia y Q; prueba
+       los tipos Bell, Low Shelf, High Shelf, Low Cut, High Cut y Notch, y los
+       botones 1-8 para encender o apagar cada banda.
+[ ] 4. LA DINÁMICA BELL ACTÚA: en una banda Bell activa "Dynamic EQ" y baja el
+       umbral (Threshold) hasta que la música lo supere. En la vista DYN se ve
+       una curva punteada, un relleno de color y la cifra de reducción
+       (p. ej. "-2.7"); el sonido se comprime en esa zona.
+[ ] 5. FFT Y MEDIDORES: IN/OUT se mueven con la señal; en SPECTRUM y ALL se ve
+       el espectro; el menú "Analyzer" cambia entre Pre, Post y Pre + Post.
+[ ] 6. EL ZOOM RESPONDE: icono de ajustes, prueba 40 / 60 / 80 / 100 %;
+       nada se descoloca y el ratón actúa donde se dibuja.
+[ ] 7. LA SESIÓN SE GUARDA Y RECUPERA: ajusta varias bandas, guarda, cierra
+       Pro Tools, vuelve a abrir: mismos valores y mismo sonido.
+[ ] 8. SIN CLICS, BLOQUEOS NI COSAS RARAS: mueve controles y automatiza Gain o
+       Frequency durante la reproducción; para y arranca el transporte; abre
+       varias instancias. Anota la CPU si puedes.
+
+ENVÍANOS: capturas reales dentro de PatchWork / Pro Tools (interfaz completa y
+la cabecera con las pestañas), versiones de Windows, Pro Tools y PatchWork,
+frecuencia de muestreo, buffer y el resultado de los 8 puntos.
+La beta no se da por aprobada en Windows hasta recibir estas pruebas.

@@ -1,0 +1,54 @@
+VITAPLUG LABQ8 — BETA PRIVADA — NO DESTINADA A DISTRIBUCIÓN PÚBLICA
+Windows x64 · VST3 · solo para Miguel (Miguelo), beta tester de VitaPlug
+=====================================================================
+
+LABQ8 es un ecualizador dinámico de 8 bandas: EQ estática y dinámica en Bell,
+medidores IN/OUT, analizador FFT PRE/POST y vistas EQ / SPECTRUM / DYN / ALL.
+Versión y origen exactos en VERSION.txt. No compartas este paquete.
+
+REQUISITOS
+- Windows 10 u 11 de 64 bits (x64).
+- Pro Tools con Blue Cat PatchWork de 64 bits: el mismo camino que usaste con
+  Gainer80 y HARMOHIT. LABQ8 es un VST3 nativo x64: NO es AAX ni AU, y Pro
+  Tools no lo carga directamente; se carga dentro de PatchWork.
+- Puede hacer falta el Microsoft Visual C++ Redistributable x64 (VS 2022) si
+  Windows avisa de que falta MSVCP140.dll o VCRUNTIME140.dll. Descárgalo
+  solo de Microsoft:
+  https://learn.microsoft.com/es-es/cpp/windows/latest-supported-vc-redist
+
+INSTALACIÓN (el mismo método que con Gainer80)
+1. Cierra Pro Tools y cualquier programa que use plugins.
+2. Descomprime el ZIP. Si quieres, comprueba los archivos con SHA256.txt.
+3. Copia la carpeta COMPLETA "LABQ8.vst3" (no solo el archivo de dentro) a
+   la carpeta estándar de plugins VST3 de Windows:
+       C:\Program Files\Common Files\VST3\
+   Windows puede pedir permiso de administrador. No uses carpetas AAX.
+4. Abre Pro Tools e inserta Blue Cat PatchWork (x64) en una pista estéreo de
+   prueba.
+
+VOLVER A DETECTAR EL PLUGIN
+- En PatchWork, carga un plugin VST3 y busca "LABQ8" (fabricante VitaPlug).
+- Si no aparece: comprueba en las opciones de PatchWork qué carpetas VST3
+  explora (debe incluir C:\Program Files\Common Files\VST3\) y pide que vuelva
+  a explorar o actualice la lista de plugins. Después reinicia Pro Tools.
+
+ACTUALIZAR A UNA NUEVA BETA
+- Con Pro Tools cerrado, borra la carpeta
+  C:\Program Files\Common Files\VST3\LABQ8.vst3 y copia la nueva en su lugar.
+- Las sesiones guardan el estado del plugin; trabaja sobre copias de sesión.
+
+DESINSTALAR
+- Con Pro Tools cerrado, borra C:\Program Files\Common Files\VST3\LABQ8.vst3
+  y actualiza la lista de PatchWork. No toques otros plugins VitaPlug
+  (Gainer80, HARMOHIT).
+
+SI NO CARGA O FALLA
+- Comprueba que copiaste la carpeta LABQ8.vst3 completa y que es Windows de
+  64 bits con PatchWork de 64 bits.
+- Si falta MSVCP140 / VCRUNTIME140, instala el Redistributable de arriba.
+- Windows puede avisar porque el binario no lleva firma digital (beta privada).
+- Envíanos: captura del error, versiones de Windows, Pro Tools y PatchWork,
+  frecuencia de muestreo y buffer, y el paso exacto en que falla.
+
+Nota: en Windows la tipografía de la interfaz puede verse distinta de la de
+macOS (usa fuentes del sistema). Mándanos capturas para revisarla.

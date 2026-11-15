@@ -26,22 +26,33 @@ LabQ8AudioProcessor::LabQ8AudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, stateType, params::createParameterLayout())
 {
-    for (size_t band = 0; band < bandParameters.size(); ++band)
+    // E4b: the three banks, each from its own IDs (params::bankOf); the
+    // STEREO bank is the 80 pre-E4 parameters.
+    static_assert ((int) dsp::StereoBank::stereo == (int) params::Bank::stereo
+                   && (int) dsp::StereoBank::mid == (int) params::Bank::mid
+                   && (int) dsp::StereoBank::side == (int) params::Bank::side);
+    for (int b = 0; b < params::numBanks; ++b)
     {
-        const auto& ids = params::bandIDs[band];
-        bandParameters[band] = { rawParameter (parameters, ids.frequency),
-                                 rawParameter (parameters, ids.gain),
-                                 rawParameter (parameters, ids.q),
-                                 rawParameter (parameters, ids.bypass),
-                                 rawParameter (parameters, ids.type) };
+        const auto ids = params::bankOf (static_cast<params::Bank> (b));
+        auto& bank = bankParameters[(size_t) b];
+        for (size_t band = 0; band < bank.bands.size(); ++band)
+        {
+            const auto& s = ids.bands[band];
+            bank.bands[band] = { rawParameter (parameters, s.frequency),
+                                 rawParameter (parameters, s.gain),
+                                 rawParameter (parameters, s.q),
+                                 rawParameter (parameters, s.bypass),
+                                 rawParameter (parameters, s.type) };
 
-        const auto& dyn = params::dynamicIDs[band];
-        dynamicParameters[band] = { rawParameter (parameters, dyn.enabled),
+            const auto& dyn = ids.dynamics[band];
+            bank.dynamics[band] = { rawParameter (parameters, dyn.enabled),
                                     rawParameter (parameters, dyn.threshold),
                                     rawParameter (parameters, dyn.range),
                                     rawParameter (parameters, dyn.attack),
                                     rawParameter (parameters, dyn.release) };
+        }
     }
+    procMode = rawParameter (parameters, params::procModeID);
 }
 
 bool LabQ8AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -88,11 +99,22 @@ dsp::DynamicSettings LabQ8AudioProcessor::readDynamicSettings (const DynamicPara
 
 void LabQ8AudioProcessor::pushParametersToCore() noexcept
 {
-    for (size_t band = 0; band < bandParameters.size(); ++band)
+    // STEREO first, exactly as before E4b (same values, same order); then
+    // the MID and SIDE banks and the mode. Each core receives only its own
+    // bank's parameters.
+    for (int b = 0; b < dsp::StereoModeEngine::numBanks; ++b)
     {
-        eq.setBandTargets (static_cast<int> (band), readBandSettings (bandParameters[band]));
-        eq.setBandDynamics (static_cast<int> (band), readDynamicSettings (dynamicParameters[band]));
+        const auto bank = static_cast<dsp::StereoBank> (b);
+        const auto& source = bankParameters[(size_t) b];
+        for (size_t band = 0; band < source.bands.size(); ++band)
+        {
+            engine.setBandTargets (bank, static_cast<int> (band), readBandSettings (source.bands[band]));
+            engine.setBandDynamics (bank, static_cast<int> (band), readDynamicSettings (source.dynamics[band]));
+        }
     }
+
+    const auto mode = static_cast<int> (std::lround (procMode->load (std::memory_order_relaxed)));
+    engine.setMode (mode == static_cast<int> (params::ProcMode::midSide) ? dsp::StereoMode::midSide : dsp::StereoMode::stereo);
 }
 
 void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
@@ -100,10 +122,11 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
     // Targets first so prepare() snaps to the current host values (no ramp
     // from defaults when playback starts).
     pushParametersToCore();
-    eq.prepare (sampleRate, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
+    engine.prepare (sampleRate, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
     inputMeter.reset();
     outputMeter.reset();
     const auto channels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels());
+    streamPosition = 0;
     preTap.prepare (sampleRate, channels);
     postTap.prepare (sampleRate, channels);
     dynamicsTelemetry.prepare();
@@ -111,9 +134,23 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
 
 void LabQ8AudioProcessor::offerDynamics (bool hostBypassed) noexcept
 {
+    // E4d: the dynamics of the bank the editor shows (DynamicsTelemetry's
+    // watched bank), tagged with it. Real values only while that bank's
+    // path is the one heard with no mode change in progress; otherwise the
+    // data is "unavailable" (a bank in standby, or the 20 ms fade), never
+    // shown as a reduction.
+    const auto watched = dynamicsTelemetry.getWatchedBank();
+    const auto bank = static_cast<dsp::StereoBank> (watched);
+    const bool bankIsStereo = bank == dsp::StereoBank::stereo;
+    const bool heard = ! engine.isFading() && ((engine.getHeardMode() == dsp::StereoMode::stereo) == bankIsStereo);
+    const auto state = hostBypassed ? DynamicsTelemetry::State::hostBypassed
+                     : heard        ? DynamicsTelemetry::State::live
+                                    : DynamicsTelemetry::State::unavailable;
+    const auto& eq = engine.getCore (bank);
+
     // Values the DSP has already computed for the last control tick; reading
     // them changes nothing (const accessors, audio thread).
-    dynamicsTelemetry.offer (hostBypassed, [this] (int b, DynamicsTelemetry::Band& out)
+    dynamicsTelemetry.offer (state, watched, [&eq] (int b, DynamicsTelemetry::Band& out)
     {
         const auto& band = eq.getBand (b);
         out.staticGainDb = (float) band.getCurrentGainDb();
@@ -138,7 +175,7 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // before the EQ (it works in place), OUT / POST after it.
     const auto numChannels = juce::jmin (numIn, buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
 
     pushParametersToCore();
     auto* const* channels = buffer.getArrayOfWritePointers();
@@ -149,22 +186,24 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const auto n = juce::jmin (eqSubBlockSamples, buffer.getNumSamples() - position);
         for (int ch = 0; ch < segmentChannels; ++ch)
             segment[ch] = channels[ch] + position;
-        eq.process (segment, segmentChannels, n);
+        engine.process (segment, segmentChannels, n);
         offerDynamics (false);
     }
 
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
+    streamPosition += (std::uint64_t) buffer.getNumSamples(); // E4d: PRE and POST of one block share their stream position
 }
 
 void LabQ8AudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     const auto numChannels = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
     AudioProcessor::processBlockBypassed (buffer, midi);
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
+    streamPosition += (std::uint64_t) buffer.getNumSamples(); // E4d: PRE and POST of one block share their stream position
     offerDynamics (true); // nothing was processed: no dynamics to show
 }
 

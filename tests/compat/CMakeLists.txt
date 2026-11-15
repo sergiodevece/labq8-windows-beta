@@ -29,7 +29,9 @@ juce_add_binary_data(labq8_compat_ui_assets
         "${LABQ8_ROOT}/assets/ui/dynamic_switch_off.png"
         "${LABQ8_ROOT}/assets/ui/meter_lit.png"
         "${LABQ8_ROOT}/assets/ui/viewtab_light.png"
-        "${LABQ8_ROOT}/assets/ui/axis_blank.png")
+        "${LABQ8_ROOT}/assets/ui/axis_blank.png"
+        "${LABQ8_ROOT}/assets/ui/mode_face_lit.png"
+        "${LABQ8_ROOT}/assets/ui/mode_face_unlit.png")
 
 function(labq8_compat_target name side src_dir)
     file(GLOB sources "${src_dir}/dsp/*.cpp" "${src_dir}/parameters/*.cpp" "${src_dir}/plugin/*.cpp" "${src_dir}/ui/*.cpp")

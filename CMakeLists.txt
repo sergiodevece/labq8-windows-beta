@@ -36,7 +36,8 @@ add_library(labq8_dsp STATIC
     src/dsp/EqCore.cpp
     src/dsp/DynamicDetector.cpp
     src/dsp/DynamicSection.cpp
-    src/dsp/DynamicBellBand.cpp)
+    src/dsp/DynamicBellBand.cpp
+    src/dsp/StereoModeEngine.cpp)
 
 target_include_directories(labq8_dsp PUBLIC src)
 target_compile_features(labq8_dsp PUBLIC cxx_std_20)
@@ -66,7 +67,9 @@ juce_add_binary_data(labq8_ui_assets
         assets/ui/dynamic_switch_off.png
         assets/ui/meter_lit.png
         assets/ui/viewtab_light.png
-        assets/ui/axis_blank.png)
+        assets/ui/axis_blank.png
+        assets/ui/mode_face_lit.png
+        assets/ui/mode_face_unlit.png)
 
 #==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
@@ -139,6 +142,10 @@ if(LABQ8_BUILD_TESTS)
         tests/MeterTests.cpp
         tests/SpectrumTests.cpp
         tests/DynamicsTests.cpp
+        tests/E4aParameterTests.cpp
+        tests/MidSideTests.cpp
+        tests/EditorBankTests.cpp
+        tests/MidSideViewTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 
@@ -164,6 +171,11 @@ if(LABQ8_BUILD_TESTS)
     # CPU benchmark (JUCE-free). Not part of ctest: run it explicitly, in Release.
     add_executable(labq8_bench tests/bench/EqBenchmark.cpp)
     target_link_libraries(labq8_bench PRIVATE labq8_dsp)
+
+    # E4b: STEREO <-> MID/SIDE mode-change study and engine CPU. Not part of
+    # ctest: run it explicitly, in Release (--transitions, --cpu).
+    add_executable(labq8_ms_bench tests/bench/MidSideBench.cpp)
+    target_link_libraries(labq8_ms_bench PRIVATE labq8_dsp)
 
     # UI-1 asset generator: derives assets/ui/*.png from the approved design
     # (docs/design/, never modified). Run it explicitly; see docs/UI_IMPLEMENTATION.md.

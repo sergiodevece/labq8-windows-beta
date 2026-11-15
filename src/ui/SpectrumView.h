@@ -12,6 +12,12 @@ namespace labq8::ui
 // UI-2b: which signal the analyzer shows (the header's "Analyzer" menu).
 enum class AnalyzerSource { pre, post, both };
 
+// E4d: which signal of the taps' L/R samples is analysed. MID and SIDE are
+// computed from the time samples before the FFT (M = (L+R)/2, S = (L-R)/2,
+// as dsp::midside), never from FFT magnitudes; in MID / SIDE, PRE is read at
+// the same stream position as POST (sample-aligned).
+enum class AnalyzerDomain { lr, mid, side };
+
 // UI-2b: the spectrum on the screen, under the EQ curve and its nodes. A child
 // of the editor's content covering the plot (reference coordinates); it
 // never takes the mouse.
@@ -36,6 +42,8 @@ public:
     void setShown (bool shouldBeShown);
     void setSource (AnalyzerSource newSource);
     AnalyzerSource getSource() const noexcept { return source; }
+    void setDomain (AnalyzerDomain newDomain);
+    AnalyzerDomain getDomain() const noexcept { return domain; }
 
     // One frame: `seconds` since the previous one. Called about 30 times per
     // second from the display's refresh; tests call it directly.
@@ -49,6 +57,10 @@ public:
     int getRepaintRequests() const noexcept { return repaintRequests; }
     double getLastAnalysisMs() const noexcept { return lastAnalysisMs; }
     int getFftSize() const noexcept { return post.analyzer.getSize(); }
+    // E4d tests: the single-channel samples last analysed in MID / SIDE (the
+    // component) and the stream position they end at.
+    const std::vector<float>& getComponentSamples (bool preTrace) const noexcept { return (preTrace ? pre : post).component; }
+    std::uint64_t getLastStreamEnd (bool preTrace) const noexcept { return (preTrace ? pre : post).streamEnd; }
 
     void paint (juce::Graphics&) override;
 
@@ -61,19 +73,21 @@ private:
         SpectrumAnalyzer analyzer;
         SpectrumBallistics ballistics;
         std::vector<std::vector<float>> samples;
-        std::vector<float> display;
-        std::uint64_t from = 0, lastEnd = 0;
+        std::vector<float> display, component;
+        std::uint64_t from = 0, lastEnd = 0, streamEnd = 0;
+        bool copiedThisFrame = false;
         std::uint32_t generation = 0;
         bool active = false, prepared = false;
     };
 
     void updateActivity();
-    bool advance (Trace& trace, double seconds);
+    bool advance (Trace& trace, double seconds, const std::uint64_t* alignTo);
     void paintTrace (juce::Graphics&, const Trace& trace, bool filled, juce::Colour line) const;
 
     Trace pre, post;
     std::vector<double> frequencies;
     AnalyzerSource source = AnalyzerSource::post;
+    AnalyzerDomain domain = AnalyzerDomain::lr;
     bool shown = true;
     int repaintRequests = 0;
     double lastAnalysisMs = 0.0, lastFrame = -1.0;

@@ -64,6 +64,17 @@ void DynamicsOverlay::setShown (bool shouldBeShown, bool withReadouts)
     }
 }
 
+void DynamicsOverlay::setBank (int newBank)
+{
+    telemetry.setWatchedBank (newBank);
+    if (newBank == bank)
+        return;
+    bank = newBank;
+    started = false; // nothing of the previous bank is shown
+    dataAvailable = false;
+    clear();
+}
+
 void DynamicsOverlay::parametersChanged()
 {
     staticDirty = true;
@@ -121,8 +132,11 @@ void DynamicsOverlay::advance (double seconds)
     }
 
     // D3: no audio for 100 ms, the host's bypass, or nothing since showing
-    // started: no dynamics on the screen.
-    const auto live = s.offered != activationOffered && sinceAudio < staleSeconds && ! s.hostBypassed;
+    // started: no dynamics on the screen. E4d: nor a snapshot of another
+    // bank, nor one whose data is unavailable (standby, mode change).
+    const auto ofThisBank = s.bank == bank;
+    dataAvailable = ofThisBank && s.available && ! s.hostBypassed;
+    const auto live = s.offered != activationOffered && sinceAudio < staleSeconds && dataAvailable;
     std::array<double, 8> wanted {};
     auto any = false;
     if (live)

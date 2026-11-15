@@ -15,7 +15,11 @@
 #   tests/compat/run_compat.sh ui11  # UI-1.1 (13df851): strict, any difference fails
 #   tests/compat/run_compat.sh ui2a  # UI-2a (761b7bf): strict, any difference fails
 #   tests/compat/run_compat.sh ui2b  # UI-2b (d7840f3): strict, any difference fails
-#   tests/compat/run_compat.sh       # all eleven
+#   tests/compat/run_compat.sh ui2c  # UI-2c (152d46c): strict, any difference fails
+#   tests/compat/run_compat.sh e4a   # E4a (c9ea214): strict, any difference fails (sessions in Stereo)
+#   tests/compat/run_compat.sh e4b   # E4b (d27b9b1): strict, any difference fails (sessions in Stereo)
+#   tests/compat/run_compat.sh e4c   # E4c (52cf2b5): strict, any difference fails
+#   tests/compat/run_compat.sh       # all fourteen
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -61,7 +65,11 @@ case "${1:-all}" in
     ui11) run_base ui11 13df851 --strict ;;
     ui2a) run_base ui2a 761b7bf --strict ;;
     ui2b) run_base ui2b d7840f3 --strict ;;
-    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict; run_base e2b 5623dc5 --strict; run_base e2c1 3041019 --strict; run_base ui1 13a810f --strict; run_base ui11 13df851 --strict; run_base ui2a 761b7bf --strict; run_base ui2b d7840f3 --strict ;;
-    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|e2b|e2c1|ui1|ui11|ui2a|ui2b|all]"; exit 2 ;;
+    ui2c) run_base ui2c 152d46c --strict ;;
+    e4a) run_base e4a c9ea214 --strict ;;
+    e4b) run_base e4b d27b9b1 --strict ;;
+    e4c) run_base e4c 52cf2b5 --strict ;;
+    all) run_base e0 dfcf25b ""; run_base e1a 9095401 --strict; run_base e1b 1e8db0b "--strict --qlimit"; run_base e1b1 5e889ec --strict; run_base e2a 111acab --strict; run_base e2b 5623dc5 --strict; run_base e2c1 3041019 --strict; run_base ui1 13a810f --strict; run_base ui11 13df851 --strict; run_base ui2a 761b7bf --strict; run_base ui2b d7840f3 --strict; run_base ui2c 152d46c --strict; run_base e4a c9ea214 --strict; run_base e4b d27b9b1 --strict; run_base e4c 52cf2b5 --strict ;;
+    *)   echo "usage: $0 [e0|e1a|e1b|e1b1|e2a|e2b|e2c1|ui1|ui11|ui2a|ui2b|ui2c|e4a|e4b|e4c|all]"; exit 2 ;;
 esac
 exit $status

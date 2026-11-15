@@ -222,4 +222,33 @@ inline constexpr Rect axisBlankSprite { 356.0f, 240.0f, 49.0f, 245.0f };
 inline constexpr float axisUnitCentreY = 238.0f; // "dBFS", above the top label
 inline constexpr float rightScaleRight = 1309.0f, rightScaleLeft = 1284.0f;
 inline constexpr Rgb spectrumLineColour { 154, 209, 155 }, spectrumFillColour { 72, 113, 72 };
+
+//==============================================================================
+// E4c: the STEREO MODE block (measured on the master; docs/MIDSIDE_E4C_AUDIT.md).
+// Frames (outer dark border included) of the four buttons; the master's L/R
+// button is replaced by MID and SIDE, two frames of 47 px with 1 px between.
+inline constexpr Rect modeButtonStereo { 466.0f, 88.0f, 96.0f, 43.0f };
+inline constexpr Rect modeButtonMidSide { 565.0f, 88.0f, 95.0f, 43.0f };
+inline constexpr Rect bankButtonMid { 664.0f, 88.0f, 47.0f, 43.0f };
+inline constexpr Rect bankButtonSide { 712.0f, 88.0f, 47.0f, 43.0f };
+inline constexpr float modeButtonCapCentre = 110.0f;   // the master's ink: rows 104..116
+inline constexpr float modeButtonCapHeight = 13.0f;    // Helvetica Neue Condensed Bold
+// The master's L/R button (frame), erased from the derived background.
+inline constexpr Rect lrButtonEraseArea { 662.0f, 86.0f, 100.0f, 47.0f };
+// Text-free faces cut from the master (asset generator): the lit STEREO and
+// the unlit M/S button, 9-sliced by the editor (caps of modeFaceCap px, the
+// middle repeated from one clean column).
+inline constexpr Rect modeFaceLitSprite = modeButtonStereo;
+inline constexpr Rect modeFaceUnlitSprite = modeButtonMidSide;
+inline constexpr float modeFaceCap = 13.0f;
+inline constexpr float modeFaceLitCleanColumn = 478.0f, modeFaceUnlitCleanColumn = 580.0f;
+inline constexpr Rgb modeTextColour { 182, 174, 163 }, modeLitTextColour { 9, 32, 11 };
+
+// E4c: in M/S the band header names the bank first, small and in the
+// chassis labels' grey ("SIDE  BAND 4"); the label must end before the
+// chassis' "Filter Type" (x 346).
+inline constexpr Rgb chassisLabelColour { 188, 188, 166 };
+inline constexpr float bankPrefixCapHeight = 11.0f; // 9 in the first E4c delivery: too small at 40 % (1x)
+inline constexpr float bankPrefixGap = 9.0f;
+inline constexpr float filterTypeLabelLeft = 346.0f;
 } // namespace labq8::ui::geometry

@@ -1,0 +1,101 @@
+// E4a fixtures from UI-2c (152d46c, state v4): genuine v4 states, the frozen
+// v4 parameter contract, and what a v4 build does with a v5 state.
+// Compiled against `git archive 152d46c src` with tests/ParameterContract.h
+// of the E4a sources (it only uses juce::AudioProcessor).
+//
+//   ui2c_state_dump states   <dir>           ui2c_default / ui2c_custom (.bin + .xml)
+//   ui2c_state_dump contract <file>          the 80-parameter v4 contract
+//   ui2c_state_dump resave   <in.bin> <dir>  opens a (v5) state in this v4
+//                                            build and saves it again
+//                                            (ui2c_resaved_from_v5 .bin + .xml)
+#include "plugin/PluginProcessor.h"
+#include "parameters/ParameterIDs.h"
+#include "ParameterContract.h"
+
+#include <fstream>
+
+static void setParam (labq8::LabQ8AudioProcessor& p, const char* id, float v)
+{
+    auto* param = p.getValueTreeState().getParameter (id);
+    param->setValueNotifyingHost (param->convertTo0to1 (v));
+}
+
+static void dump (labq8::LabQ8AudioProcessor& p, const juce::File& dir, const char* name)
+{
+    juce::MemoryBlock block;
+    p.getStateInformation (block);
+    dir.getChildFile (juce::String (name) + ".bin").replaceWithData (block.getData(), block.getSize());
+    auto xml = juce::AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+    dir.getChildFile (juce::String (name) + ".xml").replaceWithText (xml->toString());
+}
+
+int main (int argc, char** argv)
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    const juce::String mode = argc > 2 ? argv[1] : "";
+
+    if (mode == "states")
+    {
+        const juce::File dir { juce::String { argv[2] } };
+        dir.createDirectory();
+
+        labq8::LabQ8AudioProcessor fresh;
+        dump (fresh, dir, "ui2c_default");
+
+        // Every band distinct: all six types, two bypassed, dynamics on the
+        // Bell bands with distinct settings (and on one non-Bell band, where
+        // the DSP ignores it), one Bell with dynamics stored but off.
+        labq8::LabQ8AudioProcessor p;
+        const int types[]          = { 0, 1, 0, 3, 0, 5, 2, 0 };
+        const float freqs[]        = { 850.0f, 65.0f, 210.0f, 28.0f, 3100.0f, 6200.0f, 9800.0f, 14500.0f };
+        const float gains[]        = { -4.5f, 2.5f, 5.25f, 0.0f, -7.0f, 0.0f, 3.5f, 1.75f };
+        const float qs[]           = { 2.5f, 0.7f, 1.4f, 1.2f, 5.0f, 12.0f, 0.8f, 3.3f };
+        const bool bypass[]        = { false, false, false, false, false, true, false, true };
+        const bool dynOn[]         = { true, true, true, false, true, false, false, true };
+        const float thresholds[]   = { -18.5f, -30.0f, -12.0f, -20.0f, -6.5f, -20.0f, -44.0f, 3.0f };
+        const float ranges[]       = { 4.0f, 6.0f, 9.5f, 6.0f, 12.0f, 6.0f, 2.0f, 24.0f };
+        const float attacks[]      = { 5.0f, 30.0f, 1.25f, 10.0f, 0.5f, 10.0f, 80.0f, 500.0f };
+        const float releases[]     = { 80.0f, 250.0f, 40.0f, 100.0f, 5.0f, 100.0f, 1200.0f, 5000.0f };
+        for (int b = 0; b < 8; ++b)
+        {
+            const auto& ids = labq8::params::bandIDs[(size_t) b];
+            const auto& dyn = labq8::params::dynamicIDs[(size_t) b];
+            setParam (p, ids.type, (float) types[b]);
+            setParam (p, ids.frequency, freqs[b]);
+            setParam (p, ids.gain, gains[b]);
+            setParam (p, ids.q, qs[b]);
+            setParam (p, ids.bypass, bypass[b] ? 1.0f : 0.0f);
+            setParam (p, dyn.enabled, dynOn[b] ? 1.0f : 0.0f);
+            setParam (p, dyn.threshold, thresholds[b]);
+            setParam (p, dyn.range, ranges[b]);
+            setParam (p, dyn.attack, attacks[b]);
+            setParam (p, dyn.release, releases[b]);
+        }
+        dump (p, dir, "ui2c_custom");
+        return 0;
+    }
+
+    if (mode == "contract")
+    {
+        labq8::LabQ8AudioProcessor p;
+        std::ofstream out (argv[2]);
+        for (const auto& line : labq8::contract::describe (p))
+            out << line << "\n";
+        return 0;
+    }
+
+    if (mode == "resave" && argc > 3)
+    {
+        juce::MemoryBlock block;
+        juce::File (juce::String (argv[2])).loadFileAsData (block);
+        labq8::LabQ8AudioProcessor p;
+        p.setStateInformation (block.getData(), (int) block.getSize());
+        const juce::File dir { juce::String { argv[3] } };
+        dir.createDirectory();
+        dump (p, dir, "ui2c_resaved_from_v5");
+        return 0;
+    }
+
+    std::fprintf (stderr, "usage: ui2c_state_dump states <dir> | contract <file> | resave <in.bin> <dir>\n");
+    return 2;
+}

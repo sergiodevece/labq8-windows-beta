@@ -976,3 +976,37 @@ Lista de comprobaciones: `build/ui2c-report/UI2C_PRUEBA_LOGIC.md`.
 **Resultado:** aprobado físicamente en Logic Pro por el usuario. UI-2c queda cerrada.
 
 **Copia de UI-2b (SMOKE-5):** `build/ui2c-report/LABQ8.component.smoke5-backup`.
+
+## 13. E4c: interfaz STEREO / MID / SIDE
+
+Detalle, decisiones, pruebas y capturas: [MIDSIDE_E4C.md](MIDSIDE_E4C.md)
+(auditoría: [MIDSIDE_E4C_AUDIT.md](MIDSIDE_E4C_AUDIT.md)).
+
+- **El bloque STEREO MODE deja de ser un área inactiva.** STEREO y M/S
+  escriben `proc_mode`. MID y SIDE, en el antiguo hueco de L/R, eligen el
+  banco que se edita en M/S.
+- **Nuevos assets** derivados del maestro: `mode_face_lit.png` y
+  `mode_face_unlit.png`. En `background.png` solo cambia el hueco de L/R.
+- **Banco mostrado:** todo el panel, los botones ON/OFF y la pantalla siguen
+  al banco mostrado. En M/S se añaden la curva gris del otro banco (EQ y
+  ALL) y la nota "M/S dynamics display: E4d" (DYN y ALL).
+
+## 14. E4d: analizador y dinámica MID / SIDE
+
+Detalle, pruebas y medidas: `docs/MIDSIDE_E4D.md`.
+
+- **Analizador:** en M/S analiza el banco editado. MID = (L + R) / 2 y
+  SIDE = (L − R) / 2 se calculan en `double` sobre las muestras en el tiempo
+  PRE / POST, antes de una sola FFT; misma ventana, escala dBFS y balística
+  que UI-2b. PRE se lee terminando en la misma posición de flujo que POST
+  (`SpectrumTap::copyAtStream`), así PRE y POST corresponden al mismo audio.
+- **Menú en M/S:** "MID" o "SIDE" con Pre, Post, Pre + Post; después
+  "Output" con "L/R Post (output)". El selector dice "MID Post",
+  "SIDE Pre + Post", "L/R Post"… En STEREO, menú y textos de UI-2b.
+- **Dinámica:** DYN y ALL dibujan la reducción real del banco mostrado
+  (`DynamicsOverlay::setBank` → `DynamicsTelemetry::setWatchedBank`). La
+  instantánea lleva banco y disponibilidad: con el banco en standby o
+  durante el fundido de 20 ms no se dibuja nada (no es 0 dB), y al cambiar
+  de banco no queda nada del anterior.
+- Se retira la nota "M/S dynamics display: E4d". Sin cambios de PNG,
+  geometría, botones ni aspecto de la curva.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "parameters/ParameterIDs.h"
 #include "ui/UiModel.h"
 #include "ui/DynamicsOverlay.h"
 #include "ui/LevelMeterView.h"
@@ -10,6 +11,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 
 namespace labq8
 {
@@ -30,6 +32,8 @@ class SettingsButton;
 class ViewTab;
 class AnalyzerSelector;
 class SpectrumScale;
+class ModeButton;
+class BankButton;
 
 // UI-1 editor: the approved design LABQ8_UI_DESIGN_APPROVED_01, laid out in
 // its 1672 x 941 reference space and scaled as a whole (fixed aspect ratio).
@@ -53,6 +57,14 @@ class SpectrumScale;
 // The editor only talks to the public JUCE parameters (attachments, with
 // begin / end gestures). It never touches the DSP: selecting a band only
 // re-points the shared panel at that band's parameters.
+//
+// E4c: the bank shown. In Stereo (proc_mode) the editor shows and edits the
+// STEREO bank; in Mid/Side the MID or SIDE bank chosen with the MID / SIDE
+// buttons (view state, kept per instance by the processor). Every control,
+// the eight ON / OFF buttons, the screen's curve, nodes and drags are bound
+// to the bank shown and nothing else; changing it never writes a parameter.
+// A change requested while a knob or a node is being dragged waits until
+// the drag (one host gesture) has ended on the bank it began on.
 class LabQ8Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -73,6 +85,23 @@ public:
     void selectBand (int band);
     int getSelectedBand() const noexcept { return selectedBand; }
 
+    // E4c: the bank shown (STEREO in Stereo; MID or SIDE in Mid/Side) and
+    // the bank edited in Mid/Side. setEditBank is what the MID / SIDE buttons
+    // do: view state only.
+    params::Bank getShownBank() const noexcept { return shownBank; }
+    void setEditBank (params::Bank bank);
+    bool isBankChangePending() const noexcept { return bankChangePending; }
+
+    // E4c: copy every parameter of the eight bands (10 per band) of one bank
+    // to another, as explicit host edits (one gesture per parameter that
+    // changes). The source is never written. Returns the parameters written.
+    int copyBank (params::Bank from, params::Bank to);
+    // The settings icon's menu: the zoom choices (as createZoomMenu) and the
+    // Mid/Side copy commands (items copyStereoToMidSideItem...).
+    static constexpr int copyStereoToMidSideItem = 101, copyMidToSideItem = 102, copySideToMidItem = 103;
+    juce::PopupMenu createSettingsMenu() const;
+    void handleSettingsMenuResult (int itemId);
+
     // Zoom: resizes the editor (the AU / VST3 wrapper resizes the host's
     // window with it) and stores the choice as the user's preference. Only
     // the six choices, and only those that fit the screen (40 % always
@@ -90,7 +119,8 @@ public:
     void setView (int tab);
     int getView() const noexcept { return view; }
     void setAnalyzerSource (AnalyzerSource newSource);
-    juce::PopupMenu createAnalyzerMenu() const; // item n + 1 = AnalyzerSource n
+    juce::PopupMenu createAnalyzerMenu() const; // item n + 1 = AnalyzerSource n; outputLrItem (M/S only)
+    static constexpr int outputLrItem = 11;
     void handleAnalyzerMenuResult (int itemId);
 
     // Whether the editor at `zoom`, plus the host window allowance, fits in
@@ -134,11 +164,32 @@ public:
     bool areQHandlesShown() const;
     void showQHandles (int band);            // as if its node were clicked
     float getScale() const noexcept;
+    // E4c, tests and snapshots.
+    juce::Component& getModeButton (int index);        // 0 STEREO, 1 M/S
+    juce::Component& getBankButton (params::Bank bank);  // MID or SIDE
+    bool isModeButtonLit (int index) const;
+    bool isBankButtonAvailable (params::Bank bank) const;
+    bool isBankButtonSelected (params::Bank bank) const;
+    juce::String getHeaderText() const;
+    float getHeaderRight() const;                       // reference x where "… BAND n" ends
+    bool isHeaderTextInside() const;                    // the label is not clipped by its component
+    std::optional<params::Bank> getGhostBank() const;   // drawn in grey (M/S, EQ / ALL)
+    bool areDynamicsShown() const;
+    juce::String getAnalyzerText() const;
+    AnalyzerDomain getAnalyzerDomain() const;           // E4d: the signal the spectrum analyses
+    juce::Component& getFilterTypeSelector();
 
 private:
     void timerCallback() override;
     void attachPanel();
     void showZoomMenu (juce::Component& target);
+    params::Bank bankToShow() const;
+    void updateShownBank();      // applies the bank to show now, or marks it pending during a drag
+    void applyShownBank();
+    void updateViewLayers();     // what the view and the mode show (curves, dynamics, analyzer)
+    void applyAnalyzer();        // E4d: domain, source and texts of the analyzer
+    AnalyzerDomain analyzerDomain() const;
+    bool isAnyDragActive() const;
     std::vector<float> parameterSnapshot() const;
 
     LabQ8AudioProcessor& audioProcessor;
@@ -158,6 +209,8 @@ private:
     std::unique_ptr<SpectrumView> spectrum;
     std::unique_ptr<DynamicsOverlay> dynamics;
     std::array<std::unique_ptr<ViewTab>, 4> viewTabs;
+    std::array<std::unique_ptr<ModeButton>, 2> modeButtons;
+    std::array<std::unique_ptr<BankButton>, 2> bankButtons;
     std::unique_ptr<AnalyzerSelector> analyzerSelector;
     std::unique_ptr<SpectrumScale> leftScale, rightScale;
     int view = viewAll;
@@ -167,6 +220,8 @@ private:
     juce::Image scaledBackground;
 
     int selectedBand = 0;
+    params::Bank shownBank = params::Bank::stereo;
+    bool bankChangePending = false;
     std::vector<float> lastSnapshot;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8Editor)

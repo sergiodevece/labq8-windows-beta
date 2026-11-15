@@ -1,0 +1,80 @@
+0|b1_freq|Band 1 Frequency|float|hint=1|automatable=1|vst3=0x192af4a8|au=0x192af4a8|default=1000|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+1|b1_gain|Band 1 Gain|float|hint=1|automatable=1|vst3=0x192b29af|au=0x192b29af|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+2|b1_q|Band 1 Q|float|hint=1|automatable=1|vst3=0x002d5041|au=0x002d5041|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+3|b1_bypass|Band 1 Bypass|bool|hint=1|automatable=1|vst3=0x73d47f18|au=0x73d47f18|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+4|b2_freq|Band 2 Frequency|float|hint=2|automatable=1|vst3=0x1adfcd47|au=0x1adfcd47|default=40|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+5|b2_gain|Band 2 Gain|float|hint=2|automatable=1|vst3=0x1ae0024e|au=0x1ae0024e|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+6|b2_q|Band 2 Q|float|hint=2|automatable=1|vst3=0x002d5402|au=0x002d5402|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+7|b2_bypass|Band 2 Bypass|bool|hint=2|automatable=1|vst3=0x5bb5abf7|au=0x5bb5abf7|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+8|b3_freq|Band 3 Frequency|float|hint=2|automatable=1|vst3=0x1c94a5e6|au=0x1c94a5e6|default=100|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+9|b3_gain|Band 3 Gain|float|hint=2|automatable=1|vst3=0x1c94daed|au=0x1c94daed|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+10|b3_q|Band 3 Q|float|hint=2|automatable=1|vst3=0x002d57c3|au=0x002d57c3|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+11|b3_bypass|Band 3 Bypass|bool|hint=2|automatable=1|vst3=0x4396d8d6|au=0x4396d8d6|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+12|b4_freq|Band 4 Frequency|float|hint=2|automatable=1|vst3=0x1e497e85|au=0x1e497e85|default=250|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+13|b4_gain|Band 4 Gain|float|hint=2|automatable=1|vst3=0x1e49b38c|au=0x1e49b38c|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+14|b4_q|Band 4 Q|float|hint=2|automatable=1|vst3=0x002d5b84|au=0x002d5b84|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+15|b4_bypass|Band 4 Bypass|bool|hint=2|automatable=1|vst3=0x2b7805b5|au=0x2b7805b5|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+16|b5_freq|Band 5 Frequency|float|hint=2|automatable=1|vst3=0x1ffe5724|au=0x1ffe5724|default=2500|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+17|b5_gain|Band 5 Gain|float|hint=2|automatable=1|vst3=0x1ffe8c2b|au=0x1ffe8c2b|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+18|b5_q|Band 5 Q|float|hint=2|automatable=1|vst3=0x002d5f45|au=0x002d5f45|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+19|b5_bypass|Band 5 Bypass|bool|hint=2|automatable=1|vst3=0x13593294|au=0x13593294|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+20|b6_freq|Band 6 Frequency|float|hint=2|automatable=1|vst3=0x21b32fc3|au=0x21b32fc3|default=5000|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+21|b6_gain|Band 6 Gain|float|hint=2|automatable=1|vst3=0x21b364ca|au=0x21b364ca|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+22|b6_q|Band 6 Q|float|hint=2|automatable=1|vst3=0x002d6306|au=0x002d6306|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+23|b6_bypass|Band 6 Bypass|bool|hint=2|automatable=1|vst3=0x7b3a5f73|au=0x7b3a5f73|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+24|b7_freq|Band 7 Frequency|float|hint=2|automatable=1|vst3=0x23680862|au=0x23680862|default=10000|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+25|b7_gain|Band 7 Gain|float|hint=2|automatable=1|vst3=0x23683d69|au=0x23683d69|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+26|b7_q|Band 7 Q|float|hint=2|automatable=1|vst3=0x002d66c7|au=0x002d66c7|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+27|b7_bypass|Band 7 Bypass|bool|hint=2|automatable=1|vst3=0x631b8c52|au=0x631b8c52|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+28|b8_freq|Band 8 Frequency|float|hint=2|automatable=1|vst3=0x251ce101|au=0x251ce101|default=16000|range=20..20000/0|map=20,112.468,632.456,3556.56,20000|steps=2147483647|label=Hz|choices=|text=20.0 Hz,112.5 Hz,20.00 kHz
+29|b8_gain|Band 8 Gain|float|hint=2|automatable=1|vst3=0x251d1608|au=0x251d1608|default=0|range=-24..24/0.01|map=-24,-12,0,12,24|steps=2147483647|label=dB|choices=|text=-24.00 dB,-12.00 dB,+24.00 dB
+30|b8_q|Band 8 Q|float|hint=2|automatable=1|vst3=0x002d6a88|au=0x002d6a88|default=1|range=0.1..18/0|map=0.1,0.366284,1.34164,4.91422,18|steps=2147483647|label=|choices=|text=0.10,0.37,18.00
+31|b8_bypass|Band 8 Bypass|bool|hint=2|automatable=1|vst3=0x4afcb931|au=0x4afcb931|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+32|b1_type|Band 1 Type|choice|hint=3|automatable=1|vst3=0x19316d6a|au=0x19316d6a|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+33|b2_type|Band 2 Type|choice|hint=3|automatable=1|vst3=0x1ae64609|au=0x1ae64609|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+34|b3_type|Band 3 Type|choice|hint=3|automatable=1|vst3=0x1c9b1ea8|au=0x1c9b1ea8|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+35|b4_type|Band 4 Type|choice|hint=3|automatable=1|vst3=0x1e4ff747|au=0x1e4ff747|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+36|b5_type|Band 5 Type|choice|hint=3|automatable=1|vst3=0x2004cfe6|au=0x2004cfe6|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+37|b6_type|Band 6 Type|choice|hint=3|automatable=1|vst3=0x21b9a885|au=0x21b9a885|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+38|b7_type|Band 7 Type|choice|hint=3|automatable=1|vst3=0x236e8124|au=0x236e8124|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+39|b8_type|Band 8 Type|choice|hint=3|automatable=1|vst3=0x252359c3|au=0x252359c3|default=0|range=0..5/1|map=0,1,2,4,5|steps=6|label=|choices=Bell,Low Shelf,High Shelf,Low Cut,High Cut,Notch|text=Bell,Low Shelf,Notch
+40|b1_dyn_on|Band 1 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x773d3f95|au=0x773d3f95|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+41|b1_threshold|Band 1 Threshold|float|hint=4|automatable=1|vst3=0x3cea643b|au=0x3cea643b|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+42|b1_range|Band 1 Range|float|hint=4|automatable=1|vst3=0x0cd5210d|au=0x0cd5210d|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+43|b1_attack|Band 1 Attack|float|hint=4|automatable=1|vst3=0x71db0078|au=0x71db0078|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+44|b1_release|Band 1 Release|float|hint=4|automatable=1|vst3=0x32c75bd7|au=0x32c75bd7|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+45|b2_dyn_on|Band 2 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x5f1e6c74|au=0x5f1e6c74|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+46|b2_threshold|Band 2 Threshold|float|hint=4|automatable=1|vst3=0x51cf16fc|au=0x51cf16fc|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+47|b2_range|Band 2 Range|float|hint=4|automatable=1|vst3=0x41bb5c4e|au=0x41bb5c4e|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+48|b2_attack|Band 2 Attack|float|hint=4|automatable=1|vst3=0x59bc2d57|au=0x59bc2d57|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+49|b2_release|Band 2 Release|float|hint=4|automatable=1|vst3=0x470bcad8|au=0x470bcad8|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+50|b3_dyn_on|Band 3 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x46ff9953|au=0x46ff9953|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+51|b3_threshold|Band 3 Threshold|float|hint=4|automatable=1|vst3=0x66b3c9bd|au=0x66b3c9bd|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+52|b3_range|Band 3 Range|float|hint=4|automatable=1|vst3=0x76a1978f|au=0x76a1978f|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+53|b3_attack|Band 3 Attack|float|hint=4|automatable=1|vst3=0x419d5a36|au=0x419d5a36|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+54|b3_release|Band 3 Release|float|hint=4|automatable=1|vst3=0x5b5039d9|au=0x5b5039d9|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+55|b4_dyn_on|Band 4 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x2ee0c632|au=0x2ee0c632|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+56|b4_threshold|Band 4 Threshold|float|hint=4|automatable=1|vst3=0x7b987c7e|au=0x7b987c7e|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+57|b4_range|Band 4 Range|float|hint=4|automatable=1|vst3=0x2b87d2d0|au=0x2b87d2d0|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+58|b4_attack|Band 4 Attack|float|hint=4|automatable=1|vst3=0x297e8715|au=0x297e8715|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+59|b4_release|Band 4 Release|float|hint=4|automatable=1|vst3=0x6f94a8da|au=0x6f94a8da|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+60|b5_dyn_on|Band 5 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x16c1f311|au=0x16c1f311|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+61|b5_threshold|Band 5 Threshold|float|hint=4|automatable=1|vst3=0x107d2f3f|au=0x107d2f3f|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+62|b5_range|Band 5 Range|float|hint=4|automatable=1|vst3=0x606e0e11|au=0x606e0e11|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+63|b5_attack|Band 5 Attack|float|hint=4|automatable=1|vst3=0x115fb3f4|au=0x115fb3f4|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+64|b5_release|Band 5 Release|float|hint=4|automatable=1|vst3=0x03d917db|au=0x03d917db|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+65|b6_dyn_on|Band 6 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x7ea31ff0|au=0x7ea31ff0|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+66|b6_threshold|Band 6 Threshold|float|hint=4|automatable=1|vst3=0x2561e200|au=0x2561e200|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+67|b6_range|Band 6 Range|float|hint=4|automatable=1|vst3=0x15544952|au=0x15544952|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+68|b6_attack|Band 6 Attack|float|hint=4|automatable=1|vst3=0x7940e0d3|au=0x7940e0d3|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+69|b6_release|Band 6 Release|float|hint=4|automatable=1|vst3=0x181d86dc|au=0x181d86dc|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+70|b7_dyn_on|Band 7 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x66844ccf|au=0x66844ccf|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+71|b7_threshold|Band 7 Threshold|float|hint=4|automatable=1|vst3=0x3a4694c1|au=0x3a4694c1|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+72|b7_range|Band 7 Range|float|hint=4|automatable=1|vst3=0x4a3a8493|au=0x4a3a8493|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+73|b7_attack|Band 7 Attack|float|hint=4|automatable=1|vst3=0x61220db2|au=0x61220db2|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+74|b7_release|Band 7 Release|float|hint=4|automatable=1|vst3=0x2c61f5dd|au=0x2c61f5dd|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms
+75|b8_dyn_on|Band 8 Dynamic EQ|bool|hint=4|automatable=1|vst3=0x4e6579ae|au=0x4e6579ae|default=0|range=0..1/1|map=0,0,1,1,1|steps=2|label=|choices=|text=Off,Off,On
+76|b8_threshold|Band 8 Threshold|float|hint=4|automatable=1|vst3=0x4f2b4782|au=0x4f2b4782|default=-20|range=-80..24/0.1|map=-80,-54,-28,-2,24|steps=2147483647|label=dBFS|choices=|text=-80.0 dB,-54.0 dB,24.0 dB
+77|b8_range|Band 8 Range|float|hint=4|automatable=1|vst3=0x7f20bfd4|au=0x7f20bfd4|default=6|range=0..24/0.1|map=0,6,12,18,24|steps=2147483647|label=dB|choices=|text=0.0 dB,6.0 dB,24.0 dB
+78|b8_attack|Band 8 Attack|float|hint=4|automatable=1|vst3=0x49033a91|au=0x49033a91|default=10|range=0.5..500/0|map=0.5,2.81,15.81,88.91,500|steps=2147483647|label=ms|choices=|text=0.50 ms,2.81 ms,500.0 ms
+79|b8_release|Band 8 Release|float|hint=4|automatable=1|vst3=0x40a664de|au=0x40a664de|default=100|range=5..5000/0|map=5,28.1,158.1,889.1,5000|steps=2147483647|label=ms|choices=|text=5.00 ms,28.1 ms,5000.0 ms

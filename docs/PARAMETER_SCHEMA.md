@@ -6,8 +6,8 @@
    estado asociados a la cadena del ID.
 2. Un ID retirado no se reutiliza para otro significado.
 3. *Version hint* de JUCE: cada parámetro conserva el de la fase que lo
-   introdujo (E0 = 1, E1a = 2, E1b = 3, E2c.1 = 4). AU lo usa para ordenar
-   los parámetros.
+   introdujo (E0 = 1, E1a = 2, E1b = 3, E2c.1 = 4, E4a = 5). AU lo usa para
+   ordenar los parámetros.
 4. Los rangos solo se amplían con migración. Nunca se recortan.
 5. IDs y frecuencias por defecto: `src/parameters/ParameterIDs.h`. Rangos:
    `src/dsp/BandLimits.h`. Están escritos literalmente, sin construir cadenas,
@@ -15,8 +15,15 @@
 6. **El orden de host se mantiene:** las cuatro `b1_*` ocupan los índices 0–3
    en el mismo orden que en E0, las bandas 2–8 los índices 4–31 (como en
    E1a), los ocho `b{n}_type` de E1b van a continuación (32–39) y los 40
-   parámetros dinámicos de E2c.1 ocupan los índices 40–79. Los parámetros
-   nuevos siempre se añaden al final.
+   parámetros dinámicos de E2c.1 ocupan los índices 40–79. E4a añade
+   `proc_mode` (80), el banco MID (81–160) y el banco SIDE (161–240). Los
+   parámetros nuevos siempre se añaden al final.
+7. **Bancos (E4a).** Los 80 parámetros 0–79 son el banco STEREO y conservan
+   su significado. MID y SIDE repiten exactamente su contrato con IDs
+   `mid_b{n}_*` / `side_b{n}_*`. El código elige los IDs de banda con
+   `params::bankOf (Bank)`. Inventario completo y verificado:
+   `tests/fixtures/contract_v5_e4a.txt`; detalle en
+   [MIDSIDE_E4A.md](MIDSIDE_E4A.md).
 
 ## Convención
 
@@ -149,6 +156,19 @@ Cualquier cambio de los rótulos de la imagen requiere aprobación expresa
 > ahora, mientras no existan sesiones de usuario. El coste es modificar una
 > condición de la prueba E0 de valores por defecto.
 
+### Modo y bancos MID / SIDE (E4a, version hint 5, índices 80–240)
+
+| ID | Nombre | Tipo | Valores | Por defecto |
+|---|---|---|---|---|
+| `proc_mode` | Stereo Mode | choice | 0 = Stereo, 1 = Mid/Side (índices congelados) | Stereo |
+| `mid_b{n}_{campo}` | Mid Band n … | como `b{n}_{campo}` | idénticos al banco STEREO | idénticos |
+| `side_b{n}_{campo}` | Side Band n … | como `b{n}_{campo}` | idénticos al banco STEREO | idénticos |
+
+`{campo}` = freq, gain, q, bypass, type, dyn_on, threshold, range, attack,
+release, en ese orden dentro de cada banda (MID 81–160, SIDE 161–240).
+**En E4a el DSP aún no procesa M/S:** `proc_mode` y los bancos se guardan y
+se automatizan, pero el audio es el del banco STEREO (E4b).
+
 ## Reservado para fases futuras (no implementado)
 
 | ID | Tipo | Rango propuesto | Por defecto | Fase |
@@ -156,12 +176,19 @@ Cualquier cambio de los rótulos de la imagen requiere aprobación expresa
 | `b{n}_slope` | choice | 6–48 dB/oct (solo filtros de corte) | 12 | por decidir |
 | `out_gain` | float | −24 – +24 dB | 0 | por decidir |
 | `master_bypass` | bool (con rampa, `getBypassParameter`) | | off | por decidir |
-| `b{n}_place` | choice | Stereo, Left, Right, Mid, Side | Stereo | Fase M/S |
-| `proc_mode` | choice | Stereo, Mid/Side | Stereo | Fase M/S |
+| `b{n}_place` | choice | Stereo, Left, Right, Mid, Side | Stereo | Sin fase: E4 usa bancos, no colocación por banda; el ID sigue reservado y no se reutiliza |
 | `b{n}_sc` (sidechain externo) | | | | por decidir |
 
 Los perfiles del Intention Engine no serán parámetros de host: se guardarán
 como propiedades del estado.
+
+## Estado guardado (v5, desde E4a)
+
+Mismo formato que v4 con 241 `PARAM` (los 80 de v4, `proc_mode` y los 160
+de MID/SIDE). Un estado v1–v4 se migra añadiendo `proc_mode = Stereo` y los
+bancos MID/SIDE con sus valores por defecto explícitos, y suena exactamente
+igual. Comportamiento en versiones anteriores y política de versiones:
+[MIDSIDE_E4A.md](MIDSIDE_E4A.md) §5.
 
 ## Estado guardado (v4)
 

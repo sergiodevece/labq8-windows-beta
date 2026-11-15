@@ -154,8 +154,8 @@ LQ_TEST ("state: genuine E0 states migrate with deterministic defaults for bands
         const auto migrated = juce::AudioProcessor::getXmlFromBinary (a.getData(), (int) a.getSize());
         LQ_CHECK (migrated != nullptr && migrated->getIntAttribute (params::stateVersionProperty) == params::currentStateVersion,
                   "re-saved state is v2");
-        // 32 in E1a; E1b re-saves 40 (b1..b8_type added by the migration); E2c.1 80.
-        LQ_CHECK (migrated != nullptr && migrated->getNumChildElements() == 80, "re-saved state has 80 parameters");
+        // 32 in E1a; E1b re-saves 40 (b1..b8_type added by the migration); E2c.1 80; E4a 241.
+        LQ_CHECK (migrated != nullptr && migrated->getNumChildElements() == params::numParameters, "re-saved state has every parameter");
         LQ_CHECK (allParamsHaveValues (a) && allParamsHaveValues (b), str (fx.file, ": re-saved state has PARAMs without a value"));
     }
 }

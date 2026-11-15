@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <utility>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -62,8 +63,17 @@ public:
         std::uint64_t offered = 0;    // offers so far (moves while audio is processed)
         std::uint32_t generation = 0; // prepareToPlay count
         bool hostBypassed = false;    // the host's bypass: nothing processed
+        // E4d: the bank the values come from (0 STEREO, 1 MID, 2 SIDE:
+        // params::Bank), and whether they are valid. Not available = the
+        // bank's path is not heard (standby) or a mode change is fading:
+        // the data is temporarily missing, it is NOT a reduction of 0 dB.
+        int bank = 0;
+        bool available = true;
         std::array<Band, numBands> bands {};
     };
+
+    // E4d: what an offer carries.
+    enum class State { live, hostBypassed, unavailable };
 
     // The reduction the band really applies: the designer clamps the total
     // gain to +-24 dB (dsp::clampGainDb), so with a low static gain less
@@ -76,6 +86,11 @@ public:
         return g - std::clamp (g - (double) b.reductionDb, -gainLimitDb, gainLimitDb);
     }
 
+    // E4d: the bank the editor shows (0 STEREO, 1 MID, 2 SIDE). The audio
+    // thread offers that bank's sections and tags every snapshot with it.
+    void setWatchedBank (int bank) noexcept { watched.store (std::clamp (bank, 0, 2), std::memory_order_relaxed); }
+    int getWatchedBank() const noexcept { return watched.load (std::memory_order_relaxed); }
+
     // Editor: whether the screen shows the dynamics. When not, the audio
     // thread only reads this flag.
     void setActive (bool shouldBeActive) noexcept { active.store (shouldBeActive, std::memory_order_relaxed); }
@@ -86,8 +101,10 @@ public:
     {
         beginWrite();
         generation.store (generation.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
-        writeValues ({}, false, nextId());
+        writeValues ({}, false, nextId(), getWatchedBank(), true);
         keptTotal = 0.0;
+        keptState = State::live;
+        keptBank = getWatchedBank();
         endWrite();
     }
 
@@ -96,11 +113,21 @@ public:
     template <typename ReadBand>
     void offer (bool hostBypassed, ReadBand&& read) noexcept
     {
+        offer (hostBypassed ? State::hostBypassed : State::live, 0, std::forward<ReadBand> (read));
+    }
+
+    // E4d: `bank` tags the snapshot; `read` is only called for a live offer.
+    // An unavailable offer always replaces the kept one (a mode change must
+    // not leave an older reduction on the screen); a live one replaces a
+    // kept snapshot of another bank or state, as well as the usual rule.
+    template <typename ReadBand>
+    void offer (State state, int bank, ReadBand&& read) noexcept
+    {
         if (! active.load (std::memory_order_relaxed))
             return;
         std::array<Band, numBands> values {};
         double total = 0.0;
-        if (! hostBypassed)
+        if (state == State::live)
             for (int b = 0; b < numBands; ++b)
             {
                 read (b, values[(size_t) b]);
@@ -109,12 +136,15 @@ public:
 
         const auto id = nextId();
         const auto keptId = kept.load (std::memory_order_relaxed);
-        const auto replace = keptId == 0 || consumed.load (std::memory_order_acquire) == keptId || total > keptTotal;
+        const auto replace = keptId == 0 || consumed.load (std::memory_order_acquire) == keptId
+                          || state != State::live || keptState != State::live || bank != keptBank || total > keptTotal;
         beginWrite();
         if (replace)
         {
-            writeValues (values, hostBypassed, id);
+            writeValues (values, state == State::hostBypassed, id, bank, state != State::unavailable);
             keptTotal = total;
+            keptState = state;
+            keptBank = bank;
         }
         offers.store (id, std::memory_order_relaxed);
         endWrite();
@@ -143,6 +173,8 @@ public:
             out.offered = offers.load (std::memory_order_relaxed);
             out.generation = generation.load (std::memory_order_relaxed);
             out.hostBypassed = bypassed.load (std::memory_order_relaxed);
+            out.bank = bankOfKept.load (std::memory_order_relaxed);
+            out.available = availableKept.load (std::memory_order_relaxed);
             for (int b = 0; b < numBands; ++b)
             {
                 const auto& slot = bands[(size_t) b];
@@ -160,8 +192,10 @@ public:
 private:
     std::uint64_t nextId() noexcept { return ++lastId; }
 
-    void writeValues (const std::array<Band, numBands>& values, bool hostBypassed, std::uint64_t id) noexcept
+    void writeValues (const std::array<Band, numBands>& values, bool hostBypassed, std::uint64_t id, int bank, bool available) noexcept
     {
+        bankOfKept.store (bank, std::memory_order_relaxed);
+        availableKept.store (available, std::memory_order_relaxed);
         for (int b = 0; b < numBands; ++b)
         {
             auto& slot = bands[(size_t) b];
@@ -197,8 +231,12 @@ private:
     std::atomic<std::uint32_t> sequence { 0 }, generation { 0 };
     std::atomic<std::uint64_t> kept { 0 }, offers { 0 }, consumed { 0 };
     std::atomic<bool> bypassed { false }, active { false };
+    std::atomic<int> watched { 0 }, bankOfKept { 0 };
+    std::atomic<bool> availableKept { true };
     // Writer only.
     std::uint64_t lastId = 0;
     double keptTotal = 0.0;
+    State keptState = State::live;
+    int keptBank = 0;
 };
 } // namespace labq8

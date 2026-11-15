@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dsp/EqCore.h"
+#include "dsp/StereoModeEngine.h"
 #include "parameters/StateMigration.h"
 #include "plugin/DynamicsTelemetry.h"
 #include "plugin/LevelMeter.h"
@@ -66,6 +66,17 @@ public:
     void setUiView (int view) noexcept { uiView = view; }
     int getUiAnalyzerSource() const noexcept { return uiAnalyzerSource; }
     void setUiAnalyzerSource (int analyzerSource) noexcept { uiAnalyzerSource = analyzerSource; }
+    // E4c: the bank the editor edits while the mode is Mid/Side (1 = MID,
+    // 2 = SIDE: params::Bank), the same way: per instance, in memory, never
+    // part of the plugin state (v5 unchanged). In Stereo the editor always
+    // shows the STEREO bank.
+    // E4d: in Mid/Side, whether the analyzer shows the L/R output (true)
+    // instead of the edited bank's component (false, default). Per
+    // instance, in memory, never part of the plugin state.
+    bool getUiAnalyzerOutputLr() const noexcept { return uiAnalyzerOutputLr; }
+    void setUiAnalyzerOutputLr (bool lr) noexcept { uiAnalyzerOutputLr = lr; }
+    int getUiEditBank() const noexcept { return uiEditBank; }
+    void setUiEditBank (int bank) noexcept { uiEditBank = bank == 2 ? 2 : 1; }
 
     // UI-2a: sample peak of the input (before the EQ) and of the output
     // (what the host receives). Written by the audio thread, taken by the
@@ -92,8 +103,10 @@ public:
     static constexpr int eqSubBlockSamples = 256;
     DynamicsTelemetry& getDynamicsTelemetry() noexcept { return dynamicsTelemetry; }
 
-    // Tests: the EQ core (read only; never while audio runs on another thread).
-    const dsp::EqCore& getEqCoreForTesting() const noexcept { return eq; }
+    // Tests: the STEREO bank's EQ core and the whole engine (read only; never
+    // while audio runs on another thread).
+    const dsp::EqCore& getEqCoreForTesting() const noexcept { return engine.getCore (dsp::StereoBank::stereo); }
+    const dsp::StereoModeEngine& getEngineForTesting() const noexcept { return engine; }
 
 private:
     struct BandParameters
@@ -119,16 +132,27 @@ private:
     void pushParametersToCore() noexcept;
     void offerDynamics (bool hostBypassed) noexcept;
 
+    // E4b: one set per bank (STEREO, MID, SIDE: params::bankOf), in
+    // dsp::StereoBank order.
+    struct BankParameters
+    {
+        std::array<BandParameters, dsp::EqCore::numBands> bands;
+        std::array<DynamicParameters, dsp::EqCore::numBands> dynamics;
+    };
+
     juce::AudioProcessorValueTreeState parameters;
-    std::array<BandParameters, dsp::EqCore::numBands> bandParameters;
-    std::array<DynamicParameters, dsp::EqCore::numBands> dynamicParameters;
-    dsp::EqCore eq;
+    std::array<BankParameters, dsp::StereoModeEngine::numBanks> bankParameters;
+    std::atomic<float>* procMode = nullptr;
+    dsp::StereoModeEngine engine;
     int uiSelectedBand = 0;
     int uiView = 3;           // ALL
     int uiAnalyzerSource = 1; // POST
+    int uiEditBank = 1;       // MID
+    bool uiAnalyzerOutputLr = false;
     LevelMeter inputMeter, outputMeter;
     SpectrumTap preTap, postTap;
     DynamicsTelemetry dynamicsTelemetry;
+    std::uint64_t streamPosition = 0; // E4d: samples processed since prepareToPlay (audio thread only)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

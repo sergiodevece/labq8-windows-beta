@@ -37,6 +37,8 @@
 #include "ui/UiPreferences.h"
 
 #include <algorithm>
+#include <cmath>
+#include <random>
 #include <cstdio>
 #include <functional>
 #include <vector>
@@ -882,6 +884,151 @@ int captures (const juce::File& outDir)
 } // namespace
 
 
+//==============================================================================
+// E4c: the STEREO / MID / SIDE views of the real editor (docs/MIDSIDE_E4C.md).
+namespace e4c
+{
+void setBank (labq8::LabQ8AudioProcessor& p, labq8::params::Bank bank, const float (&gains)[8], const float (&freqs)[8], int highShelfBand)
+{
+    const auto ids = labq8::params::bankOf (bank);
+    for (int b = 0; b < 8; ++b)
+    {
+        setParam (p, ids.bands[(size_t) b].frequency, freqs[b]);
+        setParam (p, ids.bands[(size_t) b].gain, gains[b]);
+        setParam (p, ids.bands[(size_t) b].q, 1.2f);
+        setParam (p, ids.bands[(size_t) b].type, b == highShelfBand ? 2.0f : 0.0f);
+    }
+}
+
+int captures (const juce::File& outDir)
+{
+    using labq8::params::Bank;
+    bool ok = true;
+    const float freqs[8] = { 40, 90, 210, 820, 1200, 3000, 7000, 16000 };
+    const float midGains[8] = { 3.0f, 2.0f, -2.5f, -4.0f, 1.5f, 2.0f, 0.0f, 1.0f };
+    const float sideGains[8] = { -9.0f, -6.0f, -3.0f, 0.0f, 2.0f, 4.0f, 5.0f, 6.0f };
+    struct State { const char* name; int mode; Bank edit; int view; };
+    const State states[] = { { "stereo_all", 0, Bank::mid, 3 }, { "mid_all", 1, Bank::mid, 3 }, { "side_all", 1, Bank::side, 3 },
+                             { "side_eq", 1, Bank::side, 0 }, { "mid_dyn", 1, Bank::mid, 2 } };
+    for (const auto& st : states)
+        for (const float zoom : { 0.4f, 0.6f, 1.0f })
+        {
+            labq8::LabQ8AudioProcessor processor;
+            processor.prepareToPlay (48000.0, 512);
+            setMasterState (processor);
+            setBank (processor, Bank::mid, midGains, freqs, -1);
+            setBank (processor, Bank::side, sideGains, freqs, 7);
+            setParam (processor, labq8::params::procModeID, (float) st.mode);
+            processor.setUiEditBank ((int) st.edit);
+            processor.setUiView (st.view);
+            std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+            editor->setSize ((int) std::lround (1672 * zoom), (int) std::lround (941 * zoom));
+            const auto pct = juce::String (juce::roundToInt (zoom * 100.0f));
+            // 1x: the editor's real pixels at this zoom on a standard display.
+            ok = writePng (editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f),
+                           outDir.getChildFile (juce::String ("e4c_") + st.name + "_" + pct + ".png")) && ok;
+            if (zoom < 0.5f) // 40 % on a Retina display (2x)
+                ok = writePng (editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f),
+                               outDir.getChildFile (juce::String ("e4c_") + st.name + "_" + pct + "_retina.png")) && ok;
+            if (zoom == 1.0f) // details at 200 %: the STEREO MODE block and the band header
+            {
+                const auto full = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+                ok = writePng (full.getClippedImage ({ 2 * 440, 2 * 52, 2 * 350, 2 * 88 }).createCopy(),
+                               outDir.getChildFile (juce::String ("e4c_") + st.name + "_modeblock_200.png")) && ok;
+                ok = writePng (full.getClippedImage ({ 2 * 100, 2 * 600, 2 * 380, 2 * 70 }).createCopy(),
+                               outDir.getChildFile (juce::String ("e4c_") + st.name + "_header_200.png")) && ok;
+            }
+        }
+    std::printf ("%s\n", ok ? "E4c captures written" : "FAILED to write captures");
+    return ok ? 0 : 1;
+}
+} // namespace e4c
+
+//==============================================================================
+// E4d: the MID / SIDE analyzer and dynamics with real (synthetic) audio.
+namespace e4d
+{
+int captures (const juce::File& outDir)
+{
+    using labq8::params::Bank;
+    bool ok = true;
+    struct State { const char* name; int mode; Bank edit; int view; int analyzer; };
+    const State states[] = { { "stereo_all", 0, Bank::mid, 3, 1 }, { "mid_all", 1, Bank::mid, 3, 1 }, { "side_all", 1, Bank::side, 3, 1 },
+                             { "mid_dyn", 1, Bank::mid, 2, 1 }, { "side_dyn", 1, Bank::side, 2, 1 },
+                             { "mid_spectrum_prepost", 1, Bank::mid, 1, 2 }, { "side_spectrum_prepost", 1, Bank::side, 1, 2 } };
+    for (const auto& st : states)
+        for (const float zoom : { 0.4f, 0.6f, 1.0f })
+        {
+            labq8::LabQ8AudioProcessor p;
+            juce::AudioProcessor::BusesLayout l; l.inputBuses.add (juce::AudioChannelSet::stereo()); l.outputBuses.add (juce::AudioChannelSet::stereo());
+            p.setBusesLayout (l);
+            setMasterState (p);
+            // MID: a dynamic Bell on the kick, a presence lift; SIDE: low cut, a dynamic Bell on the hats, air.
+            auto bank = [&] (Bank b, int band, float f, float g, float q, int type, bool dyn, float thr, float range)
+            {
+                const auto& s = labq8::params::bankOf (b).bands[(size_t) band];
+                const auto& d = labq8::params::bankOf (b).dynamics[(size_t) band];
+                setParam (p, s.frequency, f); setParam (p, s.gain, g); setParam (p, s.q, q); setParam (p, s.type, (float) type);
+                setParam (p, d.enabled, dyn ? 1.0f : 0.0f); setParam (p, d.threshold, thr); setParam (p, d.range, range); setParam (p, d.attack, 5.0f); setParam (p, d.release, 150.0f);
+            };
+            bank (Bank::mid, 1, 70, 2.0f, 1.2f, 0, true, -32.0f, 8.0f);
+            bank (Bank::mid, 4, 3000, 3.0f, 0.9f, 0, false, -20.0f, 6.0f);
+            bank (Bank::side, 1, 120, 0.0f, 1.0f, 3, false, -20.0f, 6.0f);
+            bank (Bank::side, 5, 6000, 2.0f, 1.5f, 0, true, -42.0f, 7.0f);
+            bank (Bank::side, 7, 14000, 4.0f, 0.8f, 2, false, -20.0f, 6.0f);
+            setParam (p, labq8::params::procModeID, (float) st.mode);
+            p.setUiEditBank ((int) st.edit);
+            p.setUiView (st.view);
+            p.setUiAnalyzerSource (st.analyzer);
+            p.setUiSelectedBand (1);
+            p.prepareToPlay (48000.0, 512);
+            std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+            auto* editor = dynamic_cast<labq8::ui::LabQ8Editor*> (base.get());
+            editor->setSize ((int) std::lround (1672 * zoom), (int) std::lround (941 * zoom));
+            // 1.5 s of a mix: kick (centre), bass (centre), pad (wide), hats (side-heavy), noise.
+            std::mt19937 rng (4);
+            std::uniform_real_distribution<float> u (-1.0f, 1.0f);
+            juce::MidiBuffer midi;
+            for (int k = 0, n = 0; k < 140; ++k)
+            {
+                juce::AudioBuffer<float> b (2, 512);
+                for (int i = 0; i < 512; ++i, ++n)
+                {
+                    const double t = n / 48000.0, tk = std::fmod (t, 0.5), th = std::fmod (t, 0.125);
+                    const double kick = 0.5 * std::exp (-tk / 0.08) * std::sin (2 * 3.14159265 * (55 + 60 * std::exp (-tk / 0.03)) * tk);
+                    const double bass = 0.12 * std::sin (2 * 3.14159265 * 82.4 * t);
+                    const double padL = 0.05 * std::sin (2 * 3.14159265 * 440 * t) + 0.04 * std::sin (2 * 3.14159265 * 1320 * t + 0.4);
+                    const double padR = 0.05 * std::sin (2 * 3.14159265 * 440 * t + 1.1) + 0.04 * std::sin (2 * 3.14159265 * 1320 * t + 2.0);
+                    const double hat = 0.12 * std::exp (-th / 0.02) * u (rng);
+                    const double air = 0.01 * u (rng);
+                    b.setSample (0, i, (float) (kick + bass + padL + hat + air));
+                    b.setSample (1, i, (float) (kick + bass + padR - 0.6 * hat + 0.01 * u (rng)));
+                }
+                p.processBlock (b, midi);
+                if (k % 3 == 2)
+                {
+                    editor->getSpectrum().advance (1.0 / 30.0);
+                    editor->getDynamics().advance (1.0 / 30.0);
+                }
+            }
+            const auto pct = juce::String (juce::roundToInt (zoom * 100.0f));
+            ok = writePng (editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f),
+                           outDir.getChildFile (juce::String ("e4d_") + st.name + "_" + pct + ".png")) && ok;
+            // The analyzer's selector (and the view tabs) as the screen shows
+            // it at this zoom: 1x and 2x (Retina) pixels.
+            for (const float px : { 1.0f, 2.0f })
+            {
+                const auto k = zoom * px;
+                const juce::Rectangle<int> crop ((int) std::floor (360 * k), (int) std::floor (195 * k), (int) std::ceil (740 * k), (int) std::ceil (42 * k));
+                ok = writePng (editor->createComponentSnapshot (editor->getLocalBounds(), true, px).getClippedImage (crop).createCopy(),
+                               outDir.getChildFile (juce::String ("e4d_") + st.name + "_selector_" + pct + "_" + juce::String ((int) px) + "x.png")) && ok;
+            }
+        }
+    std::printf ("%s\n", ok ? "E4d captures written" : "FAILED to write captures");
+    return ok ? 0 : 1;
+}
+} // namespace e4d
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -949,6 +1096,10 @@ int main (int argc, char** argv)
         return ui2b::captures (master, outDir);
     if (argc > 3 && juce::String (argv[3]) == "--ui2c")
         return ui2c::captures (outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--e4d")
+        return e4d::captures (outDir);
+    if (argc > 3 && juce::String (argv[3]) == "--e4c")
+        return e4c::captures (outDir);
     if (argc > 3 && juce::String (argv[3]) == "--ui2c-probe")
     {
         ui2c::probe();

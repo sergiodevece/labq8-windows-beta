@@ -10,6 +10,8 @@
 
 #include <cmath>
 #include <limits>
+#include <map>
+#include <optional>
 
 namespace labq8::ui
 {
@@ -44,10 +46,12 @@ namespace
         return { centre.x + radius * std::sin (a), centre.y - radius * std::cos (a) };
     }
 
-    const char* parameterId (int band, PanelControl control)
+    // E4c: every band ID the editor uses is chosen through the bank shown
+    // (params::bankOf), never from a bare array.
+    const char* parameterId (params::Bank bank, int band, PanelControl control)
     {
-        const auto& ids = params::bandIDs[(size_t) band];
-        const auto& dyn = params::dynamicIDs[(size_t) band];
+        const auto& ids = params::bankOf (bank).bands[(size_t) band];
+        const auto& dyn = params::bankOf (bank).dynamics[(size_t) band];
         switch (control)
         {
             case PanelControl::frequency: return ids.frequency;
@@ -117,6 +121,19 @@ public:
         return getLocalBounds().toFloat().getCentre().getDistanceFrom ({ (float) x, (float) y }) <= g::knobHitRadius;
     }
 
+    // E4c: whether a drag (one host gesture) is in progress, and what to do
+    // when it ends (a bank change waits for it: the gesture closes on the
+    // parameter it began on).
+    bool isDraggingNow() const noexcept { return draggingNow; }
+    std::function<void()> onDragFinished;
+    void startedDragging() override { draggingNow = true; }
+    void stoppedDragging() override
+    {
+        draggingNow = false;
+        if (onDragFinished)
+            onDragFinished();
+    }
+
     void paint (juce::Graphics& gr) override
     {
         const auto c = g::knobCentres[(size_t) knobIndex];
@@ -145,6 +162,7 @@ public:
 
 private:
     const int knobIndex;
+    bool draggingNow = false;
 };
 
 //==============================================================================
@@ -274,24 +292,52 @@ class BandHeader final : public juce::Component
 public:
     BandHeader()
     {
-        setBounds (rectOf (g::bandLabelEraseArea).toNearestInt());
+        // E4c: wide enough for "SIDE  BAND 8", up to the chassis' "Filter
+        // Type" label (the area is plain chassis; nothing is erased there).
+        const auto& r = g::bandLabelEraseArea;
+        setBounds (juce::Rectangle<float> (r.x, r.y, g::filterTypeLabelLeft - 4.0f - r.x, r.h).toNearestInt());
         setInterceptsMouseClicks (false, false);
     }
 
     void setBand (int b) { band = b; repaint(); }
+    // E4c: "MID" / "SIDE" before "BAND n" in M/S (empty: STEREO).
+    void setBankPrefix (const juce::String& p) { prefix = p; repaint(); }
+    juce::String text() const { return (prefix.isEmpty() ? juce::String() : prefix + "  ") + "BAND " + juce::String (band + 1); }
+    // Reference x where the label ends (tests: it must end before "Filter Type").
+    float labelRight() const { return g::bandLabelLeft + prefixWidth() + bandWidth(); }
 
     void paint (juce::Graphics& gr) override
     {
         const juce::Point<float> origin { (float) getX(), (float) getY() };
+        const auto capCentre = 0.5f * (g::bandLabelCapTop + g::bandLabelCapBottom) - origin.y;
+        auto x = g::bandLabelLeft - origin.x;
+        if (prefix.isNotEmpty())
+        {
+            // Small, in the chassis labels' grey, on the same cap centre.
+            gr.setColour (colourOf (g::chassisLabelColour));
+            gr.setFont (prefixFont());
+            gr.drawText (prefix, juce::Rectangle<float> (x, capCentre - 12, 80, 24), juce::Justification::centredLeft, false);
+            x += prefixWidth();
+        }
         gr.setColour (bandColour (band));
         gr.setFont (designFont (headerFontHeight, "Medium", headerTracking));
-        const auto capCentre = 0.5f * (g::bandLabelCapTop + g::bandLabelCapBottom) - origin.y;
-        gr.drawText ("BAND " + juce::String (band + 1), juce::Rectangle<float> (g::bandLabelLeft - origin.x, capCentre - 12, 120, 24),
+        gr.drawText ("BAND " + juce::String (band + 1), juce::Rectangle<float> (x, capCentre - 12, 120, 24),
                      juce::Justification::centredLeft, false);
     }
 
 private:
+    static juce::Font prefixFont() { return designFont (g::bankPrefixCapHeight * 1.5f, "Medium", 0.12f); }
+    float prefixWidth() const
+    {
+        return prefix.isEmpty() ? 0.0f : juce::GlyphArrangement::getStringWidth (prefixFont(), prefix) + g::bankPrefixGap;
+    }
+    float bandWidth() const
+    {
+        return juce::GlyphArrangement::getStringWidth (designFont (headerFontHeight, "Medium", headerTracking), "BAND " + juce::String (band + 1));
+    }
+
     int band = 0;
+    juce::String prefix;
 };
 
 //==============================================================================
@@ -307,6 +353,7 @@ public:
 
     void attach (juce::RangedAudioParameter& parameter)
     {
+        attached = &parameter;
         attachment = std::make_unique<juce::ParameterAttachment> (parameter, [this] (float value)
         {
             index = (int) std::lround (value);
@@ -333,8 +380,12 @@ public:
         for (int i = 0; i < (int) params::filterTypeNames.size(); ++i)
             menu.addItem (i + 1, params::filterTypeNames[(size_t) i], true, i == index);
         juce::Component::SafePointer<FilterTypeSelector> self (this);
+        // E4c: the choice applies to the parameter the menu was opened for;
+        // if the bank shown changed meanwhile (automation of the mode), it
+        // is dropped rather than written to the other bank.
+        const auto* openedFor = attached;
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                            [self] (int result) { if (self != nullptr && result > 0) self->choose (result - 1); });
+                            [self, openedFor] (int result) { if (self != nullptr && result > 0 && self->attached == openedFor) self->choose (result - 1); });
     }
 
     void paint (juce::Graphics& gr) override
@@ -377,6 +428,7 @@ private:
     }
 
     std::unique_ptr<juce::ParameterAttachment> attachment;
+    const juce::RangedAudioParameter* attached = nullptr;
     int index = 0;
 };
 
@@ -500,7 +552,7 @@ public:
     {
         setBounds (juce::Rectangle<float> (g::settingsHitSize, g::settingsHitSize).withCentre ({ g::settingsIconCentre.x, g::settingsIconCentre.y }).toNearestInt());
         setTitle ("Settings");
-        setTooltip ("Settings: zoom");
+        setTooltip ("Settings: zoom, Mid/Side bank copy");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
 
@@ -543,8 +595,25 @@ public:
     }
 
     std::function<void()> onContextMenu;
+    // E4c: called when a node / Q-handle drag ends (a bank change waits for it).
+    std::function<void()> onDragFinished;
 
     void setSelectedBand (int b) { selectedBand = b; repaint(); }
+
+    // E4c: the bank whose bands are drawn and edited, and the other bank
+    // drawn as a thin grey curve (M/S only; nullopt: none).
+    void setBanks (params::Bank shown, std::optional<params::Bank> ghostBank)
+    {
+        if (shown != bank || ghostBank != ghost)
+        {
+            bank = shown;
+            ghost = ghostBank;
+            repaint();
+        }
+    }
+    params::Bank getBank() const noexcept { return bank; }
+    std::optional<params::Bank> getGhost() const noexcept { return ghost; }
+    bool isDragging() const noexcept { return drag.kind != DragKind::none; }
 
     void showHandles (bool shouldShow)
     {
@@ -600,7 +669,7 @@ public:
             {
                 const auto band = readBands()[(size_t) selectedBand];
                 drag = { DragKind::q, selectedBand, p, band.frequencyHz, band.gainDb, clampedEffectiveQ (band), side, band.type };
-                q.parameter = parameter (params::bandIDs[(size_t) selectedBand].q);
+                q.parameter = parameter (params::bankOf (bank).bands[(size_t) selectedBand].q);
                 return;
             }
 
@@ -614,8 +683,8 @@ public:
         showHandles (true);
         const auto view = readBands()[(size_t) band];
         drag = { DragKind::node, band, p, view.frequencyHz, view.gainDb, 0.0, 0, view.type };
-        frequency.parameter = parameter (params::bandIDs[(size_t) band].frequency);
-        gain.parameter = dsp::usesGain (view.type) ? parameter (params::bandIDs[(size_t) band].gain) : nullptr;
+        frequency.parameter = parameter (params::bankOf (bank).bands[(size_t) band].frequency);
+        gain.parameter = dsp::usesGain (view.type) ? parameter (params::bankOf (bank).bands[(size_t) band].gain) : nullptr;
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
@@ -652,7 +721,13 @@ public:
         repaint();
     }
 
-    void mouseUp (const juce::MouseEvent&) override { endDrag(); }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        const auto wasDragging = isDragging();
+        endDrag();
+        if (wasDragging && onDragFinished)
+            onDragFinished();
+    }
 
     int paintCount = 0; // tests: how often the curve really was recomputed
 
@@ -671,6 +746,26 @@ public:
             if (f < 0.497 * fs)
                 frequencies.push_back (f);
         const auto total = cascadeResponseDb (bands, fs, frequencies);
+
+        // E4c: the other bank (M/S), a thin grey line with a discreet name;
+        // no nodes, no fill, never edited.
+        if (ghost.has_value())
+        {
+            const auto other = cascadeResponseDb (readBands (*ghost), fs, frequencies);
+            juce::Path line;
+            for (size_t i = 0; i < frequencies.size(); ++i)
+            {
+                const juce::Point<float> pt { frequencyToX (frequencies[i]), clampY (decibelsToY (other[i])) };
+                if (i == 0) line.startNewSubPath (pt); else line.lineTo (pt);
+            }
+            gr.setColour (ghostColour());
+            gr.strokePath (line, juce::PathStrokeType (1.0f));
+            gr.setFont (designFont (12.0f, "Medium", 0.06f));
+            const auto y0 = clampY (decibelsToY (other.front()));
+            const auto labelY = y0 > plot.getY() + 20.0f ? y0 - 15.0f : y0 + 3.0f;
+            gr.drawText (*ghost == params::Bank::mid ? "MID" : "SIDE", juce::Rectangle<float> (plot.getX() + 5.0f, labelY, 60.0f, 12.0f),
+                         juce::Justification::centredLeft, false);
+        }
 
         // Selected band's own contribution, filled against 0 dB.
         const auto own = bandResponseDb (bands[(size_t) selectedBand], fs, frequencies);
@@ -725,12 +820,14 @@ public:
             paintHandles (gr, bands[(size_t) selectedBand], nodePosition (bands[(size_t) selectedBand], atNodes[(size_t) selectedBand]));
     }
 
-    std::array<BandView, 8> readBands() const
+    std::array<BandView, 8> readBands() const { return readBands (bank); }
+
+    std::array<BandView, 8> readBands (params::Bank which) const
     {
         std::array<BandView, 8> bands;
         for (int b = 0; b < 8; ++b)
         {
-            const auto& ids = params::bandIDs[(size_t) b];
+            const auto& ids = params::bankOf (which).bands[(size_t) b];
             auto value = [&] (const char* id) { return (double) state.getRawParameterValue (id)->load(); };
             bands[(size_t) b] = { value (ids.frequency), value (ids.gain), value (ids.q),
                                   dsp::filterTypeFromIndex ((int) std::lround (value (ids.type))), value (ids.bypass) >= 0.5 };
@@ -875,6 +972,11 @@ private:
 
     double sampleRate() const { return processor.getSampleRate() > 0 ? processor.getSampleRate() : 48000.0; }
 
+public:
+    static juce::Colour ghostColour() { return juce::Colour (200, 200, 190).withAlpha (0.4f); }
+
+private:
+
     static std::vector<double> nodeFrequencies (const std::array<BandView, 8>& bands)
     {
         std::vector<double> f;
@@ -897,9 +999,159 @@ private:
     std::function<void (int)> select;
     std::vector<double> allFrequencies;
     int selectedBand = 0;
+    params::Bank bank = params::Bank::stereo;
+    std::optional<params::Bank> ghost;
     bool handlesShown = false;
     Drag drag;
     GestureParameter frequency, gain, q;
+};
+
+//==============================================================================
+// E4c: the STEREO MODE block. Faces cut from the master without their text
+// (mode_face_lit / _unlit), 9-sliced to the button's frame; the name in
+// the master's Helvetica Neue Condensed Bold, cap 13.
+class ModeFace
+{
+public:
+    enum class Look { lit, unlit, dimmed };
+
+    static void paint (juce::Graphics& gr, juce::Rectangle<int> frame, const juce::String& name, Look look)
+    {
+        const auto w = frame.getWidth(), h = frame.getHeight();
+        // One composed image per look and width, drawn whole: drawing the
+        // three 9-slice pieces separately leaves seams at non-integer zooms.
+        gr.drawImageAt (face (look == Look::lit, w, h), frame.getX(), frame.getY());
+
+        gr.setFont (designFont (nameHeight(), "Condensed Bold"));
+        gr.setColour (look == Look::lit ? colourOf (g::modeLitTextColour)
+                                        : colourOf (g::modeTextColour, look == Look::dimmed ? 0.38f : 1.0f));
+        const auto capCentre = g::modeButtonCapCentre - g::modeButtonStereo.y + (float) frame.getY();
+        gr.drawText (name, juce::Rectangle<float> ((float) frame.getX(), capCentre - 12.0f, (float) w, 24.0f), juce::Justification::centred, false);
+    }
+
+    // Helvetica Neue: cap height is 2/3 of the JUCE font height (the
+    // header's Medium 21 has cap 14).
+    static float nameHeight() { return g::modeButtonCapHeight * 1.5f; }
+
+private:
+    // The face at the frame's size in reference pixels: the caps as cut from
+    // the master, the middle repeated from one column (message thread only).
+    static const juce::Image& face (bool lit, int w, int h)
+    {
+        static std::map<std::pair<bool, int>, juce::Image> cache;
+        auto& image = cache[{ lit, w }];
+        if (image.isNull())
+        {
+            const auto source = lit ? juce::ImageCache::getFromMemory (LabQ8Assets::mode_face_lit_png, LabQ8Assets::mode_face_lit_pngSize)
+                                    : juce::ImageCache::getFromMemory (LabQ8Assets::mode_face_unlit_png, LabQ8Assets::mode_face_unlit_pngSize);
+            const auto cap = (int) g::modeFaceCap, sw = source.getWidth();
+            image = juce::Image (juce::Image::ARGB, w, h, true);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                {
+                    const auto sx = x < cap ? x : (x >= w - cap ? sw - (w - x) : cap);
+                    image.setPixelAt (x, y, source.getPixelAt (sx, juce::jmin (y, source.getHeight() - 1)));
+                }
+        }
+        return image;
+    }
+};
+
+// STEREO / M/S: the two choices of proc_mode, one lit. A click on the other
+// one writes proc_mode (one complete gesture); a click on the lit one does
+// nothing.
+class ModeButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    ModeButton (int modeIndex, juce::RangedAudioParameter& parameter, std::function<void()> onChange)
+        : index (modeIndex), changed (std::move (onChange))
+    {
+        setBounds (rectOf (index == 0 ? g::modeButtonStereo : g::modeButtonMidSide).toNearestInt());
+        setTitle (index == 0 ? "Stereo Mode: Stereo" : "Stereo Mode: Mid/Side");
+        setTooltip (index == 0 ? "Stereo: one bank on L / R" : "M/S: MID and SIDE banks");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        attachment = std::make_unique<juce::ParameterAttachment> (parameter, [this] (float value)
+        {
+            const auto newLit = (int) std::lround (value) == index;
+            if (newLit != lit)
+            {
+                lit = newLit;
+                repaint();
+            }
+            if (changed)
+                changed();
+        });
+        attachment->sendInitialUpdate();
+    }
+
+    bool isLit() const noexcept { return lit; }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isLeftButtonDown() && ! e.mods.isPopupMenu() && ! lit)
+        {
+            attachment->setValueAsCompleteGesture ((float) index);
+            // The attachment does not call back for its own change.
+            lit = true;
+            repaint();
+            if (changed)
+                changed();
+        }
+    }
+
+    void paint (juce::Graphics& gr) override
+    {
+        ModeFace::paint (gr, getLocalBounds(), index == 0 ? "STEREO" : "M/S", lit ? ModeFace::Look::lit : ModeFace::Look::unlit);
+    }
+
+private:
+    const int index;
+    std::function<void()> changed;
+    std::unique_ptr<juce::ParameterAttachment> attachment;
+    bool lit = false;
+};
+
+// MID / SIDE: which bank the editor edits in M/S. Pure view state (no
+// parameter, no gesture). In Stereo both are dimmed and take no clicks.
+class BankButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    BankButton (params::Bank b, std::function<void (params::Bank)> onSelect) : bank (b), select (std::move (onSelect))
+    {
+        setBounds (rectOf (bank == params::Bank::mid ? g::bankButtonMid : g::bankButtonSide).toNearestInt());
+        setTitle (bank == params::Bank::mid ? "Edit MID bank" : "Edit SIDE bank");
+        setState (false, false);
+    }
+
+    void setState (bool isAvailable, bool isSelected)
+    {
+        available = isAvailable;
+        selected = isSelected;
+        setTooltip (available ? juce::String (bank == params::Bank::mid ? "Edit the MID bank" : "Edit the SIDE bank")
+                              : juce::String ("MID / SIDE: M/S mode only"));
+        setMouseCursor (available ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    bool isAvailable() const noexcept { return available; }
+    bool isSelected() const noexcept { return selected; }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (available && e.mods.isLeftButtonDown() && ! e.mods.isPopupMenu())
+            select (bank);
+    }
+
+    void paint (juce::Graphics& gr) override
+    {
+        ModeFace::paint (gr, getLocalBounds(), bank == params::Bank::mid ? "MID" : "SIDE",
+                         ! available ? ModeFace::Look::dimmed : (selected ? ModeFace::Look::lit : ModeFace::Look::unlit));
+    }
+
+private:
+    const params::Bank bank;
+    std::function<void (params::Bank)> select;
+    bool available = false, selected = false;
 };
 
 //==============================================================================
@@ -1016,9 +1268,19 @@ public:
         setTooltip ("Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)");
     }
 
+    // E4d: in M/S the analyzer names the signal: the edited bank's
+    // component ("MID Post", "SIDE Pre + Post") or the L/R output ("L/R
+    // Post"). Every text fits the box (108 px; measured).
     static juce::String textFor (AnalyzerSource s)
     {
         return s == AnalyzerSource::pre ? "Analyzer: Pre" : s == AnalyzerSource::post ? "Analyzer: Post" : "Pre + Post";
+    }
+    static juce::String textFor (AnalyzerSource s, AnalyzerDomain d)
+    {
+        if (d == AnalyzerDomain::lr)
+            return "L/R Post";
+        const juce::String bank = d == AnalyzerDomain::mid ? "MID" : "SIDE";
+        return bank + (s == AnalyzerSource::pre ? " Pre" : s == AnalyzerSource::post ? " Post" : " Pre + Post");
     }
 
     void setSource (AnalyzerSource s)
@@ -1027,18 +1289,32 @@ public:
         repaint();
     }
 
+    void setMidSide (bool isMidSide, AnalyzerDomain d)
+    {
+        midSide = isMidSide;
+        domain = d;
+        setTooltip (! midSide ? "Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)"
+                    : domain == AnalyzerDomain::lr ? "Analyzer: the L / R output (after the EQ)"
+                                                   : "Analyzer: the edited bank's signal (PRE before its EQ, POST after it)");
+        repaint();
+    }
+
+    juce::String text() const { return midSide ? textFor (source, domain) : textFor (source); }
+
     void mouseDown (const juce::MouseEvent&) override { open(); }
 
     void paint (juce::Graphics& gr) override
     {
         gr.setFont (designFont (16.0f, "Medium"));
         gr.setColour (colourOf (g::analyzerTextColour));
-        gr.drawSingleLineText (textFor (source), (int) g::analyzerTextLeft - getX(), (int) (g::analyzerCapCentre + 5.5f) - getY());
+        gr.drawSingleLineText (text(), (int) g::analyzerTextLeft - getX(), (int) (g::analyzerCapCentre + 5.5f) - getY());
     }
 
 private:
     std::function<void()> open;
     AnalyzerSource source = AnalyzerSource::post;
+    AnalyzerDomain domain = AnalyzerDomain::lr;
+    bool midSide = false;
 };
 
 // UI-2b: the spectrum's dBFS scale (0 to -96, one label per grid line, at
@@ -1173,13 +1449,21 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
         displays[(size_t) i] = std::make_unique<ValueDisplay> (i, controls[i], *knobs[(size_t) i]);
         content->addAndMakeVisible (*displays[(size_t) i]);
         knobs[(size_t) i]->onValueChange = [this, i] { displays[(size_t) i]->repaint(); };
+        // JUCE calls stoppedDragging() before the attachment ends its gesture:
+        // a pending bank change is applied afterwards (or by the next refresh).
+        knobs[(size_t) i]->onDragFinished = [this]
+        {
+            juce::Component::SafePointer<LabQ8Editor> self (this);
+            juce::MessageManager::callAsync ([self] { if (self != nullptr && self->bankChangePending) self->updateShownBank(); });
+        };
     }
 
-    // Each button is bound to its own band's b{n}_bypass for good.
+    // Each button is bound to its own band's b{n}_bypass in the bank shown
+    // (E4c: re-bound when the bank changes, applyShownBank).
     for (int b = 0; b < 8; ++b)
     {
         bandButtons[(size_t) b] = std::make_unique<BandButton> (b);
-        bandButtons[(size_t) b]->attach (*state.getParameter (params::bandIDs[(size_t) b].bypass));
+        bandButtons[(size_t) b]->attach (*state.getParameter (params::bankOf (shownBank).bands[(size_t) b].bypass));
         content->addAndMakeVisible (*bandButtons[(size_t) b]);
     }
 
@@ -1194,8 +1478,9 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     filterType->onTypeChanged = [this] (int type) { dynamicSwitch->setAvailable (dsp::filterTypeFromIndex (type) == dsp::FilterType::bell); };
 
     // Present in the design, not implemented in UI-1.
+    // (STEREO MODE is real since E4c.)
     const std::pair<const char*, juce::Rectangle<int>> pending[] = {
-        { "Stereo Mode", { 458, 80, 310, 58 } },     { "Polarity", { 816, 80, 98, 58 } },
+        { "Polarity", { 816, 80, 98, 58 } },
         { "Intention", { 988, 80, 244, 58 } },
         { "Phase Behavior", { 1320, 619, 230, 43 } },
     };
@@ -1230,7 +1515,27 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
     settingsButton = std::make_unique<SettingsButton> ([this] { showZoomMenu (*settingsButton); });
     content->addAndMakeVisible (*settingsButton);
 
+    // E4c: STEREO / M/S (proc_mode) and MID / SIDE (the bank edited in M/S).
+    screen->onDragFinished = [this] { if (bankChangePending) updateShownBank(); };
+    for (int b = 0; b < 2; ++b)
+    {
+        bankButtons[(size_t) b] = std::make_unique<BankButton> (b == 0 ? params::Bank::mid : params::Bank::side,
+                                                                [this] (params::Bank bank) { setEditBank (bank); });
+        content->addAndMakeVisible (*bankButtons[(size_t) b]);
+    }
+    for (int m = 0; m < 2; ++m)
+    {
+        modeButtons[(size_t) m] = std::make_unique<ModeButton> (m, *state.getParameter (params::procModeID), [this]
+        {
+            if (modeButtons[0] != nullptr && modeButtons[1] != nullptr)
+                updateShownBank();
+        });
+        content->addAndMakeVisible (*modeButtons[(size_t) m]);
+    }
+    shownBank = bankToShow();
+
     selectBand (juce::jlimit (0, 7, audioProcessor.getUiSelectedBand()));
+    applyShownBank();
     setView (audioProcessor.getUiView());
     setAnalyzerSource ((AnalyzerSource) juce::jlimit (0, 2, audioProcessor.getUiAnalyzerSource()));
 
@@ -1341,9 +1646,79 @@ void LabQ8Editor::handleZoomMenuResult (int itemId)
 
 void LabQ8Editor::showZoomMenu (juce::Component& target)
 {
+    // E4c: the settings menu (zoom, and the Mid/Side copy commands).
     juce::Component::SafePointer<LabQ8Editor> self (this);
-    createZoomMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
-                                    [self] (int result) { if (self != nullptr) self->handleZoomMenuResult (result); });
+    createSettingsMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
+                                        [self] (int result) { if (self != nullptr) self->handleSettingsMenuResult (result); });
+}
+
+juce::PopupMenu LabQ8Editor::createSettingsMenu() const
+{
+    auto menu = createZoomMenu();
+    menu.addSeparator();
+    menu.addSectionHeader ("Mid/Side banks");
+    menu.addItem (copyStereoToMidSideItem, juce::String (juce::CharPointer_UTF8 ("Copy STEREO \xe2\x86\x92 MID + SIDE")));
+    menu.addItem (copyMidToSideItem, juce::String (juce::CharPointer_UTF8 ("Copy MID \xe2\x86\x92 SIDE")));
+    menu.addItem (copySideToMidItem, juce::String (juce::CharPointer_UTF8 ("Copy SIDE \xe2\x86\x92 MID")));
+    return menu;
+}
+
+void LabQ8Editor::handleSettingsMenuResult (int itemId)
+{
+    if (itemId == copyStereoToMidSideItem)
+    {
+        copyBank (params::Bank::stereo, params::Bank::mid);
+        copyBank (params::Bank::stereo, params::Bank::side);
+    }
+    else if (itemId == copyMidToSideItem)
+        copyBank (params::Bank::mid, params::Bank::side);
+    else if (itemId == copySideToMidItem)
+        copyBank (params::Bank::side, params::Bank::mid);
+    else
+        handleZoomMenuResult (itemId);
+}
+
+int LabQ8Editor::copyBank (params::Bank from, params::Bank to)
+{
+    if (from == to)
+        return 0;
+    // Same contract in every bank (E4a): the normalised value means the
+    // same thing in the source and the target parameter. Only parameters
+    // whose value differs are written, each as one complete host gesture.
+    const auto source = params::bankOf (from), target = params::bankOf (to);
+    int written = 0;
+    auto copy = [&] (const char* fromId, const char* toId)
+    {
+        auto* src = state.getParameter (fromId);
+        auto* dst = state.getParameter (toId);
+        if (src == nullptr || dst == nullptr)
+            return;
+        const auto value = src->getValue();
+        // Skip when the target already reports the source's value, or what
+        // this write would leave it with: a bool keeps the normalised value
+        // it is given, a float reports it through its own mapping (frequency
+        // / Q: the log mapping is not an exact inverse, so a copied value may
+        // sit an ulp away from its source; a second copy must not write it
+        // again).
+        const auto current = dst->getValue();
+        if (juce::exactlyEqual (current, value) || juce::exactlyEqual (current, dst->convertTo0to1 (dst->convertFrom0to1 (value))))
+            return;
+        dst->beginChangeGesture();
+        dst->setValueNotifyingHost (value);
+        dst->endChangeGesture();
+        ++written;
+    };
+    for (size_t b = 0; b < params::numBands; ++b)
+    {
+        const auto& s = source.bands[b];
+        const auto& t = target.bands[b];
+        copy (s.frequency, t.frequency); copy (s.gain, t.gain); copy (s.q, t.q); copy (s.bypass, t.bypass); copy (s.type, t.type);
+        const auto& sd = source.dynamics[b];
+        const auto& td = target.dynamics[b];
+        copy (sd.enabled, td.enabled); copy (sd.threshold, td.threshold); copy (sd.range, td.range); copy (sd.attack, td.attack); copy (sd.release, td.release);
+    }
+    refreshFromParameters();
+    return written;
 }
 
 void LabQ8Editor::setView (int tab)
@@ -1361,7 +1736,7 @@ void LabQ8Editor::setView (int tab)
         screen->showHandles (false);
     screen->setVisible (tab != viewSpectrum);
     spectrum->setShown (tab == viewSpectrum || tab == viewAll);
-    dynamics->setShown (tab == viewDyn || tab == viewAll, tab == viewDyn);
+    updateViewLayers();
     // The scales: EQ +-24 dB on the left (the background's) in EQ and ALL;
     // dBFS on the left in SPECTRUM, discreet on the right in ALL.
     leftScale->setVisible (tab == viewSpectrum);
@@ -1371,32 +1746,165 @@ void LabQ8Editor::setView (int tab)
 void LabQ8Editor::setAnalyzerSource (AnalyzerSource newSource)
 {
     audioProcessor.setUiAnalyzerSource ((int) newSource);
-    spectrum->setSource (newSource);
-    analyzerSelector->setSource (newSource);
+    applyAnalyzer();
+}
+
+AnalyzerDomain LabQ8Editor::analyzerDomain() const
+{
+    if (shownBank == params::Bank::stereo || audioProcessor.getUiAnalyzerOutputLr())
+        return AnalyzerDomain::lr;
+    return shownBank == params::Bank::mid ? AnalyzerDomain::mid : AnalyzerDomain::side;
+}
+
+void LabQ8Editor::applyAnalyzer()
+{
+    // STEREO: the UI-2b analyzer, unchanged. M/S (E4d): the edited bank's
+    // component with the chosen Pre / Post / Pre + Post, or the L/R output
+    // (POST only).
+    const auto midSide = shownBank != params::Bank::stereo;
+    const auto domain = analyzerDomain();
+    const auto chosen = (AnalyzerSource) juce::jlimit (0, 2, audioProcessor.getUiAnalyzerSource());
+    const auto source = midSide && domain == AnalyzerDomain::lr ? AnalyzerSource::post : chosen;
+    spectrum->setDomain (domain);
+    spectrum->setSource (source);
+    analyzerSelector->setSource (source);
+    analyzerSelector->setMidSide (midSide, domain);
 }
 
 juce::PopupMenu LabQ8Editor::createAnalyzerMenu() const
 {
     juce::PopupMenu menu;
-    menu.addSectionHeader ("Analyzer");
     const char* names[] = { "Pre (before the EQ)", "Post (after the EQ)", "Pre + Post" };
+    if (shownBank == params::Bank::stereo)
+    {
+        menu.addSectionHeader ("Analyzer");
+        for (int i = 0; i < 3; ++i)
+            menu.addItem (i + 1, names[i], true, (int) spectrum->getSource() == i);
+        return menu;
+    }
+    // E4d: the edited bank's component, or the L/R output.
+    const auto outputLr = audioProcessor.getUiAnalyzerOutputLr();
+    menu.addSectionHeader (shownBank == params::Bank::mid ? "MID" : "SIDE");
     for (int i = 0; i < 3; ++i)
-        menu.addItem (i + 1, names[i], true, (int) spectrum->getSource() == i);
+        menu.addItem (i + 1, names[i], true, ! outputLr && (int) spectrum->getSource() == i);
+    menu.addSeparator();
+    menu.addSectionHeader ("Output");
+    menu.addItem (outputLrItem, "L/R Post (output)", true, outputLr);
     return menu;
 }
 
 void LabQ8Editor::handleAnalyzerMenuResult (int itemId)
 {
     if (itemId >= 1 && itemId <= 3)
+    {
+        audioProcessor.setUiAnalyzerOutputLr (false);
         setAnalyzerSource ((AnalyzerSource) (itemId - 1));
+    }
+    else if (itemId == outputLrItem && shownBank != params::Bank::stereo)
+    {
+        audioProcessor.setUiAnalyzerOutputLr (true);
+        applyAnalyzer();
+    }
 }
 
 juce::Component& LabQ8Editor::getViewTab (int tab) { return *viewTabs[(size_t) tab]; }
+juce::Component& LabQ8Editor::getModeButton (int index) { return *modeButtons[(size_t) juce::jlimit (0, 1, index)]; }
+juce::Component& LabQ8Editor::getBankButton (params::Bank bank) { return *bankButtons[bank == params::Bank::side ? 1u : 0u]; }
+bool LabQ8Editor::isModeButtonLit (int index) const { return modeButtons[(size_t) juce::jlimit (0, 1, index)]->isLit(); }
+bool LabQ8Editor::isBankButtonAvailable (params::Bank bank) const { return bankButtons[bank == params::Bank::side ? 1u : 0u]->isAvailable(); }
+bool LabQ8Editor::isBankButtonSelected (params::Bank bank) const { return bankButtons[bank == params::Bank::side ? 1u : 0u]->isSelected(); }
+juce::String LabQ8Editor::getHeaderText() const { return header->text(); }
+float LabQ8Editor::getHeaderRight() const { return header->labelRight(); }
+bool LabQ8Editor::isHeaderTextInside() const { return header->labelRight() <= (float) header->getRight(); }
+std::optional<params::Bank> LabQ8Editor::getGhostBank() const { return screen->isVisible() ? screen->getGhost() : std::nullopt; }
+bool LabQ8Editor::areDynamicsShown() const { return dynamics->isShown(); }
+juce::String LabQ8Editor::getAnalyzerText() const { return analyzerSelector->text(); }
+AnalyzerDomain LabQ8Editor::getAnalyzerDomain() const { return spectrum->getDomain(); }
+juce::Component& LabQ8Editor::getFilterTypeSelector() { return *filterType; }
 juce::Component& LabQ8Editor::getSpectrumScale (bool left) { return left ? *leftScale : *rightScale; }
 std::vector<juce::Rectangle<float>> LabQ8Editor::getSpectrumScaleLabels (bool left) const { return (left ? leftScale : rightScale)->labelBounds(); }
 int LabQ8Editor::getScreenPaintCount() const noexcept { return screen->paintCount; }
 std::array<BandView, 8> LabQ8Editor::getScreenBandsForTesting() const { return screen->readBands(); }
 juce::Component& LabQ8Editor::getAnalyzerSelector() { return *analyzerSelector; }
+
+params::Bank LabQ8Editor::bankToShow() const
+{
+    const auto mode = (int) std::lround (state.getRawParameterValue (params::procModeID)->load());
+    if (mode != (int) params::ProcMode::midSide)
+        return params::Bank::stereo;
+    return audioProcessor.getUiEditBank() == (int) params::Bank::side ? params::Bank::side : params::Bank::mid;
+}
+
+bool LabQ8Editor::isAnyDragActive() const
+{
+    for (const auto& k : knobs)
+        if (k != nullptr && k->isDraggingNow())
+            return true;
+    return screen != nullptr && screen->isDragging();
+}
+
+void LabQ8Editor::setEditBank (params::Bank bank)
+{
+    if (bank != params::Bank::mid && bank != params::Bank::side)
+        return;
+    audioProcessor.setUiEditBank ((int) bank);
+    updateShownBank();
+}
+
+void LabQ8Editor::updateShownBank()
+{
+    // The MID / SIDE buttons follow the mode at once (availability) and the
+    // edited bank; the panel follows when no drag is in progress.
+    const auto midSide = (int) std::lround (state.getRawParameterValue (params::procModeID)->load()) == (int) params::ProcMode::midSide;
+    const auto edit = audioProcessor.getUiEditBank() == (int) params::Bank::side ? params::Bank::side : params::Bank::mid;
+    bankButtons[0]->setState (midSide, midSide && edit == params::Bank::mid);
+    bankButtons[1]->setState (midSide, midSide && edit == params::Bank::side);
+
+    if (bankToShow() == shownBank)
+    {
+        bankChangePending = false;
+        return;
+    }
+    if (isAnyDragActive())
+    {
+        bankChangePending = true; // applied when the drag's gesture has ended on its own bank
+        return;
+    }
+    applyShownBank();
+}
+
+void LabQ8Editor::applyShownBank()
+{
+    shownBank = bankToShow();
+    bankChangePending = false;
+    // Re-binding never writes a parameter: attachments only read.
+    attachPanel();
+    for (int b = 0; b < 8; ++b)
+        bandButtons[(size_t) b]->attach (*state.getParameter (params::bankOf (shownBank).bands[(size_t) b].bypass));
+    header->setBankPrefix (shownBank == params::Bank::mid ? "MID" : shownBank == params::Bank::side ? "SIDE" : "");
+    const auto midSide = shownBank != params::Bank::stereo;
+    bankButtons[0]->setState (midSide, shownBank == params::Bank::mid);
+    bankButtons[1]->setState (midSide, shownBank == params::Bank::side);
+    screen->showHandles (false);
+    updateViewLayers();
+    dynamics->parametersChanged();
+    lastSnapshot.clear();
+    refreshFromParameters();
+}
+
+void LabQ8Editor::updateViewLayers()
+{
+    // E4c: in M/S the screen shows the edited bank (and the other one in
+    // grey in EQ / ALL). E4d: the dynamic overlay shows the bank shown (its
+    // own telemetry), and the analyzer the edited bank's component, or the
+    // L/R output when chosen.
+    const auto midSide = shownBank != params::Bank::stereo;
+    const auto other = shownBank == params::Bank::mid ? params::Bank::side : params::Bank::mid;
+    screen->setBanks (shownBank, midSide && (view == viewEq || view == viewAll) ? std::optional<params::Bank> (other) : std::nullopt);
+    dynamics->setBank ((int) shownBank);
+    dynamics->setShown (view == viewDyn || view == viewAll, view == viewDyn);
+    applyAnalyzer();
+}
 
 void LabQ8Editor::selectBand (int band)
 {
@@ -1414,15 +1922,16 @@ void LabQ8Editor::attachPanel()
     for (int i = 0; i < 7; ++i)
     {
         knobAttachments[(size_t) i].reset();
-        const auto* id = parameterId (selectedBand, controls[i]);
+        const auto* id = parameterId (shownBank, selectedBand, controls[i]);
         knobAttachments[(size_t) i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, *knobs[(size_t) i]);
         if (auto* parameter = state.getParameter (id))
             knobs[(size_t) i]->setDoubleClickReturnValue (true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
         displays[(size_t) i]->repaint();
     }
-    dynamicSwitch->attach (*state.getParameter (params::dynamicIDs[(size_t) selectedBand].enabled));
-    filterType->attach (*state.getParameter (params::bandIDs[(size_t) selectedBand].type)); // also sets the switch availability
-    bypassIndicator->attach (*state.getParameter (params::bandIDs[(size_t) selectedBand].bypass), selectedBand);
+    const auto ids = params::bankOf (shownBank);
+    dynamicSwitch->attach (*state.getParameter (ids.dynamics[(size_t) selectedBand].enabled));
+    filterType->attach (*state.getParameter (ids.bands[(size_t) selectedBand].type)); // also sets the switch availability
+    bypassIndicator->attach (*state.getParameter (ids.bands[(size_t) selectedBand].bypass), selectedBand);
 }
 
 void LabQ8Editor::timerCallback()
@@ -1433,7 +1942,10 @@ void LabQ8Editor::timerCallback()
 void LabQ8Editor::refreshFromParameters()
 {
     // Host automation of any band moves the curve and nodes (and redraws
-    // the cached curve image: repaint() invalidates it).
+    // the cached curve image: repaint() invalidates it). E4c: of any bank
+    // (the grey curve too), and of the mode (the bank shown follows).
+    if (bankToShow() != shownBank)
+        updateShownBank(); // waits again if a drag is still in progress
     const auto snapshot = parameterSnapshot();
     if (snapshot != lastSnapshot)
     {
@@ -1445,12 +1957,15 @@ void LabQ8Editor::refreshFromParameters()
 
 std::vector<float> LabQ8Editor::parameterSnapshot() const
 {
-    // The 40 static parameters (the screen depends on nothing else).
+    // The static parameters of the three banks and the mode (E4c: the
+    // screen draws the bank shown and, in M/S, the other one).
     std::vector<float> values;
-    values.reserve (40);
-    for (const auto& ids : params::bandIDs)
-        for (const auto* id : { ids.frequency, ids.gain, ids.q, ids.bypass, ids.type })
-            values.push_back (state.getRawParameterValue (id)->load());
+    values.reserve (121);
+    for (const auto bank : { params::Bank::stereo, params::Bank::mid, params::Bank::side })
+        for (const auto& ids : params::bankOf (bank).bands)
+            for (const auto* id : { ids.frequency, ids.gain, ids.q, ids.bypass, ids.type })
+                values.push_back (state.getRawParameterValue (id)->load());
+    values.push_back (state.getRawParameterValue (params::procModeID)->load());
     return values;
 }
 

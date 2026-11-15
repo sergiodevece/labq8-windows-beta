@@ -61,6 +61,18 @@ void SpectrumView::setSource (AnalyzerSource newSource)
     updateActivity();
 }
 
+void SpectrumView::setDomain (AnalyzerDomain newDomain)
+{
+    if (newDomain == domain)
+        return;
+    domain = newDomain;
+    // Levels of another signal are not carried over.
+    for (auto* trace : { &pre, &post })
+        trace->ballistics.reset (frequencies.size());
+    repaint();
+    ++repaintRequests;
+}
+
 void SpectrumView::updateActivity()
 {
     for (auto* trace : { &pre, &post })
@@ -83,8 +95,9 @@ bool SpectrumView::isAtRest() const noexcept
     return (! pre.active || pre.ballistics.atRest()) && (! post.active || post.ballistics.atRest());
 }
 
-bool SpectrumView::advance (Trace& trace, double seconds)
+bool SpectrumView::advance (Trace& trace, double seconds, const std::uint64_t* alignTo)
 {
+    trace.copiedThisFrame = false;
     if (! trace.active)
         return false;
 
@@ -93,7 +106,14 @@ bool SpectrumView::advance (Trace& trace, double seconds)
         std::vector<float*> dest;
         for (auto& channel : trace.samples)
             dest.push_back (channel.data());
-        return trace.tap.copyLatest (dest.data(), (int) dest.size(), trace.analyzer.getSize(), trace.from, frame);
+        const auto n = trace.analyzer.getSize();
+        // L/R: exactly the UI-2b read. MID / SIDE: with the stream position,
+        // and PRE at POST's (alignTo).
+        if (domain == AnalyzerDomain::lr)
+            return trace.tap.copyLatest (dest.data(), (int) dest.size(), n, trace.from, frame);
+        if (alignTo != nullptr)
+            return trace.tap.copyAtStream (dest.data(), (int) dest.size(), n, trace.from, *alignTo, frame);
+        return trace.tap.copyLatestWithStream (dest.data(), (int) dest.size(), n, trace.from, frame);
     };
 
     if (! trace.prepared)
@@ -117,16 +137,42 @@ bool SpectrumView::advance (Trace& trace, double seconds)
     if (! coherent)
         return false; // overwritten while copying: the next frame tries again
 
+    trace.copiedThisFrame = true;
+    trace.streamEnd = frame.streamEnd;
     const auto newAudio = frame.end != trace.lastEnd && frame.sampleRate > 0.0;
     trace.lastEnd = frame.end;
     if (! newAudio)
         return trace.ballistics.update (nullptr, frequencies.size(), seconds);
 
     const auto start = juce::Time::getMillisecondCounterHiRes();
-    std::vector<const float*> channels;
-    for (int ch = 0; ch < std::max (1, frame.channels); ++ch)
-        channels.push_back (trace.samples[(size_t) ch].data());
-    trace.analyzer.analyse (channels.data(), (int) channels.size());
+    if (domain == AnalyzerDomain::lr)
+    {
+        std::vector<const float*> channels;
+        for (int ch = 0; ch < std::max (1, frame.channels); ++ch)
+            channels.push_back (trace.samples[(size_t) ch].data());
+        trace.analyzer.analyse (channels.data(), (int) channels.size());
+    }
+    else
+    {
+        // E4d: the component from the time samples, then one FFT. A mono
+        // bus: MID is the channel, SIDE is zero (nothing is drawn).
+        const auto n = (size_t) trace.analyzer.getSize();
+        trace.component.resize (n);
+        const auto& l = trace.samples[0];
+        const auto& r = trace.samples[frame.channels >= 2 ? 1 : 0];
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (frame.channels < 2)
+                trace.component[i] = domain == AnalyzerDomain::mid ? l[i] : 0.0f;
+            else
+            {
+                const auto a = (double) l[i], b = (double) r[i];
+                trace.component[i] = (float) (domain == AnalyzerDomain::mid ? 0.5 * (a + b) : 0.5 * (a - b));
+            }
+        }
+        const float* one[1] = { trace.component.data() };
+        trace.analyzer.analyse (one, 1);
+    }
     trace.analyzer.toDisplay (trace.display);
     lastAnalysisMs = juce::Time::getMillisecondCounterHiRes() - start;
     return trace.ballistics.update (&trace.display, frequencies.size(), seconds);
@@ -134,8 +180,22 @@ bool SpectrumView::advance (Trace& trace, double seconds)
 
 void SpectrumView::advance (double seconds)
 {
-    const auto movedPre = advance (pre, seconds);
-    const auto movedPost = advance (post, seconds);
+    if (domain != AnalyzerDomain::lr && pre.active && post.active)
+    {
+        // E4d (D3): POST first, then PRE ending at the same stream position.
+        const auto movedPost = advance (post, seconds, nullptr);
+        const auto streamEnd = post.streamEnd;
+        const auto movedPre = post.copiedThisFrame ? advance (pre, seconds, &streamEnd)
+                                                   : pre.ballistics.update (nullptr, frequencies.size(), seconds);
+        if (movedPre || movedPost)
+        {
+            repaint();
+            ++repaintRequests;
+        }
+        return;
+    }
+    const auto movedPre = advance (pre, seconds, nullptr);
+    const auto movedPost = advance (post, seconds, nullptr);
     if (movedPre || movedPost)
     {
         repaint();

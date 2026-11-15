@@ -1154,27 +1154,6 @@ private:
     bool available = false, selected = false;
 };
 
-// E4c, until E4d: in M/S the dynamic view of MID / SIDE does not exist yet.
-// A discreet note at the top left of the plot says so (DYN and ALL).
-class MidSideNote final : public juce::Component
-{
-public:
-    MidSideNote()
-    {
-        setBounds (juce::Rectangle<float> (g::plotArea.x + 6.0f, g::plotArea.y + 4.0f, 300.0f, 16.0f).toNearestInt());
-        setInterceptsMouseClicks (false, false);
-    }
-
-    static juce::String text() { return "M/S dynamics display: E4d"; }
-
-    void paint (juce::Graphics& gr) override
-    {
-        gr.setFont (designFont (13.5f, "Medium", 0.04f));
-        gr.setColour (colourOf (g::chassisLabelColour, 0.55f));
-        gr.drawText (text(), getLocalBounds().toFloat(), juce::Justification::centredLeft, false);
-    }
-};
-
 //==============================================================================
 // A control of the design without implementation: keeps its look, takes
 // clicks without effect and explains itself in a tooltip.
@@ -1289,13 +1268,19 @@ public:
         setTooltip ("Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)");
     }
 
-    // E4c: in M/S the spectrum is still the L / R signal (MID / SIDE
-    // analysis is E4d), and says so.
-    static juce::String textFor (AnalyzerSource s, bool lrInMidSide = false)
+    // E4d: in M/S the analyzer names the signal: the edited bank's
+    // component ("MID Post", "SIDE Pre + Post") or the L/R output ("L/R
+    // Post"). Every text fits the box (108 px; measured).
+    static juce::String textFor (AnalyzerSource s)
     {
-        if (lrInMidSide)
-            return s == AnalyzerSource::pre ? "L/R Pre" : s == AnalyzerSource::post ? "L/R Post" : "L/R Pre+Post";
         return s == AnalyzerSource::pre ? "Analyzer: Pre" : s == AnalyzerSource::post ? "Analyzer: Post" : "Pre + Post";
+    }
+    static juce::String textFor (AnalyzerSource s, AnalyzerDomain d)
+    {
+        if (d == AnalyzerDomain::lr)
+            return "L/R Post";
+        const juce::String bank = d == AnalyzerDomain::mid ? "MID" : "SIDE";
+        return bank + (s == AnalyzerSource::pre ? " Pre" : s == AnalyzerSource::post ? " Post" : " Pre + Post");
     }
 
     void setSource (AnalyzerSource s)
@@ -1304,15 +1289,17 @@ public:
         repaint();
     }
 
-    void setMidSide (bool isMidSide)
+    void setMidSide (bool isMidSide, AnalyzerDomain d)
     {
         midSide = isMidSide;
-        setTooltip (midSide ? "Analyzer: the L / R signal (PRE before the EQ, POST after it); MID / SIDE analysis: E4d"
-                            : "Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)");
+        domain = d;
+        setTooltip (! midSide ? "Analyzer: the signal shown by the spectrum (PRE before the EQ, POST after it)"
+                    : domain == AnalyzerDomain::lr ? "Analyzer: the L / R output (after the EQ)"
+                                                   : "Analyzer: the edited bank's signal (PRE before its EQ, POST after it)");
         repaint();
     }
 
-    juce::String text() const { return textFor (source, midSide); }
+    juce::String text() const { return midSide ? textFor (source, domain) : textFor (source); }
 
     void mouseDown (const juce::MouseEvent&) override { open(); }
 
@@ -1326,6 +1313,7 @@ public:
 private:
     std::function<void()> open;
     AnalyzerSource source = AnalyzerSource::post;
+    AnalyzerDomain domain = AnalyzerDomain::lr;
     bool midSide = false;
 };
 
@@ -1529,8 +1517,6 @@ LabQ8Editor::LabQ8Editor (LabQ8AudioProcessor& p)
 
     // E4c: STEREO / M/S (proc_mode) and MID / SIDE (the bank edited in M/S).
     screen->onDragFinished = [this] { if (bankChangePending) updateShownBank(); };
-    midSideNote = std::make_unique<MidSideNote>();
-    content->addChildComponent (*midSideNote);
     for (int b = 0; b < 2; ++b)
     {
         bankButtons[(size_t) b] = std::make_unique<BankButton> (b == 0 ? params::Bank::mid : params::Bank::side,
@@ -1760,24 +1746,65 @@ void LabQ8Editor::setView (int tab)
 void LabQ8Editor::setAnalyzerSource (AnalyzerSource newSource)
 {
     audioProcessor.setUiAnalyzerSource ((int) newSource);
-    spectrum->setSource (newSource);
-    analyzerSelector->setSource (newSource);
+    applyAnalyzer();
+}
+
+AnalyzerDomain LabQ8Editor::analyzerDomain() const
+{
+    if (shownBank == params::Bank::stereo || audioProcessor.getUiAnalyzerOutputLr())
+        return AnalyzerDomain::lr;
+    return shownBank == params::Bank::mid ? AnalyzerDomain::mid : AnalyzerDomain::side;
+}
+
+void LabQ8Editor::applyAnalyzer()
+{
+    // STEREO: the UI-2b analyzer, unchanged. M/S (E4d): the edited bank's
+    // component with the chosen Pre / Post / Pre + Post, or the L/R output
+    // (POST only).
+    const auto midSide = shownBank != params::Bank::stereo;
+    const auto domain = analyzerDomain();
+    const auto chosen = (AnalyzerSource) juce::jlimit (0, 2, audioProcessor.getUiAnalyzerSource());
+    const auto source = midSide && domain == AnalyzerDomain::lr ? AnalyzerSource::post : chosen;
+    spectrum->setDomain (domain);
+    spectrum->setSource (source);
+    analyzerSelector->setSource (source);
+    analyzerSelector->setMidSide (midSide, domain);
 }
 
 juce::PopupMenu LabQ8Editor::createAnalyzerMenu() const
 {
     juce::PopupMenu menu;
-    menu.addSectionHeader ("Analyzer");
     const char* names[] = { "Pre (before the EQ)", "Post (after the EQ)", "Pre + Post" };
+    if (shownBank == params::Bank::stereo)
+    {
+        menu.addSectionHeader ("Analyzer");
+        for (int i = 0; i < 3; ++i)
+            menu.addItem (i + 1, names[i], true, (int) spectrum->getSource() == i);
+        return menu;
+    }
+    // E4d: the edited bank's component, or the L/R output.
+    const auto outputLr = audioProcessor.getUiAnalyzerOutputLr();
+    menu.addSectionHeader (shownBank == params::Bank::mid ? "MID" : "SIDE");
     for (int i = 0; i < 3; ++i)
-        menu.addItem (i + 1, names[i], true, (int) spectrum->getSource() == i);
+        menu.addItem (i + 1, names[i], true, ! outputLr && (int) spectrum->getSource() == i);
+    menu.addSeparator();
+    menu.addSectionHeader ("Output");
+    menu.addItem (outputLrItem, "L/R Post (output)", true, outputLr);
     return menu;
 }
 
 void LabQ8Editor::handleAnalyzerMenuResult (int itemId)
 {
     if (itemId >= 1 && itemId <= 3)
+    {
+        audioProcessor.setUiAnalyzerOutputLr (false);
         setAnalyzerSource ((AnalyzerSource) (itemId - 1));
+    }
+    else if (itemId == outputLrItem && shownBank != params::Bank::stereo)
+    {
+        audioProcessor.setUiAnalyzerOutputLr (true);
+        applyAnalyzer();
+    }
 }
 
 juce::Component& LabQ8Editor::getViewTab (int tab) { return *viewTabs[(size_t) tab]; }
@@ -1790,9 +1817,9 @@ juce::String LabQ8Editor::getHeaderText() const { return header->text(); }
 float LabQ8Editor::getHeaderRight() const { return header->labelRight(); }
 bool LabQ8Editor::isHeaderTextInside() const { return header->labelRight() <= (float) header->getRight(); }
 std::optional<params::Bank> LabQ8Editor::getGhostBank() const { return screen->isVisible() ? screen->getGhost() : std::nullopt; }
-bool LabQ8Editor::isMidSideNoteShown() const { return midSideNote->isVisible(); }
 bool LabQ8Editor::areDynamicsShown() const { return dynamics->isShown(); }
 juce::String LabQ8Editor::getAnalyzerText() const { return analyzerSelector->text(); }
+AnalyzerDomain LabQ8Editor::getAnalyzerDomain() const { return spectrum->getDomain(); }
 juce::Component& LabQ8Editor::getFilterTypeSelector() { return *filterType; }
 juce::Component& LabQ8Editor::getSpectrumScale (bool left) { return left ? *leftScale : *rightScale; }
 std::vector<juce::Rectangle<float>> LabQ8Editor::getSpectrumScaleLabels (bool left) const { return (left ? leftScale : rightScale)->labelBounds(); }
@@ -1867,16 +1894,16 @@ void LabQ8Editor::applyShownBank()
 
 void LabQ8Editor::updateViewLayers()
 {
-    // E4c, until E4d: in M/S the screen shows the edited bank (and the other
-    // one in grey in EQ / ALL); the dynamic overlay is off (it only knows
-    // the STEREO bank) and a discreet note says the M/S display comes in
-    // E4d; the analyzer says it shows L / R.
+    // E4c: in M/S the screen shows the edited bank (and the other one in
+    // grey in EQ / ALL). E4d: the dynamic overlay shows the bank shown (its
+    // own telemetry), and the analyzer the edited bank's component, or the
+    // L/R output when chosen.
     const auto midSide = shownBank != params::Bank::stereo;
     const auto other = shownBank == params::Bank::mid ? params::Bank::side : params::Bank::mid;
     screen->setBanks (shownBank, midSide && (view == viewEq || view == viewAll) ? std::optional<params::Bank> (other) : std::nullopt);
-    dynamics->setShown (! midSide && (view == viewDyn || view == viewAll), view == viewDyn);
-    midSideNote->setVisible (midSide && (view == viewDyn || view == viewAll));
-    analyzerSelector->setMidSide (midSide);
+    dynamics->setBank ((int) shownBank);
+    dynamics->setShown (view == viewDyn || view == viewAll, view == viewDyn);
+    applyAnalyzer();
 }
 
 void LabQ8Editor::selectBand (int band)

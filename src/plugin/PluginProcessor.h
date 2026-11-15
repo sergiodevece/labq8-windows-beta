@@ -70,6 +70,11 @@ public:
     // 2 = SIDE: params::Bank), the same way: per instance, in memory, never
     // part of the plugin state (v5 unchanged). In Stereo the editor always
     // shows the STEREO bank.
+    // E4d: in Mid/Side, whether the analyzer shows the L/R output (true)
+    // instead of the edited bank's component (false, default). Per
+    // instance, in memory, never part of the plugin state.
+    bool getUiAnalyzerOutputLr() const noexcept { return uiAnalyzerOutputLr; }
+    void setUiAnalyzerOutputLr (bool lr) noexcept { uiAnalyzerOutputLr = lr; }
     int getUiEditBank() const noexcept { return uiEditBank; }
     void setUiEditBank (int bank) noexcept { uiEditBank = bank == 2 ? 2 : 1; }
 
@@ -143,9 +148,11 @@ private:
     int uiView = 3;           // ALL
     int uiAnalyzerSource = 1; // POST
     int uiEditBank = 1;       // MID
+    bool uiAnalyzerOutputLr = false;
     LevelMeter inputMeter, outputMeter;
     SpectrumTap preTap, postTap;
     DynamicsTelemetry dynamicsTelemetry;
+    std::uint64_t streamPosition = 0; // E4d: samples processed since prepareToPlay (audio thread only)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LabQ8AudioProcessor)
 };

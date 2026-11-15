@@ -575,7 +575,7 @@ LQ_TEST ("e4c rapid: 600 random clicks of mode / bank buttons, host mode automat
     LQ_CHECK (rec.balanced(), str ("gestures ", rec.totalBegins(), " / ", rec.totalEnds()));
 }
 
-LQ_TEST ("e4c D7: until E4d, in M/S the dynamic overlay is off with a discreet note (DYN / ALL), the grey curve only in EQ / ALL, and the analyzer says L/R")
+LQ_TEST ("e4d views: in M/S the dynamic overlay follows the bank shown (DYN / ALL), the grey curve stays in EQ / ALL, the analyzer analyses the edited bank or the L/R output; STEREO unchanged")
 {
     LabQ8AudioProcessor p;
     setMode (p, params::ProcMode::stereo);
@@ -584,20 +584,27 @@ LQ_TEST ("e4c D7: until E4d, in M/S the dynamic overlay is off with a discreet n
     {
         e->setView (view);
         const bool dynamicView = view == LabQ8Editor::viewDyn || view == LabQ8Editor::viewAll;
-        LQ_CHECK (e->areDynamicsShown() == dynamicView && ! e->isMidSideNoteShown() && ! e->getGhostBank().has_value(), str ("Stereo, view ", view));
-        LQ_CHECK (e->getAnalyzerText().startsWith ("Analyzer") || e->getAnalyzerText() == "Pre + Post", "Stereo analyzer text unchanged");
+        LQ_CHECK (e->areDynamicsShown() == dynamicView && ! e->getGhostBank().has_value(), str ("Stereo, view ", view));
+        LQ_CHECK (e->getAnalyzerDomain() == labq8::ui::AnalyzerDomain::lr
+                  && (e->getAnalyzerText().startsWith ("Analyzer") || e->getAnalyzerText() == "Pre + Post"), "Stereo analyzer unchanged");
     }
+    LQ_CHECK (p.getDynamicsTelemetry().getWatchedBank() == 0, "STEREO watched");
     click (e->getModeButton (1));
     for (int view = 0; view < 4; ++view)
     {
         e->setView (view);
         const bool dynamicView = view == LabQ8Editor::viewDyn || view == LabQ8Editor::viewAll;
         const bool curveView = view == LabQ8Editor::viewEq || view == LabQ8Editor::viewAll;
-        LQ_CHECK (! e->areDynamicsShown(), str ("M/S, view ", view, ": no dynamic overlay"));
-        LQ_CHECK (e->isMidSideNoteShown() == dynamicView, str ("M/S, view ", view, ": note"));
+        LQ_CHECK (e->areDynamicsShown() == dynamicView, str ("M/S, view ", view, ": dynamic overlay"));
         LQ_CHECK (e->getGhostBank().has_value() == curveView, str ("M/S, view ", view, ": grey curve"));
-        LQ_CHECK (e->getAnalyzerText().startsWith ("L/R"), str ("M/S analyzer: ", e->getAnalyzerText()));
+        LQ_CHECK (e->getAnalyzerDomain() == labq8::ui::AnalyzerDomain::mid && e->getAnalyzerText().startsWith ("MID "), str ("M/S analyzer: ", e->getAnalyzerText()));
     }
+    LQ_CHECK (p.getDynamicsTelemetry().getWatchedBank() == 1, "MID watched");
+    click (e->getBankButton (Bank::side));
+    LQ_CHECK (p.getDynamicsTelemetry().getWatchedBank() == 2 && e->getAnalyzerDomain() == labq8::ui::AnalyzerDomain::side
+              && e->getAnalyzerText().startsWith ("SIDE "), "SIDE watched and analysed");
+    click (e->getModeButton (0));
+    LQ_CHECK (p.getDynamicsTelemetry().getWatchedBank() == 0 && e->getAnalyzerDomain() == labq8::ui::AnalyzerDomain::lr, "back to STEREO");
 }
 
 //==============================================================================

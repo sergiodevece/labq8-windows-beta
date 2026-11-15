@@ -145,6 +145,7 @@ if(LABQ8_BUILD_TESTS)
         tests/E4aParameterTests.cpp
         tests/MidSideTests.cpp
         tests/EditorBankTests.cpp
+        tests/MidSideViewTests.cpp
         tests/AllocationGuard.cpp
         ${LABQ8_HOST_ADAPTER_SOURCES})
 

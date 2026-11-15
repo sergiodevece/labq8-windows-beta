@@ -126,6 +126,7 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
     inputMeter.reset();
     outputMeter.reset();
     const auto channels = juce::jmin (getTotalNumInputChannels(), getTotalNumOutputChannels());
+    streamPosition = 0;
     preTap.prepare (sampleRate, channels);
     postTap.prepare (sampleRate, channels);
     dynamicsTelemetry.prepare();
@@ -133,17 +134,23 @@ void LabQ8AudioProcessor::prepareToPlay (double sampleRate, int)
 
 void LabQ8AudioProcessor::offerDynamics (bool hostBypassed) noexcept
 {
-    // E4b: the editor still shows only the STEREO bank (MID / SIDE telemetry
-    // is E4d). Its dynamics are offered only while the STEREO path is the
-    // one heard, with no mode change in progress; otherwise the screen is
-    // told there is nothing to show (as in the host's bypass), so it never
-    // draws the STEREO bank's reductions over an M/S sound.
-    const bool stereoHeard = engine.getHeardMode() == dsp::StereoMode::stereo && ! engine.isFading();
-    const auto& eq = engine.getCore (dsp::StereoBank::stereo);
+    // E4d: the dynamics of the bank the editor shows (DynamicsTelemetry's
+    // watched bank), tagged with it. Real values only while that bank's
+    // path is the one heard with no mode change in progress; otherwise the
+    // data is "unavailable" (a bank in standby, or the 20 ms fade), never
+    // shown as a reduction.
+    const auto watched = dynamicsTelemetry.getWatchedBank();
+    const auto bank = static_cast<dsp::StereoBank> (watched);
+    const bool bankIsStereo = bank == dsp::StereoBank::stereo;
+    const bool heard = ! engine.isFading() && ((engine.getHeardMode() == dsp::StereoMode::stereo) == bankIsStereo);
+    const auto state = hostBypassed ? DynamicsTelemetry::State::hostBypassed
+                     : heard        ? DynamicsTelemetry::State::live
+                                    : DynamicsTelemetry::State::unavailable;
+    const auto& eq = engine.getCore (bank);
 
     // Values the DSP has already computed for the last control tick; reading
     // them changes nothing (const accessors, audio thread).
-    dynamicsTelemetry.offer (hostBypassed || ! stereoHeard, [&eq] (int b, DynamicsTelemetry::Band& out)
+    dynamicsTelemetry.offer (state, watched, [&eq] (int b, DynamicsTelemetry::Band& out)
     {
         const auto& band = eq.getBand (b);
         out.staticGainDb = (float) band.getCurrentGainDb();
@@ -168,7 +175,7 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // before the EQ (it works in place), OUT / POST after it.
     const auto numChannels = juce::jmin (numIn, buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
 
     pushParametersToCore();
     auto* const* channels = buffer.getArrayOfWritePointers();
@@ -184,17 +191,19 @@ void LabQ8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
+    streamPosition += (std::uint64_t) buffer.getNumSamples(); // E4d: PRE and POST of one block share their stream position
 }
 
 void LabQ8AudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     const auto numChannels = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels());
     inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    preTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
     AudioProcessor::processBlockBypassed (buffer, midi);
     outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
-    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    postTap.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples(), streamPosition);
+    streamPosition += (std::uint64_t) buffer.getNumSamples(); // E4d: PRE and POST of one block share their stream position
     offerDynamics (true); // nothing was processed: no dynamics to show
 }
 

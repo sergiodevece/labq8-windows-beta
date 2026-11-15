@@ -2,7 +2,8 @@
 
 **Base:** `d27b9b1` (E4b); checkpoint `500b381`. **Estado:** revisión técnica
 y visual **aprobadas** (13-11-2026), con el prefijo de la cabecera a
-mayúscula 11. Smoke físico pendiente de autorización. Auditoría y decisiones:
+mayúscula 11. Commit aprobado `52cf2b5d35d2d1940bbf2930baefeb15c77e0bf1`.
+**SMOKE-8 crítico: PASS 8/8** en Logic (§7). Auditoría y decisiones:
 [MIDSIDE_E4C_AUDIT.md](MIDSIDE_E4C_AUDIT.md).
 
 **Sin cambios:**
@@ -253,3 +254,48 @@ altura de mayúscula en píxeles de pantalla):
 4. **Smoke físico en Logic de E4b y E4c:** pendiente de autorización.
    Revisar en él la escritura de automatización de `proc_mode` desde los
    botones y el comportamiento de una copia con automatización en lectura.
+
+---
+
+## 7. SMOKE-8 en Logic Pro (E4b + E4c)
+
+**Build instalado:**
+- carpeta `build/smoke8-release-universal`, commit `52cf2b5`;
+- SHA-256 del binario AU: `d07d1d46fe0168014e7cd8598c8b19a0545c03d7bfba032a00b724586c62693a`;
+- 209/209 pruebas en arm64 y x86_64; compatibilidad estricta en 14 bases;
+- auval `-strict` en arm64 y x86_64: AU VALIDATION SUCCEEDED, 241 parámetros;
+- copia de SMOKE-7 en `build/smoke8-report/LABQ8.component.smoke7-backup`.
+
+**Resultado comunicado por el usuario: SMOKE-8 crítico PASS 8/8.**
+
+| # | Comprobación crítica | Resultado |
+|---|---|---|
+| 1 | STEREO intacto | PASS |
+| 2 | Cambio STEREO ↔ M/S | PASS |
+| 3 | Procesamiento independiente de MID y SIDE | PASS |
+| 4 | Curvas, nodos y controles | PASS |
+| 5 | Copia entre bancos | PASS |
+| 6 | Automatización y restauración | PASS |
+| 7 | Pista mono y bypass | PASS |
+| 8 | Limitaciones visuales conocidas de E4c (sin dinámica M/S, analizador L/R) correctamente identificadas | PASS |
+
+**Lista ampliada** (`build/smoke8-report/E4C_PRUEBA_LOGIC.md`, 18
+comprobaciones): las 8 críticas cubren su contenido principal, pero **no se
+dan por completadas** las comprobaciones de las que no hay evidencia
+individual. En particular:
+
+- el Undo de Logic tras una copia (punto 12);
+- el cambio de modo durante un arrastre en Logic (punto 9);
+- el zoom al 40 % en Logic (punto 14).
+
+**Incidencia durante el smoke (no es un fallo):**
+
+- **Qué pasó:** en M/S la dinámica "dejó de actuar y de verse" en una
+  sesión cuyos bancos MID y SIDE no tenían dinámica configurada. La
+  dinámica del banco STEREO no se escucha en M/S, y la visualización
+  dinámica M/S es de E4d.
+- **Diagnóstico:** reproducido con el código instalado. Tras "Copy
+  STEREO → MID + SIDE", o activando Dynamic EQ en MID o SIDE, la dinámica
+  actúa: MID 9 dB.
+- **Pendiente:** se anota como aspecto de usabilidad a tratar en E4d.
+

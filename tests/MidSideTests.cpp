@@ -694,8 +694,10 @@ LQ_TEST ("e4b G: host bypass and band bypass in M/S; the telemetry shows the STE
     for (int pos = 0; pos < 4800; pos += 480)
         block (pos, false);
     p.getDynamicsTelemetry().take (s);
-    LQ_CHECK (s.hostBypassed, str ("M/S heard: the STEREO bank's dynamics are not offered (heard ", (int) p.getEngineForTesting().getHeardMode(),
-                                   ", fading ", p.getEngineForTesting().isFading(), ", id ", s.id, ", offered ", s.offered, ", reduction b3 ", s.bands[2].reductionDb, ")"));
+    // E4d: the STEREO bank is watched (no editor) while M/S is heard: its
+    // data is "unavailable" (standby), not a host bypass and not 0 dB.
+    LQ_CHECK (! s.available && ! s.hostBypassed && s.bank == 0,
+              str ("M/S heard: the STEREO bank's dynamics are not offered (available ", s.available, ", bank ", s.bank, ")"));
     LQ_CHECK (block (4800, true), "host bypass: the buffer passes untouched");
     LQ_CHECK (! block (5280, false), "after the host bypass the M/S path processes again");
 

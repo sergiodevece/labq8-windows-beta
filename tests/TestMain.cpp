@@ -6,18 +6,27 @@
 #include <cstdio>
 #include <string>
 
-// Usage: labq8_tests [name-filter]
+// Usage: labq8_tests [name-filter | --exclude=text]
+// --exclude=perf runs every test whose name does not contain "perf"
+// (e.g. the functional and concurrency tests under ThreadSanitizer).
 int main (int argc, char** argv)
 {
     // APVTS needs a MessageManager (timers, listeners) even headless.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    const std::string filter = argc > 1 ? argv[1] : "";
+    std::string filter = argc > 1 ? argv[1] : "", exclude;
+    if (filter.rfind ("--exclude=", 0) == 0)
+    {
+        exclude = filter.substr (10);
+        filter.clear();
+    }
     int run = 0, failed = 0, skipped = 0, checks = 0;
 
     for (const auto& test : labq8::test::registry())
     {
         if (! filter.empty() && test.name.find (filter) == std::string::npos)
+            continue;
+        if (! exclude.empty() && test.name.find (exclude) != std::string::npos)
             continue;
 
         labq8::test::Context ctx;

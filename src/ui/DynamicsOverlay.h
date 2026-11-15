@@ -56,6 +56,16 @@ public:
     // The parameters changed (the static curve moved): the editor's poll.
     void parametersChanged();
 
+    // E4d: the bank shown (0 STEREO, 1 MID, 2 SIDE). It becomes the
+    // telemetry's watched bank; snapshots of any other bank, and snapshots
+    // whose data is not available (a bank not heard, a mode change fading),
+    // are never drawn. A change starts afresh, like a new stream.
+    void setBank (int bank);
+    int getBank() const noexcept { return bank; }
+    // Whether the last snapshot taken had valid data for the bank shown
+    // (false: temporarily unavailable, which is not a reduction of 0 dB).
+    bool isDataAvailable() const noexcept { return dataAvailable; }
+
     // One frame: `seconds` since the previous one. Called about 30 times per
     // second from the display's refresh; tests call it directly.
     void advance (double seconds);
@@ -88,7 +98,8 @@ private:
     bool shown = false, readouts = false, showing = false, staticDirty = true;
     std::uint64_t lastOffered = 0, activationOffered = 0;
     std::uint32_t generation = 0;
-    bool started = false;
+    bool started = false, dataAvailable = false;
+    int bank = 0;
     double sinceAudio = 0.0, rate = 0.0;
 
     DynamicsTelemetry::Snapshot snapshot;

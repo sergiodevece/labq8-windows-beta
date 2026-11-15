@@ -34,7 +34,6 @@ class AnalyzerSelector;
 class SpectrumScale;
 class ModeButton;
 class BankButton;
-class MidSideNote;
 
 // UI-1 editor: the approved design LABQ8_UI_DESIGN_APPROVED_01, laid out in
 // its 1672 x 941 reference space and scaled as a whole (fixed aspect ratio).
@@ -120,7 +119,8 @@ public:
     void setView (int tab);
     int getView() const noexcept { return view; }
     void setAnalyzerSource (AnalyzerSource newSource);
-    juce::PopupMenu createAnalyzerMenu() const; // item n + 1 = AnalyzerSource n
+    juce::PopupMenu createAnalyzerMenu() const; // item n + 1 = AnalyzerSource n; outputLrItem (M/S only)
+    static constexpr int outputLrItem = 11;
     void handleAnalyzerMenuResult (int itemId);
 
     // Whether the editor at `zoom`, plus the host window allowance, fits in
@@ -174,9 +174,9 @@ public:
     float getHeaderRight() const;                       // reference x where "… BAND n" ends
     bool isHeaderTextInside() const;                    // the label is not clipped by its component
     std::optional<params::Bank> getGhostBank() const;   // drawn in grey (M/S, EQ / ALL)
-    bool isMidSideNoteShown() const;
     bool areDynamicsShown() const;
     juce::String getAnalyzerText() const;
+    AnalyzerDomain getAnalyzerDomain() const;           // E4d: the signal the spectrum analyses
     juce::Component& getFilterTypeSelector();
 
 private:
@@ -186,7 +186,9 @@ private:
     params::Bank bankToShow() const;
     void updateShownBank();      // applies the bank to show now, or marks it pending during a drag
     void applyShownBank();
-    void updateViewLayers();     // what the view and the mode show (curves, dynamics, note, analyzer)
+    void updateViewLayers();     // what the view and the mode show (curves, dynamics, analyzer)
+    void applyAnalyzer();        // E4d: domain, source and texts of the analyzer
+    AnalyzerDomain analyzerDomain() const;
     bool isAnyDragActive() const;
     std::vector<float> parameterSnapshot() const;
 
@@ -209,7 +211,6 @@ private:
     std::array<std::unique_ptr<ViewTab>, 4> viewTabs;
     std::array<std::unique_ptr<ModeButton>, 2> modeButtons;
     std::array<std::unique_ptr<BankButton>, 2> bankButtons;
-    std::unique_ptr<MidSideNote> midSideNote;
     std::unique_ptr<AnalyzerSelector> analyzerSelector;
     std::unique_ptr<SpectrumScale> leftScale, rightScale;
     int view = viewAll;

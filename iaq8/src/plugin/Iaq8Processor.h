@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/CaptureBuffer.h"
 #include "dsp/AssistEngine.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -114,6 +115,10 @@ public:
     juce::ValueTree getAssistantState() const;
     void setAssistantState (const juce::ValueTree& state);
 
+    // Input capture for the analysis (written before the EQ on the audio
+    // thread; prepared in prepareToPlay, which resets it to idle).
+    analysis::CaptureBuffer& getCapture() noexcept { return capture; }
+
     // Loudness compensation of the preview path (dB). Any thread.
     double getCompensationDb() const noexcept { return engine.getCompensationDb(); }
 
@@ -131,6 +136,7 @@ private:
     juce::AudioProcessorValueTreeState parameters;
     std::array<BandParameters, 8> bandParameters;
     dsp::AssistEngine engine;
+    analysis::CaptureBuffer capture;
 
     // Message thread -> audio thread.
     ProposalHandoff handoff;

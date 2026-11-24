@@ -188,6 +188,8 @@ void Iaq8AudioProcessor::prepareToPlay (double sampleRate, int maximumExpectedSa
     // The prepared engine then receives the current set again (unchanged:
     // no ramp, no meter restart).
     pushToEngine();
+
+    capture.prepare (sampleRate, channels); // allocates; resets to idle
 }
 
 void Iaq8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -202,6 +204,8 @@ void Iaq8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     pushToEngine();
 
     const auto numChannels = juce::jmin (numIn, buffer.getNumChannels());
+    // Input before the EQ (no-op unless armed).
+    capture.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
     engine.process (buffer.getArrayOfWritePointers(), numChannels, buffer.getNumSamples());
 }
 

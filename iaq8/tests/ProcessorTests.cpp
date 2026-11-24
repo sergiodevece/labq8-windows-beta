@@ -464,6 +464,7 @@ LQ_TEST ("processor: processBlock does not allocate")
     juce::MidiBuffer midi;
     const auto noise = makeNoise ((size_t) big.getNumSamples(), 5);
     long allocations = 0;
+    p.getCapture().arm(); // the capture write path runs inside the counted blocks
 
     for (int i = 0; i < 60; ++i)
     {
@@ -496,6 +497,7 @@ LQ_TEST ("processor: processBlock does not allocate")
         allocations += counter.count();
     }
     LQ_CHECK (allocations == 0, str ("allocations in processBlock: ", allocations));
+    LQ_CHECK (p.getCapture().getCapturedSeconds() > 0.5, "capture was writing during the test");
 }
 
 LQ_TEST ("processor: proposal handoff delivers whole proposals across threads")

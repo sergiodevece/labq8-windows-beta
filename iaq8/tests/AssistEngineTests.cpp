@@ -7,7 +7,10 @@
 
 #include "dsp/AssistEngine.h"
 
+#include <array>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 using namespace iaq8::dsp;
 using namespace labq8::test::signals;
@@ -96,51 +99,215 @@ LQ_TEST ("assist engine: preview path is bit-identical to a lone EqCore with the
     LQ_CHECK (same, "preview output equals lone EqCore after the fade");
 }
 
-LQ_TEST ("assist engine: A/B switch fades linearly over 20 ms")
+namespace
 {
-    constexpr double amp = 0.05;
+// Engine (flat applied, -12 dB bell preview) plus two lone-EqCore references,
+// all settled on the same noise-free sine. The per-sample mix weight of the
+// engine is recovered as w = (y - a) / (p - a) from the references.
+struct FadeRig
+{
+    static constexpr double amp = 0.5;
+    static constexpr size_t settleLength = 24000;
+    int fadeN = (int) std::lround (0.020 * kFs);
     AssistEngine engine;
-    engine.prepare (kFs, 1, 512);
-    engine.setApplied (flatSet());
-    engine.setPreview (bellSet (1000.0, -12.0, 1.0));
+    EqCore flat, bell;
+    size_t phase = 0; // absolute sample index of the sine
 
-    auto settle = makeSine (1000.0, kFs, 24000, amp);
-    for (size_t pos = 0; pos < settle.size(); pos += 512)
+    explicit FadeRig (int maxBlock = 512)
     {
-        float* ch[] = { settle.data() + pos };
-        engine.process (ch, 1, (int) std::min<size_t> (512, settle.size() - pos));
+        engine.prepare (kFs, 1, maxBlock);
+        engine.setApplied (flatSet());
+        engine.setPreview (bellSet (1000.0, -12.0, 1.0));
+        flat = makeLone (flatSet(), 1);
+        bell = makeLone (bellSet (1000.0, -12.0, 1.0), 1);
+        auto x = makeSine (1000.0, kFs, settleLength, amp);
+        auto e = x, f = x, b = x;
+        engine.process (std::array<float*, 1> { e.data() }.data(), 1, (int) e.size());
+        flat.process (std::array<float*, 1> { f.data() }.data(), 1, (int) f.size());
+        bell.process (std::array<float*, 1> { b.data() }.data(), 1, (int) b.size());
+        phase = settleLength;
     }
 
-    const auto x = makeSine (1000.0, kFs, 4800, amp);
-    auto y = x;
-    engine.setListen (Listen::preview);
-    for (size_t pos = 0; pos < y.size(); pos += 128)
+    struct Out { Signal x, y, a, p; };
+
+    // Runs `n` samples in blocks of `block`; `atBlock(blockIndex)` runs before each block.
+    template <typename F>
+    Out run (size_t n, int block, F&& atBlock)
     {
-        float* ch[] = { y.data() + pos };
-        engine.process (ch, 1, (int) std::min<size_t> (128, y.size() - pos));
+        Out o;
+        o.x = makeSine (1000.0, kFs, phase + n, amp);
+        o.x.erase (o.x.begin(), o.x.begin() + (long) phase);
+        o.y = o.a = o.p = o.x;
+        phase += n;
+        int blockIndex = 0;
+        for (size_t pos = 0; pos < n; pos += (size_t) block, ++blockIndex)
+        {
+            atBlock (blockIndex);
+            const auto len = (int) std::min ((size_t) block, n - pos);
+            float* cy[] = { o.y.data() + pos };
+            engine.process (cy, 1, len);
+        }
+        float* ca[] = { o.a.data() };
+        float* cp[] = { o.p.data() };
+        flat.process (ca, 1, (int) n);
+        bell.process (cp, 1, (int) n);
+        return o;
     }
 
-    // Gain ratio at samples with a large input (1 kHz bell: no phase shift at centre).
-    const double g0 = 1.0, g1 = std::pow (10.0, -12.0 / 20.0);
-    const double hi = g0 - 0.1 * (g0 - g1), lo = g0 - 0.9 * (g0 - g1);
-    long t10 = -1, t90 = -1;
-    for (size_t i = 0; i < x.size(); ++i)
+    // Mix weight per sample; NaN where the references do not separate the paths.
+    static std::vector<double> weights (const Out& o)
     {
-        if (std::abs (x[i]) < 0.8 * amp)
-            continue;
-        const double ratio = (double) y[i] / (double) x[i];
-        if (t10 < 0 && ratio < hi) t10 = (long) i;
-        if (t90 < 0 && ratio < lo) t90 = (long) i;
+        std::vector<double> w (o.x.size(), std::nan (""));
+        for (size_t i = 0; i < w.size(); ++i)
+        {
+            const double d = (double) o.p[i] - (double) o.a[i];
+            if (std::abs (d) > 0.2)
+                w[i] = ((double) o.y[i] - (double) o.a[i]) / d;
+        }
+        return w;
     }
-    LQ_CHECK (t10 >= 0 && t90 >= 0, "fade found");
-    const auto length = (double) (t90 - t10) / 0.8;
-    const auto expected = std::round (0.020 * kFs);
-    LQ_CHECK (std::abs (length - expected) <= 16.0, "fade length is 20 ms +-16 samples");
+};
 
+// Reference weight model: linear ramp of 1/N per sample towards the target.
+std::vector<double> modelWeights (size_t n, int N, double start, const std::vector<std::pair<size_t, double>>& targetChanges)
+{
+    std::vector<double> w (n);
+    double pos = start, target = start;
+    size_t next = 0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        while (next < targetChanges.size() && targetChanges[next].first == i)
+            target = targetChanges[next++].second;
+        if (pos < target) pos = std::min (target, pos + 1.0 / N);
+        else if (pos > target) pos = std::max (target, pos - 1.0 / N);
+        w[i] = pos;
+    }
+    return w;
+}
+
+bool weightsMatch (const std::vector<double>& measured, const std::vector<double>& model, double tol)
+{
+    for (size_t i = 0; i < measured.size(); ++i)
+        if (! std::isnan (measured[i]) && std::abs (measured[i] - model[i]) > tol)
+            return false;
+    return true;
+}
+} // namespace
+
+LQ_TEST ("assist engine: A/B switch fades linearly over 20 ms, starting at the call, for any host block size")
+{
+    for (const int block : { 1, 64, 480, 2000 })
+    {
+        FadeRig rig;
+        constexpr size_t n = 2400;
+        const auto o = rig.run (n, block, [&] (int b) { if (b == 0) rig.engine.setListen (Listen::preview); });
+        const auto w = FadeRig::weights (o);
+        const auto model = modelWeights (n, rig.fadeN, 0.0, { { 0, 1.0 } });
+        LQ_CHECK (rig.fadeN == 960, "20 ms at 48 kHz is 960 samples");
+        LQ_CHECK (weightsMatch (w, model, 2.0e-3), "weight is the exact linear ramp from sample 0");
+        // Spot checks of the shape itself, independent of the model.
+        size_t seen = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (! std::isnan (w[i]) && i < 960)
+                ++seen;
+        LQ_CHECK (seen > 100, "enough measurable samples inside the fade");
+        for (size_t i = 0; i < n; ++i)
+        {
+            if (std::isnan (w[i]))
+                continue;
+            if (i < 960)
+                LQ_CHECK (std::abs (w[i] - (double) (i + 1) / 960.0) < 2.0e-3, "linear (i+1)/N");
+            else
+                LQ_CHECK (std::abs (w[i] - 1.0) < 2.0e-3, "complete after round(0.020*fs) samples");
+        }
+    }
+}
+
+LQ_TEST ("assist engine: mid-fade re-toggle reverses continuously")
+{
+    FadeRig rig;
+    constexpr size_t n = 2400;
+    // Block of 100: listen=preview at block 0 (samples 0..), applied at block 3 (sample 300).
+    const auto o = rig.run (n, 100, [&] (int b)
+    {
+        if (b == 0) rig.engine.setListen (Listen::preview);
+        if (b == 3) rig.engine.setListen (Listen::applied);
+    });
+    const auto w = FadeRig::weights (o);
+    const auto model = modelWeights (n, rig.fadeN, 0.0, { { 0, 1.0 }, { 300, 0.0 } });
+    LQ_CHECK (weightsMatch (w, model, 2.0e-3), "weight rises 300 samples then falls back");
+    LQ_CHECK (std::abs (model[299] - 300.0 / 960.0) < 1.0e-9 && model[1500] == 0.0, "model sanity");
+    double maxStep = 0.0;
+    for (size_t i = 1; i < n; ++i)
+        maxStep = std::max (maxStep, (double) std::abs (o.y[i] - o.y[i - 1]));
+    LQ_CHECK (maxStep < 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "no discontinuity beyond the sine slope");
+}
+
+LQ_TEST ("assist engine: clearPreview while listening to preview returns to applied smoothly")
+{
+    FadeRig rig;
+    // Reach full preview first.
+    rig.run (2400, 512, [&] (int b) { if (b == 0) rig.engine.setListen (Listen::preview); });
+    constexpr size_t n = 6000;
+    auto o = rig.run (n, 128, [&] (int b) { if (b == 0) rig.engine.clearPreview(); });
+    LQ_CHECK (! rig.engine.hasPreview(), "preview cleared");
+    // y = x * (1 - 0.749 w): jumps are bounded by the sine slope plus the fade rate.
     double maxJump = 0.0;
-    for (size_t i = 1; i < y.size(); ++i)
-        maxJump = std::max (maxJump, (double) std::abs (y[i] - y[i - 1]));
-    LQ_CHECK (maxJump <= 0.01, "no jumps between consecutive samples");
+    for (size_t i = 1; i < n; ++i)
+        maxJump = std::max (maxJump, (double) std::abs (o.y[i] - o.y[i - 1]));
+    LQ_CHECK (maxJump < 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "smooth");
+    // The preview core is retargeted to applied, so the output ends as the clean applied signal.
+    double err = 0.0;
+    for (size_t i = 3000; i < n; ++i)
+        err = std::max (err, (double) std::abs (o.y[i] - o.x[i]));
+    LQ_CHECK (err < 1.0e-5, "ends on the applied path");
+    LQ_CHECK ((double) std::abs (o.y[0] - o.p[0]) < 0.02, "starts where the preview was");
+}
+
+LQ_TEST ("assist engine: blocks larger than maxBlockSize give the same output as small blocks")
+{
+    const auto run = [] (int maxBlock, int hostBlock)
+    {
+        AssistEngine engine;
+        engine.prepare (kFs, 2, maxBlock);
+        engine.setApplied (otherSet());
+        engine.setPreview (bellSet (1000.0, -12.0, 2.0));
+        auto l = makeNoise (5000, 11), r = makeNoise (5000, 12);
+        int b = 0;
+        runBlocks (l, r, hostBlock, [&] (float* const* ch, int n)
+        {
+            if (b++ == 1) engine.setListen (Listen::preview);
+            engine.process (ch, 2, n);
+        });
+        return std::pair { l, r };
+    };
+    // One call of 1000 samples through a 64-sample scratch: the chunk loop runs 16 times.
+    const auto big = run (64, 1000);
+    const auto ref = run (1000, 1000);
+    LQ_CHECK (big.first == ref.first && big.second == ref.second, "chunked equals single pass");
+    const auto small = run (64, 64);
+    // Different block sizes move the listen change by whole blocks; compare after both fades finished.
+    bool same = true;
+    for (size_t i = 3000; i < 5000; ++i)
+        same = same && big.first[i] == small.first[i] && big.second[i] == small.second[i];
+    LQ_CHECK (same, "steady state independent of block size");
+}
+
+LQ_TEST ("assist engine: process before prepare or with empty input is a no-op")
+{
+    AssistEngine engine; // never prepared
+    auto l = makeNoise (256, 21);
+    const auto copy = l;
+    float* ch[] = { l.data() };
+    engine.process (ch, 1, 256);
+    LQ_CHECK (l == copy, "unprepared: untouched, and it returned");
+
+    engine.prepare (kFs, 1, 64);
+    engine.setApplied (otherSet());
+    engine.process (ch, 0, 256);
+    engine.process (ch, 1, 0);
+    engine.process (ch, 1, -5);
+    LQ_CHECK (l == copy, "empty requests leave the buffer alone");
 }
 
 LQ_TEST ("assist engine: listen preview without a preview plays applied")
@@ -178,6 +345,11 @@ LQ_TEST ("assist engine: process does not allocate")
     labq8::test::ScopedAllocationCounter counter;
     for (int b = 0; b < 100; ++b)
     {
+        engine.setApplied (otherSet());
+        if (b % 3 == 0)
+            engine.setPreview (bellSet (1000.0, -12.0, 2.0));
+        if (b % 7 == 0)
+            engine.clearPreview();
         if (b % 10 == 0)
             engine.setListen ((b / 10) % 2 == 0 ? Listen::preview : Listen::applied);
         engine.process (ch, 2, 512);

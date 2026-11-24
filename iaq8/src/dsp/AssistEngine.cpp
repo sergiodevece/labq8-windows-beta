@@ -54,6 +54,9 @@ void AssistEngine::setListen (Listen newListen) noexcept
 
 void AssistEngine::process (float* const* channels, int numChannels, int numSamples) noexcept
 {
+    if (channelCount == 0 || numChannels <= 0 || numSamples <= 0)
+        return; // not prepared, or nothing to do
+
     const auto nCh = std::min (numChannels, channelCount);
     for (int pos = 0; pos < numSamples; pos += maxBlock)
     {

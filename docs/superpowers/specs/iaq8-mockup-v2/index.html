@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>IAQ8 · maqueta aprobada (A v2)</title></head>
+<body style="margin:0;padding:24px;background:#0d0f12;color:#ddd;font-family:sans-serif">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap');
+
+.fit { width: 100%; position: relative; overflow: hidden; border-radius: 6px; background: #0d0f12; }
+.stage { position: absolute; left: 0; top: 0; width: 1672px; height: 941px; transform-origin: 0 0;
+  background: url('./iaq8_chassis.png') 0 0 / 1672px 941px no-repeat; font-family: 'Barlow', sans-serif; }
+.stage * { box-sizing: border-box; }
+.abs { position: absolute; }
+
+/* worn silkscreen: print eroded by a noise mask */
+.silk { color: #dcd8c8; -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' seed='4'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  -3.6 0 0 0 3.05'/></filter><rect width='100%' height='100%' filter='url(%23f)'/></svg>");
+  mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' seed='4'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  -3.6 0 0 0 3.05'/></filter><rect width='100%' height='100%' filter='url(%23f)'/></svg>");
+  text-shadow: 0 1px 0 rgba(0,0,0,.45); }
+.lbl { font-size: 16px; letter-spacing: 1.6px; font-weight: 500; }
+
+/* descriptor text under the logo (LABQ8 layout) */
+.desc1 { left: 122px; top: 206px; font-size: 16.5px; letter-spacing: 3.6px; line-height: 1.38; font-weight: 500; }
+.desc2 { left: 122px; top: 262px; font-size: 11.5px; letter-spacing: 1px; font-weight: 600; }
+.desc3 { left: 122px; top: 286px; font-size: 10.5px; letter-spacing: .4px; font-weight: 600; }
+
+/* recessed trays and dropdown (LABQ8 style) */
+.tray { border-radius: 7px; background: linear-gradient(180deg, #121311, #1b1c19);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.95), inset 0 0 0 1px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.1); }
+.drop { border-radius: 4px; background: linear-gradient(180deg, #232421, #171816); border: 1px solid #3b3d38;
+  box-shadow: 0 1px 2px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);
+  color: #eceadf; font-size: 18px; font-weight: 500; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
+.drop i { width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid #e8e6db; }
+.face { display: flex; align-items: center; justify-content: center; background-size: 100% 100%;
+  font-family: 'Barlow Semi Condensed', sans-serif; font-size: 17px; font-weight: 600; letter-spacing: .6px; }
+.face.lit { background-image: url('./mode_face_lit.png'); color: #0d2a0b; text-shadow: 0 1px 0 rgba(255,255,255,.35); }
+.face.unlit { background-image: url('./mode_face_unlit.png'); color: #c8c6ba; }
+
+/* lamps */
+.lamp { width: 17px; height: 17px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #3a2d22, #120d09);
+  box-shadow: inset 0 1px 3px #000, 0 1px 0 rgba(255,255,255,.12); }
+.lamp.g { background: radial-gradient(circle at 40% 35%, #e6ffd9, #6dff52 40%, #2c9a1f); box-shadow: 0 0 10px #4dff3a, 0 0 22px rgba(80,255,60,.35); }
+.lamp.o { background: radial-gradient(circle at 40% 35%, #fff0dc, #ff9440 40%, #b9520f); box-shadow: 0 0 10px #ff8a2a, 0 0 22px rgba(255,140,40,.35); }
+.lampcap { font-size: 11px; letter-spacing: 1.4px; font-weight: 600; text-align: center; width: 90px; margin-left: -36px; margin-top: 8px; }
+
+/* ---------- CRT ---------- */
+.crt { left: 346px; top: 193px; width: 980px; height: 314px; border-radius: 22px; overflow: hidden;
+  background: radial-gradient(ellipse 75% 85% at 50% 48%, #0d2611 0%, #061409 50%, #010502 100%);
+  color: #a9ff92; font-family: 'VT323', monospace; }
+.crt .glow { position: absolute; inset: 0; padding: 14px 30px 0;
+  text-shadow: 0 0 1px #d9ffcf, 0 0 6px rgba(110,255,95,.75), 0 0 16px rgba(70,255,70,.3);
+  filter: blur(.35px) saturate(1.1); }
+.crt::before { content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background:
+    repeating-linear-gradient(180deg, rgba(0,0,0,.38) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, transparent 38%, rgba(140,255,140,.045) 44%, transparent 52%); }
+.crt::after { content: ''; position: absolute; inset: 0; z-index: 6; pointer-events: none; border-radius: 22px;
+  background:
+    radial-gradient(ellipse 30% 22% at 18% 20%, rgba(255,255,255,.07), transparent 70%),
+    radial-gradient(ellipse 22% 30% at 80% 72%, rgba(255,255,255,.035), transparent 70%),
+    linear-gradient(168deg, rgba(255,255,255,.075) 0%, transparent 28%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 .6  0 0 0 0 1  0 0 0 0 .6  0 0 0 .09 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  box-shadow: inset 0 0 70px rgba(0,0,0,.95), inset 0 0 16px rgba(0,0,0,.9), inset 0 0 0 2px rgba(0,0,0,.8); }
+.crt .bar { display: flex; justify-content: space-between; font-size: 19px; letter-spacing: 1.5px; color: #5fbf55;
+  border-bottom: 1px dashed rgba(110,230,100,.28); padding-bottom: 3px; }
+.crt svg { display: block; margin: 6px 0 4px; }
+.crt .chat { font-size: 24px; line-height: 1.02; letter-spacing: .5px; }
+.crt .chat p { margin: 0 0 5px; }
+.crt .chat .u { color: #6fd062; }
+.crt .chat .k { display: inline-block; width: 74px; }
+.cur { display: inline-block; width: 12px; height: 20px; background: #b4ff9f; vertical-align: -3px; animation: bl 1.1s steps(1) infinite; }
+@keyframes bl { 50% { opacity: 0; } }
+
+/* meters */
+.seg { position: absolute; width: 13px; height: 8px; border-radius: 1px; }
+.seg.g { background: linear-gradient(180deg, #a6ff8c, #4bd23a); box-shadow: 0 0 6px rgba(90,255,70,.7); }
+.seg.a { background: linear-gradient(180deg, #ffe08a, #f2a521); box-shadow: 0 0 6px rgba(255,190,60,.7); }
+
+/* key slots (the eight LABQ8 band keys) */
+.kl { width: 99px; height: 40px; top: 540px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 12.5px; letter-spacing: .9px; line-height: 1.05; text-align: center; color: #d9d7cb; }
+.kl b { display: block; width: 16px; height: 3px; border-radius: 2px; background: #2c2620; margin-bottom: 4px; box-shadow: inset 0 1px 1px #000; }
+.kl b.on { background: #7dff63; box-shadow: 0 0 6px #5dff40; }
+
+/* lower panel */
+.head { left: 132px; top: 626px; display: flex; align-items: center; gap: 14px; }
+.head .t { color: #f08a3c; font-size: 22px; letter-spacing: 2.4px; font-weight: 600; }
+.rule { height: 1px; background: rgba(220,216,200,.22); }
+.inbox { left: 132px; top: 684px; width: 990px; height: 72px; border-radius: 8px; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 50%, #0b1f0e, #020703 80%);
+  box-shadow: inset 0 3px 9px rgba(0,0,0,.95), inset 0 0 0 1px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.08);
+  font-family: 'VT323', monospace; font-size: 29px; color: #a9ff92; display: flex; align-items: center; padding: 0 22px;
+  text-shadow: 0 0 1px #d9ffcf, 0 0 7px rgba(110,255,95,.7); }
+.inbox::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(0,0,0,.35) 0 1px, transparent 1px 3px), linear-gradient(172deg, rgba(255,255,255,.06), transparent 40%); }
+.inbox .ph { color: #4f9a46; margin-left: auto; font-size: 20px; letter-spacing: 1px; }
+.hint { left: 134px; top: 765px; font-size: 13px; color: #8f8d83; letter-spacing: .4px; }
+.vlab { font-size: 13px; color: #b9b6aa; letter-spacing: 1.2px; font-weight: 500; text-align: center; }
+.vbox { height: 40px; border-radius: 5px; background: #0b0c0b; display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.95), 0 1px 0 rgba(255,255,255,.07);
+  color: #9ef08f; font-family: 'Barlow', sans-serif; font-weight: 600; font-size: 17px; letter-spacing: .8px; text-shadow: 0 0 6px rgba(120,255,100,.35); }
+.key { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; border-radius: 7px;
+  font-family: 'Barlow Semi Condensed', sans-serif; font-weight: 600; font-size: 17px; letter-spacing: 1.4px; color: #dddbd0;
+  background: linear-gradient(180deg, #2d2e2b 0%, #1c1d1b 55%, #161715 100%);
+  border: 2px solid #070707;
+  box-shadow: 0 0 0 3px #2b2d28, 0 0 0 4px #0c0d0c, 0 4px 8px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12), inset 0 -2px 4px rgba(0,0,0,.5); }
+.key b { width: 22px; height: 4px; border-radius: 2px; background: #2c2620; box-shadow: inset 0 1px 1px #000; }
+.key b.on { background: #7dff63; box-shadow: 0 0 7px #5dff40; }
+.key.apply { color: #1b0a02; font-size: 21px; letter-spacing: 2.4px;
+  background: linear-gradient(180deg, #f39350 0%, #df6a2a 45%, #bf5219 100%);
+  box-shadow: 0 0 0 3px #2b2d28, 0 0 0 4px #0c0d0c, 0 0 18px rgba(255,130,50,.35), 0 4px 8px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,225,190,.55), inset 0 -3px 6px rgba(90,30,5,.45); }
+.key.apply b { background: #fff1d6; box-shadow: 0 0 8px #ffb15c; }
+/* wear on key caps */
+.key::after, .face::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' seed='9'/><feColorMatrix values='0 0 0 0 .8  0 0 0 0 .78  0 0 0 0 .7  0 0 0 1.4 -.78'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: .5; mix-blend-mode: overlay; }
+.key, .face { position: absolute; }
+</style>
+
+
+<div class="fit" id="iaq8fit">
+<div class="stage" id="iaq8stage">
+
+  <!-- under the logo -->
+  <div class="abs silk desc1">AI ASSISTED<br>EQUALIZER</div>
+  <div class="abs silk desc2">DESCRIBE · LISTEN · APPROVE</div>
+  <div class="abs silk desc3">INTELLIGENT · MUSICAL · ANALOG SOUL</div>
+
+  <!-- top row -->
+  <div class="abs silk lbl" style="left:462px;top:60px">SOURCE</div>
+  <div class="abs tray" style="left:456px;top:82px;width:310px;height:58px"></div>
+  <div class="abs drop" style="left:464px;top:89px;width:294px;height:44px"><span>Voz</span><i></i></div>
+
+  <div class="abs silk lbl" style="left:826px;top:60px">COMPARE</div>
+  <div class="abs tray" style="left:818px;top:82px;width:262px;height:58px"></div>
+  <div class="abs face unlit" style="left:825px;top:89px;width:120px;height:44px">ANTES</div>
+  <div class="abs face lit" style="left:950px;top:89px;width:124px;height:44px">DESPUÉS</div>
+
+  <div class="abs silk lbl" style="left:1132px;top:60px">STATUS</div>
+  <div class="abs lamp g" style="left:1146px;top:96px"></div><div class="abs silk lampcap" style="left:1146px;top:116px">ONLINE</div>
+  <div class="abs lamp g" style="left:1216px;top:96px"></div><div class="abs silk lampcap" style="left:1216px;top:116px">LISTEN</div>
+  <div class="abs lamp o" style="left:1286px;top:96px"></div><div class="abs silk lampcap" style="left:1286px;top:116px">PROPOSAL</div>
+
+  <!-- CRT -->
+  <div class="abs crt"><div class="glow">
+    <div class="bar"><span>IAQ8 OS 1.0</span><span>FUENTE: VOZ</span><span>ESCUCHADO: 12 S</span><span>PROPUESTA 2 · DESPUÉS</span></div>
+    <svg width="920" height="112" viewBox="0 0 920 112">
+      <defs><filter id="ph" x="-5%" y="-30%" width="110%" height="160%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+      <g stroke="#3f8f3a" stroke-width="1" stroke-dasharray="1 5" opacity=".7">
+        <line x1="0" y1="18" x2="920" y2="18"/><line x1="0" y1="94" x2="920" y2="94"/>
+        <line x1="184" y1="0" x2="184" y2="100"/><line x1="460" y1="0" x2="460" y2="100"/><line x1="736" y1="0" x2="736" y2="100"/>
+      </g>
+      <line x1="0" y1="56" x2="920" y2="56" stroke="#4fa846" stroke-width="1" opacity=".55"/>
+      <path d="M0 104 L18 92 L34 97 L52 84 L70 88 L88 77 L104 82 L122 71 L140 75 L158 66 L176 70 L194 62 L212 69 L230 64 L248 74 L266 68 L284 77 L302 72 L320 80 L338 75 L356 84 L374 79 L392 86 L410 82 L428 88 L446 85 L464 90 L482 86 L500 92 L518 89 L536 93 L554 91 L572 95 L590 93 L608 97 L626 95 L644 98 L662 97 L680 100 L700 98 L720 101 L740 100 L760 103 L780 102 L800 105 L830 104 L860 107 L890 106 L920 109 L920 112 L0 112 Z" fill="rgba(90,200,80,.13)" stroke="#4c9e45" stroke-width="1"/>
+      <path d="M0 56 C 170 56, 220 56, 250 63 S 300 74, 318 74 S 368 62, 410 57 S 600 56, 660 55 S 730 44, 770 41 L 920 40" fill="none" stroke="#b8ffa3" stroke-width="2.6" filter="url(#ph)"/>
+      <g fill="#b8ffa3" font-family="VT323" font-size="19" filter="url(#ph)"><circle cx="318" cy="74" r="4"/><circle cx="790" cy="41" r="4"/><text x="296" y="96">-4 DB</text><text x="800" y="34">+2.5 DB</text></g>
+      <g fill="#5fbf55" font-family="VT323" font-size="17"><text x="176" y="111">100</text><text x="452" y="111">1K</text><text x="724" y="111">10K</text></g>
+    </svg>
+    <div class="chat">
+      <p><span class="k">IAQ8&gt;</span>NOTO GRAVE ACUMULADO HACIA 250 HZ. ¿SUENA COMO SI HABLARA DENTRO DE UNA CAJA?</p>
+      <p class="u"><span class="k">TÚ&gt;</span>SÍ, Y UN POCO APAGADA</p>
+      <p><span class="k">IAQ8&gt;</span>QUITO 4 DB EN 250 HZ (MENOS CAJA) Y SUBO 2.5 DB DESDE 8 KHZ (MÁS AIRE). COMPÁRALO CON ANTES/DESPUÉS.</p>
+    </div>
+  </div></div>
+
+  <!-- meters (lit segments) -->
+  <div id="meters"></div>
+
+  <!-- the eight key slots become quick replies -->
+  <div class="abs kl" style="left:365px"><b></b>MENOS<br>BRILLO</div>
+  <div class="abs kl" style="left:486px"><b class="on"></b>MÁS<br>CLARIDAD</div>
+  <div class="abs kl" style="left:606px"><b></b>MÁS<br>CUERPO</div>
+  <div class="abs kl" style="left:727px"><b></b>MÁS<br>SUAVE</div>
+  <div class="abs kl" style="left:847px"><b></b>MENOS<br>CAMBIO</div>
+  <div class="abs kl" style="left:968px"><b></b>OTRA<br>IDEA</div>
+  <div class="abs kl" style="left:1088px"><b></b>¿POR<br>QUÉ?</div>
+  <div class="abs kl" style="left:1208px"><b></b>VER<br>DETALLE</div>
+
+  <!-- lower panel -->
+  <div class="abs head"><div class="lamp o" style="position:relative"></div><div class="t silk" style="color:#f08a3c">ASSISTANT</div></div>
+  <div class="abs silk" style="left:345px;top:632px;font-size:16px;color:#cfcbbd">Pídelo con tus palabras</div>
+  <div class="abs rule" style="left:560px;top:645px;width:560px"></div>
+
+  <div class="abs inbox">&gt; MÁS CALIDEZ, PERO SIN PERDER CLARIDAD<span class="cur"></span><span class="ph">[ENTER]</span></div>
+  <div class="abs hint">El audio nunca sale de tu ordenador · solo se envía un resumen del análisis</div>
+
+  <div class="abs vlab" style="left:132px;top:800px;width:200px">SOURCE</div>
+  <div class="abs vbox" style="left:132px;top:824px;width:200px">VOZ</div>
+  <div class="abs vlab" style="left:352px;top:800px;width:200px">LISTENED</div>
+  <div class="abs vbox" style="left:352px;top:824px;width:200px">12 s</div>
+  <div class="abs vlab" style="left:572px;top:800px;width:200px">CHANGES</div>
+  <div class="abs vbox" style="left:572px;top:824px;width:200px">2 BANDAS</div>
+  <div class="abs vlab" style="left:792px;top:800px;width:200px">LEVEL MATCH</div>
+  <div class="abs vbox" style="left:792px;top:824px;width:200px">−1.2 dB</div>
+
+  <div class="key" style="left:1160px;top:686px;width:170px;height:70px"><b class="on"></b>ESCUCHAR</div>
+  <div class="key" style="left:1352px;top:686px;width:186px;height:70px"><b></b>ENVIAR</div>
+  <div class="key" style="left:1160px;top:796px;width:170px;height:72px"><b></b>DESHACER</div>
+  <div class="key apply" style="left:1352px;top:796px;width:186px;height:72px"><b></b>APLICAR</div>
+</div>
+</div>
+
+<script>
+(function () {
+  var fit = document.getElementById('iaq8fit'), st = document.getElementById('iaq8stage');
+  // meter segments: columns measured on LABQ8's background
+  var cols = [[1396, 13], [1421, 12], [1506, 12], [1532, 11]], top = 221, bottom = 475, n = 24, step = (bottom - top) / n;
+  var m = document.getElementById('meters'), html = '';
+  cols.forEach(function (c) { for (var i = 0; i < c[1]; i++) {
+    var y = bottom - (i + 1) * step + 2, cls = i >= 16 ? "a" : "g";
+    html += '<div class="seg ' + cls + '" style="left:' + c[0] + 'px;top:' + y.toFixed(1) + 'px"></div>'; } });
+  m.innerHTML = html;
+  function size () { var s = fit.clientWidth / 1672; st.style.transform = 'scale(' + s + ')'; fit.style.height = (941 * s) + 'px'; }
+  window.addEventListener('resize', size); size();
+})();
+</script>
+
+</body></html>

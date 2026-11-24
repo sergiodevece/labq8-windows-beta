@@ -11,7 +11,7 @@ namespace iaq8::dsp
 //
 // Both path outputs are K-weighted (BS.1770 approximation: high shelf then
 // low cut), squared, summed over channels and averaged with an exponential
-// window of windowSeconds. The compensation is 10*log10(msApplied/msPreview),
+// window equivalent to a sliding window of windowSeconds (tau = windowSeconds / 2). The compensation is 10*log10(msApplied/msPreview),
 // clamped to +-maxCompensationDb and smoothed over smoothingSeconds. When
 // either path is below silenceDb the last target is held.
 //
@@ -40,6 +40,10 @@ public:
 
     double getCompensationDb() const noexcept { return smoothedDb; }
     void reset() noexcept;
+
+    // Forgets the loudness history (mean squares) but keeps the current
+    // compensation, so a new preview is measured from fresh data.
+    void restartMeasurement() noexcept { meanSquareApplied = meanSquarePreview = 0.0; }
 
 private:
     struct Biquad

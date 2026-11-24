@@ -4,6 +4,7 @@
 #include "dsp/LoudnessMatcher.h"
 
 #include <array>
+#include <atomic>
 #include <vector>
 
 namespace iaq8::dsp
@@ -34,7 +35,8 @@ public:
     void process (float* const* channels, int numChannels, int numSamples) noexcept;
 
     bool hasPreview() const noexcept { return previewActive; }
-    double getCompensationDb() const noexcept { return matcher.getCompensationDb(); }
+    // Published once per process() call; safe to read from any thread.
+    double getCompensationDb() const noexcept { return publishedCompensationDb.load (std::memory_order_relaxed); }
 
 private:
     void applyTo (labq8::dsp::EqCore& core, const BandSet& bands) noexcept;
@@ -43,6 +45,7 @@ private:
     labq8::dsp::EqCore appliedCore, previewCore;
     BandSet appliedSet {}, previewSet {};
     bool previewActive = false;
+    bool retargetPending = false; // preview core keeps the cleared preview until the fade to applied ends
     Listen listen = Listen::applied;
 
     std::vector<float> scratch; // [applied | preview] x channels x maxBlock
@@ -53,6 +56,7 @@ private:
     float fadePos = 0.0f;   // 0 = applied, 1 = preview
     float fadeStep = 0.0f;
     LoudnessMatcher matcher;
+    std::atomic<double> publishedCompensationDb { 0.0 };
     std::vector<float> gains; // per-sample compensation gain of the current chunk
 };
 } // namespace iaq8::dsp

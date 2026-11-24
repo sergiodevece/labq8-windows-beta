@@ -15,12 +15,29 @@ void AssistEngine::prepare (double sampleRate, int numChannels, int maxBlockSize
     scratch.assign ((size_t) (2 * channelCount * maxBlock), 0.0f);
     gains.assign ((size_t) maxBlock, 1.0f);
     matcher.prepare (sampleRate, channelCount);
+    publishedCompensationDb.store (0.0, std::memory_order_relaxed);
+    retargetPending = false;
     fadeSamples = std::max (1, (int) std::lround (fadeSeconds * sampleRate));
     fadePos = (listen == Listen::preview && previewActive) ? 1.0f : 0.0f;
     fadeStep = 0.0f;
     applyTo (appliedCore, appliedSet);
     applyTo (previewCore, previewActive ? previewSet : appliedSet);
 }
+
+namespace
+{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfloat-equal" // exact comparison: any edit counts as a change
+bool sameBands (const BandSet& a, const BandSet& b) noexcept
+{
+    for (size_t i = 0; i < a.size(); ++i)
+        if (a[i].frequencyHz != b[i].frequencyHz || a[i].gainDb != b[i].gainDb || a[i].q != b[i].q
+            || a[i].bypassed != b[i].bypassed || a[i].type != b[i].type)
+            return false;
+    return true;
+}
+#pragma clang diagnostic pop
+} // namespace
 
 void AssistEngine::applyTo (labq8::dsp::EqCore& core, const BandSet& bands) noexcept
 {
@@ -32,21 +49,28 @@ void AssistEngine::setApplied (const BandSet& bands) noexcept
 {
     appliedSet = bands;
     applyTo (appliedCore, appliedSet);
-    if (! previewActive)
+    if (! previewActive && ! retargetPending)
         applyTo (previewCore, appliedSet); // keeps the idle preview path in step
 }
 
 void AssistEngine::setPreview (const BandSet& bands) noexcept
 {
+    // A different proposal has a different loudness: measure it from scratch.
+    if (! previewActive || retargetPending || ! sameBands (previewSet, bands))
+        matcher.restartMeasurement();
     previewSet = bands;
     previewActive = true;
+    retargetPending = false;
     applyTo (previewCore, previewSet);
 }
 
 void AssistEngine::clearPreview() noexcept
 {
     previewActive = false;
-    applyTo (previewCore, appliedSet);
+    if (fadePos > 0.0f)
+        retargetPending = true; // still audible: let the fade to applied finish first
+    else
+        applyTo (previewCore, appliedSet);
 }
 
 void AssistEngine::setListen (Listen newListen) noexcept
@@ -67,6 +91,7 @@ void AssistEngine::process (float* const* channels, int numChannels, int numSamp
             chunk[c] = channels[c] + pos;
         processChunk (chunk, nCh, std::min (maxBlock, numSamples - pos));
     }
+    publishedCompensationDb.store (matcher.getCompensationDb(), std::memory_order_relaxed);
 }
 
 void AssistEngine::processChunk (float* const* channels, int nCh, int n) noexcept
@@ -107,6 +132,12 @@ void AssistEngine::processChunk (float* const* channels, int nCh, int n) noexcep
             else
                 channels[c][i] = a[c][i] * (1.0f - fadePos) + p[c][i] * gains[(size_t) i] * fadePos;
         }
+    }
+
+    if (retargetPending && fadePos <= 0.0f)
+    {
+        retargetPending = false;
+        applyTo (previewCore, appliedSet);
     }
 }
 } // namespace iaq8::dsp

@@ -103,6 +103,28 @@ LQ_TEST ("loudness: +3 dB bell at 1 kHz on noise is matched within 0.5 dB")
     }
 }
 
+LQ_TEST ("loudness: a new proposal is re-matched within about a second")
+{
+    AssistEngine engine;
+    engine.prepare (kFs, 1, 512);
+    engine.setPreview (makeSet ({ 1000.0, 3.0, 1.0, false, FilterType::bell }));
+    engine.setListen (Listen::preview);
+    const auto n = samples (7.0, kFs), change = samples (4.0, kFs);
+    const auto x = makeProgram (n, 101);
+
+    auto y = x;
+    for (size_t pos = 0; pos < n; pos += 480)
+    {
+        if (pos == change)
+            engine.setPreview (makeSet ({ 1000.0, -3.0, 1.0, false, FilterType::bell })); // ~5.5 dB step
+        float* ch[] = { y.data() + pos };
+        engine.process (ch, 1, (int) std::min<size_t> (480, n - pos));
+    }
+    // Applied reference is the flat input.
+    const auto b = change + samples (1.0, kFs), e = change + samples (2.0, kFs);
+    LQ_CHECK (std::abs (kLevelDb (y, b, e) - kLevelDb (x, b, e)) < 1.0, "matched within 1 dB one second after the change");
+}
+
 LQ_TEST ("loudness: compensation is clamped to +-6 dB")
 {
     AssistEngine engine;

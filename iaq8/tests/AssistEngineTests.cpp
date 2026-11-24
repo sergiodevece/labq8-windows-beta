@@ -267,15 +267,14 @@ LQ_TEST ("assist engine: clearPreview while listening to preview returns to appl
     constexpr size_t n = 6000;
     auto o = rig.run (n, 128, [&] (int b) { if (b == 0) rig.engine.clearPreview(); });
     LQ_CHECK (! rig.engine.hasPreview(), "preview cleared");
-    // y = x * (1 - 0.749 w): jumps are bounded by the sine slope plus the fade rate.
+    // y mixes the applied sine (amplitude 0.5) with the compensated -12 dB bell (0.25), so it never
+    // exceeds the applied amplitude: jumps are bounded by the plain sine slope. The preview core
+    // keeps the old set (and its compensation) until the fade has finished: no swell.
     double maxJump = 0.0;
     for (size_t i = 1; i < n; ++i)
         maxJump = std::max (maxJump, (double) std::abs (o.y[i] - o.y[i - 1]));
-    // While the preview core morphs to the applied set, the preview path still carries
-    // the (smoothed, slow) +6 dB compensation, so it briefly reaches 2x the sine
-    // amplitude: bound the step by twice the plain slope.
-    LQ_CHECK (maxJump < 2.0 * 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "smooth");
-    // The preview core is retargeted to applied, so the output ends as the clean applied signal.
+    LQ_CHECK (maxJump < 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "smooth");
+    // After the fade the preview core is retargeted to applied, and the output ends as the clean applied signal.
     double err = 0.0;
     for (size_t i = 3000; i < n; ++i)
         err = std::max (err, (double) std::abs (o.y[i] - o.x[i]));

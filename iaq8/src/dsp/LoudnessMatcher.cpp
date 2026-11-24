@@ -11,7 +11,7 @@ void LoudnessMatcher::prepare (double sampleRate, int numChannels)
     channelCount = std::clamp (numChannels, 1, maxChannels);
     shelfCoeffs = labq8::dsp::designHighShelf (fs, 1681.97, 3.9998, 0.7071);
     cutCoeffs = labq8::dsp::designLowCut (fs, 38.135, 0.5003);
-    windowAlpha = std::exp (-1.0 / (windowSeconds * fs));
+    windowAlpha = std::exp (-2.0 / (windowSeconds * fs)) /* tau = window / 2 */;
     smoothingBeta = 1.0 - std::exp (-1.0 / (smoothingSeconds * fs));
     silenceLinear = std::pow (10.0, silenceDb / 10.0);
     reset();

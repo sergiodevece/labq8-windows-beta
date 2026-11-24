@@ -77,9 +77,9 @@ LQ_TEST ("assist engine: applied path is bit-identical to a lone EqCore")
     LQ_CHECK (l == l2 && r == r2, "applied output equals lone EqCore");
 }
 
-LQ_TEST ("assist engine: preview path is bit-identical to a lone EqCore with the preview set")
+LQ_TEST ("assist engine: preview output equals EqCore(preview) x 10^(comp/20)")
 {
-    const auto preview = bellSet (1000.0, -12.0, 2.0);
+    const auto preview = bellSet (800.0, 10.0, 0.7);
     AssistEngine engine;
     engine.prepare (kFs, 2, 512);
     engine.setApplied (otherSet());
@@ -89,14 +89,27 @@ LQ_TEST ("assist engine: preview path is bit-identical to a lone EqCore with the
     auto lone = makeLone (preview, 2);
     auto l = makeNoise (40000, 3), r = makeNoise (40000, 4);
     auto l2 = l, r2 = r;
-    // Let the fade finish, then compare the steady state.
-    runBlocks (l, r, 256, [&] (float* const* ch, int n) { engine.process (ch, 2, n); });
-    runBlocks (l2, r2, 256, [&] (float* const* ch, int n) { lone.process (ch, 2, n); });
-    LQ_CHECK (engine.getCompensationDb() == 0.0, "no compensation yet");
-    bool same = true;
-    for (size_t i = 20000; i < l.size(); ++i)
-        same = same && l[i] == l2[i] && r[i] == r2[i];
-    LQ_CHECK (same, "preview output equals lone EqCore after the fade");
+    // 256-sample blocks. The compensation gain moves per sample, so the gain
+    // that getCompensationDb() reports after a block is the one applied to
+    // that block's last sample (after the 20 ms fade has finished).
+    double worst = 0.0;
+    bool movedGain = false;
+    for (size_t pos = 0; pos < l.size() - 256; pos += 256) // whole blocks only
+    {
+        float* ch[] = { l.data() + pos, r.data() + pos };
+        float* ch2[] = { l2.data() + pos, r2.data() + pos };
+        engine.process (ch, 2, 256);
+        lone.process (ch2, 2, 256);
+        if (pos >= 2048)
+        {
+            const auto g = std::pow (10.0, engine.getCompensationDb() / 20.0);
+            movedGain = movedGain || std::abs (engine.getCompensationDb()) > 0.5;
+            worst = std::max (worst, std::abs ((double) l[pos + 255] - (double) l2[pos + 255] * g));
+            worst = std::max (worst, std::abs ((double) r[pos + 255] - (double) r2[pos + 255] * g));
+        }
+    }
+    LQ_CHECK (movedGain, "the test exercises a real compensation");
+    LQ_CHECK (worst < 1.0e-6, "preview output equals EqCore(preview) x compensation gain");
 }
 
 namespace
@@ -107,7 +120,8 @@ namespace
 struct FadeRig
 {
     static constexpr double amp = 0.5;
-    static constexpr size_t settleLength = 24000;
+    static constexpr size_t settleLength = 480000; // 10 s: compensation settles on its +6 dB clamp
+    static constexpr double compGain = 1.9952623149688795; // 10^(6/20)
     int fadeN = (int) std::lround (0.020 * kFs);
     AssistEngine engine;
     EqCore flat, bell;
@@ -151,6 +165,8 @@ struct FadeRig
         float* cp[] = { o.p.data() };
         flat.process (ca, 1, (int) n);
         bell.process (cp, 1, (int) n);
+        for (auto& v : o.p)
+            v = (float) ((double) v * compGain); // the preview path carries the compensation
         return o;
     }
 
@@ -161,7 +177,7 @@ struct FadeRig
         for (size_t i = 0; i < w.size(); ++i)
         {
             const double d = (double) o.p[i] - (double) o.a[i];
-            if (std::abs (d) > 0.2)
+            if (std::abs (d) > 0.1)
                 w[i] = ((double) o.y[i] - (double) o.a[i]) / d;
         }
         return w;
@@ -255,13 +271,16 @@ LQ_TEST ("assist engine: clearPreview while listening to preview returns to appl
     double maxJump = 0.0;
     for (size_t i = 1; i < n; ++i)
         maxJump = std::max (maxJump, (double) std::abs (o.y[i] - o.y[i - 1]));
-    LQ_CHECK (maxJump < 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "smooth");
+    // While the preview core morphs to the applied set, the preview path still carries
+    // the (smoothed, slow) +6 dB compensation, so it briefly reaches 2x the sine
+    // amplitude: bound the step by twice the plain slope.
+    LQ_CHECK (maxJump < 2.0 * 0.5 * 2.0 * 3.14159265 * 1000.0 / kFs * 1.05, "smooth");
     // The preview core is retargeted to applied, so the output ends as the clean applied signal.
     double err = 0.0;
     for (size_t i = 3000; i < n; ++i)
         err = std::max (err, (double) std::abs (o.y[i] - o.x[i]));
     LQ_CHECK (err < 1.0e-5, "ends on the applied path");
-    LQ_CHECK ((double) std::abs (o.y[0] - o.p[0]) < 0.02, "starts where the preview was");
+    LQ_CHECK ((double) std::abs (o.y[0] - o.p[0]) < 0.02, "starts where the preview was (compensated)");
 }
 
 LQ_TEST ("assist engine: blocks larger than maxBlockSize give the same output as small blocks")

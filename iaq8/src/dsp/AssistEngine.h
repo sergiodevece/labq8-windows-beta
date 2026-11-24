@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/EqCore.h"
+#include "dsp/LoudnessMatcher.h"
 
 #include <array>
 #include <vector>
@@ -13,10 +14,10 @@ enum class Listen { applied, preview };
 
 // Two LABQ8 EqCores side by side: the applied path and the preview path.
 // Both always process their own copy of the input (scratch buffers are
-// allocated in prepare only), so the inactive path stays warm and a later
-// loudness matcher can measure both outputs every block. The A/B switch is a
-// 20 ms per-sample linear crossfade; the compensation gain applies to the
-// preview path only (0 dB until the loudness matcher exists).
+// allocated in prepare only), so the inactive path stays warm and the loudness
+// matcher can measure both outputs every block. The A/B switch is a 20 ms
+// per-sample linear crossfade. The matcher's smoothed per-sample compensation
+// gain applies to the preview path only; the applied path is never touched.
 class AssistEngine
 {
 public:
@@ -33,7 +34,7 @@ public:
     void process (float* const* channels, int numChannels, int numSamples) noexcept;
 
     bool hasPreview() const noexcept { return previewActive; }
-    double getCompensationDb() const noexcept { return compensationDb; }
+    double getCompensationDb() const noexcept { return matcher.getCompensationDb(); }
 
 private:
     void applyTo (labq8::dsp::EqCore& core, const BandSet& bands) noexcept;
@@ -51,7 +52,7 @@ private:
     int fadeSamples = 1;
     float fadePos = 0.0f;   // 0 = applied, 1 = preview
     float fadeStep = 0.0f;
-    float compensationGain = 1.0f;
-    double compensationDb = 0.0;
+    LoudnessMatcher matcher;
+    std::vector<float> gains; // per-sample compensation gain of the current chunk
 };
 } // namespace iaq8::dsp

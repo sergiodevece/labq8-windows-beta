@@ -13,6 +13,8 @@ void AssistEngine::prepare (double sampleRate, int numChannels, int maxBlockSize
     appliedCore.prepare (sampleRate, channelCount);
     previewCore.prepare (sampleRate, channelCount);
     scratch.assign ((size_t) (2 * channelCount * maxBlock), 0.0f);
+    gains.assign ((size_t) maxBlock, 1.0f);
+    matcher.prepare (sampleRate, channelCount);
     fadeSamples = std::max (1, (int) std::lround (fadeSeconds * sampleRate));
     fadePos = (listen == Listen::preview && previewActive) ? 1.0f : 0.0f;
     fadeStep = 0.0f;
@@ -80,6 +82,7 @@ void AssistEngine::processChunk (float* const* channels, int nCh, int n) noexcep
     }
     appliedCore.process (a, nCh, n);
     previewCore.process (p, nCh, n);
+    matcher.push (a, p, nCh, n, gains.data());
 
     const bool wantPreview = listen == Listen::preview && previewActive;
     const auto target = wantPreview ? 1.0f : 0.0f;
@@ -100,9 +103,9 @@ void AssistEngine::processChunk (float* const* channels, int nCh, int n) noexcep
             if (fadePos <= 0.0f)
                 channels[c][i] = a[c][i];
             else if (fadePos >= 1.0f)
-                channels[c][i] = p[c][i] * compensationGain;
+                channels[c][i] = p[c][i] * gains[(size_t) i];
             else
-                channels[c][i] = a[c][i] * (1.0f - fadePos) + p[c][i] * compensationGain * fadePos;
+                channels[c][i] = a[c][i] * (1.0f - fadePos) + p[c][i] * gains[(size_t) i] * fadePos;
         }
     }
 }

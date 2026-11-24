@@ -77,3 +77,25 @@ LQ_TEST ("iaq8 smoke: HTTPS probe reaches api.anthropic.com (401 without key)")
     ctx.note ("HTTP status: " + std::to_string (result.statusCode));
     LQ_CHECK (result.statusCode == 401, "expected 401 without key, got " + std::to_string (result.statusCode));
 }
+
+LQ_TEST ("iaq8 smoke: debug editor constructs, shows UTF-8 text and closes promptly")
+{
+    Iaq8AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    LQ_CHECK (editor != nullptr, "editor created");
+
+    if (editor == nullptr)
+        return;
+
+    const auto expected = juce::String (juce::CharPointer_UTF8 ("Probar conexi\xc3\xb3n"));
+    juce::String found;
+    for (auto* child : editor->getChildren())
+        if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            found = button->getButtonText();
+
+    LQ_CHECK (found == expected, "button text is 'Probar conexión' (UTF-8)");
+
+    const auto start = juce::Time::getMillisecondCounter();
+    editor.reset();
+    LQ_CHECK (juce::Time::getMillisecondCounter() - start < 1000, "closing the editor does not wait");
+}

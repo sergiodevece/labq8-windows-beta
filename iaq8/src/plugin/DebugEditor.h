@@ -18,7 +18,9 @@ struct HttpProbeResult
 HttpProbeResult probeHttpStatus (const juce::String& url, int timeoutMs);
 
 // Provisional editor for the network spike (replaced in Plan 3): one button
-// that probes api.anthropic.com from a background thread.
+// that probes api.anthropic.com from a detached background thread. Closing the
+// editor never waits for the network: the worker owns no editor state and
+// reports back through a SafePointer on the message thread.
 class DebugEditor final : public juce::AudioProcessorEditor
 {
 public:
@@ -28,13 +30,10 @@ public:
     void resized() override;
 
 private:
-    class ProbeThread;
-
     void startProbe();
 
-    juce::TextButton probeButton { "Probar conexión" };
+    juce::TextButton probeButton { juce::String (juce::CharPointer_UTF8 ("Probar conexi\xc3\xb3n")) };
     juce::Label resultLabel;
-    std::unique_ptr<ProbeThread> probeThread;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DebugEditor)
 };

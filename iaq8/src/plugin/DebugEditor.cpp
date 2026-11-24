@@ -1,5 +1,7 @@
 #include "plugin/DebugEditor.h"
 
+#include <thread>
+
 namespace iaq8
 {
 namespace
@@ -21,37 +23,10 @@ HttpProbeResult probeHttpStatus (const juce::String& url, int timeoutMs)
     result.statusCode = status;
 
     if (status == 0)
-        result.error = stream == nullptr ? "sin respuesta (red bloqueada o sin conexión)" : "sin código HTTP";
+        result.error = stream == nullptr ? juce::String (juce::CharPointer_UTF8 ("sin respuesta (red bloqueada o sin conexi\xc3\xb3n)")) : juce::String (juce::CharPointer_UTF8 ("sin c\xc3\xb3" "digo HTTP"));
 
     return result;
 }
-
-class DebugEditor::ProbeThread final : public juce::Thread
-{
-public:
-    explicit ProbeThread (DebugEditor& e) : juce::Thread ("IAQ8 network probe"), editor (&e) {}
-    ~ProbeThread() override { stopThread (15000); }
-
-    void run() override
-    {
-        const auto result = probeHttpStatus (probeUrl, 10000);
-
-        const auto text = result.statusCode != 0 ? "HTTP " + juce::String (result.statusCode)
-                                                  : "Error: " + result.error;
-
-        juce::MessageManager::callAsync ([safe = editor, text]
-        {
-            if (safe != nullptr)
-                safe->resultLabel.setText (text, juce::dontSendNotification);
-
-            if (safe != nullptr)
-                safe->probeButton.setEnabled (true);
-        });
-    }
-
-private:
-    juce::Component::SafePointer<DebugEditor> editor;
-};
 
 DebugEditor::DebugEditor (Iaq8AudioProcessor& p) : AudioProcessorEditor (p)
 {
@@ -63,10 +38,7 @@ DebugEditor::DebugEditor (Iaq8AudioProcessor& p) : AudioProcessorEditor (p)
     setSize (360, 140);
 }
 
-DebugEditor::~DebugEditor()
-{
-    probeThread.reset(); // joins the worker; its pending callAsync is guarded by the SafePointer
-}
+DebugEditor::~DebugEditor() = default; // never waits for a probe in flight
 
 void DebugEditor::resized()
 {
@@ -78,10 +50,27 @@ void DebugEditor::resized()
 
 void DebugEditor::startProbe()
 {
-    probeThread.reset();
     probeButton.setEnabled (false);
     resultLabel.setText ("Probando...", juce::dontSendNotification);
-    probeThread = std::make_unique<ProbeThread> (*this);
-    probeThread->startThread();
+
+    // Detached on purpose: the editor may close while the request is pending
+    // (up to the 10 s timeout). The worker touches only its own locals; the
+    // result is delivered through a SafePointer, which is null once the
+    // editor is gone.
+    std::thread ([safe = juce::Component::SafePointer<DebugEditor> (this)]
+    {
+        const auto result = probeHttpStatus (probeUrl, 10000);
+        const auto text = result.statusCode != 0 ? "HTTP " + juce::String (result.statusCode)
+                                                  : "Error: " + result.error;
+
+        juce::MessageManager::callAsync ([safe, text]
+        {
+            if (safe != nullptr)
+            {
+                safe->resultLabel.setText (text, juce::dontSendNotification);
+                safe->probeButton.setEnabled (true);
+            }
+        });
+    }).detach();
 }
 } // namespace iaq8

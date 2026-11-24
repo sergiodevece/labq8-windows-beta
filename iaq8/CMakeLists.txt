@@ -123,6 +123,8 @@ if(IAQ8_BUILD_TESTS)
     target_sources(iaq8_tests PRIVATE
         ${IAQ8_LABQ8_DIR}/tests/TestMain.cpp
         ${IAQ8_LABQ8_DIR}/tests/AllocationGuard.cpp
+        # LABQ8's layout, compiled only to compare against IAQ8's (parity test).
+        ${IAQ8_LABQ8_DIR}/src/parameters/ParameterLayout.cpp
         ${IAQ8_TEST_SOURCES}
         ${IAQ8_PLUGIN_SOURCES})
 

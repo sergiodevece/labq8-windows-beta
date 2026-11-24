@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 namespace iaq8::analysis
@@ -14,23 +15,34 @@ namespace iaq8::analysis
 // locks or waits.
 //
 // Thread contract
-//  - prepare(): message thread, while the audio thread is not running (the
-//    host's prepareToPlay contract). It is the only call that allocates.
+//  - prepare(): message thread, never concurrently with write() (the host's
+//    prepareToPlay contract). It allocates. It may run while another thread is
+//    inside copyOut(): it waits (yield, bounded by one copy) until that copy
+//    ends, and blocks new readers/arm() while it reallocates.
 //  - write(): audio thread only (single writer). Stores samples only while the
-//    state is `capturing`; blocks under the floor are not stored, so the
-//    stored audio is exactly the counted audio.
-//  - arm()/cancel(): any non-audio thread.
-//  - getters: any thread.
-//  - copyOut(): non-audio thread, only while the state is not `capturing`.
+//    state is `capturing`; blocks under the floor, or not finite, are not
+//    stored, so the stored audio is exactly the counted audio.
+//  - arm()/cancel()/copyOut()/getters: any non-audio thread.
 //
-// Memory ordering. `used` (samples stored per channel) is modified by the
-// writer only, through a compare-exchange from the value it read at the start
-// of the block; arm() resets it to 0, which makes an in-flight block's
-// compare-exchange fail, so that block is discarded and cannot corrupt the new
-// capture. The writer stores samples first and then publishes them with the
-// release compare-exchange on `used`; copyOut() acquire-loads `used` and reads
-// only [0, used), so everything it reads happened-before. An in-flight block
-// after cancel() writes only beyond the published `used`.
+// Everything that decides who may touch the samples lives in ONE atomic word:
+//   bits  0..31  used   samples stored per channel
+//   bits 32..33  state  idle / capturing / done
+//   bit  34      reading   a copyOut() is in progress
+//   bit  35      preparing a prepare() is reallocating
+//   bits 36..63  epoch  incremented by arm() and prepare()
+// write() reads the word, copies its block into [used, used+n) and publishes
+// with ONE compare-exchange that moves used (and state, when the target is
+// reached) from exactly the word it read. Any arm(), prepare(), cancel() or
+// reader in between changes the word, the exchange fails and the block is
+// discarded: a late block can neither land in a new capture nor flip it to
+// `done`. Samples are published by that release exchange; a reader acquires
+// the word, so it sees everything below `used`.
+// copyOut() and arm() succeed only from idle/done with neither flag set, via
+// compare-exchange; while `reading` is set arm() refuses (returns false) and
+// write() does not store (state is not capturing), so [0, used) is stable for
+// the whole copy. prepare() waits for `reading` to clear before it sets
+// `preparing`, and copyOut()/arm() refuse while `preparing` is set, so the
+// vectors are never reallocated under a reader.
 class CaptureBuffer
 {
 public:
@@ -42,106 +54,143 @@ public:
     // while capturing: the capture is discarded).
     void prepare (double newSampleRate, int newNumChannels)
     {
-        state.store ((int) State::idle, std::memory_order_seq_cst);
-        used.store (0, std::memory_order_seq_cst);
+        auto w = word.load (std::memory_order_acquire);
+        for (;;)
+        {
+            if (reading (w) || preparing (w))
+            {
+                std::this_thread::yield();
+                w = word.load (std::memory_order_acquire);
+                continue;
+            }
+            if (word.compare_exchange_weak (w, pack (0, State::idle, false, true, epoch (w) + 1),
+                                            std::memory_order_acq_rel))
+                break;
+        }
 
-        sampleRate = newSampleRate;
-        numChannels = std::max (1, newNumChannels);
-        capacity = (int) std::ceil (maxSeconds * sampleRate);
-        targetSamples = (int) std::ceil (targetSeconds * sampleRate);
-
-        data.assign ((size_t) numChannels, std::vector<float> ((size_t) capacity, 0.0f));
+        const int channels = std::max (1, newNumChannels);
+        const int cap = (int) std::ceil (maxSeconds * newSampleRate);
+        data.assign ((size_t) channels, std::vector<float> ((size_t) cap, 0.0f));
+        capacity = cap;
+        targetSamples = (int) std::ceil (targetSeconds * newSampleRate);
         floorPower = std::pow (10.0, signalFloorDbfs / 10.0);
+        sampleRate.store (newSampleRate, std::memory_order_relaxed);
+        numChannels.store (channels, std::memory_order_relaxed);
+
+        word.fetch_and (~preparingBit, std::memory_order_release);
     }
 
-    // idle/done -> capturing, from empty. Ignored while already capturing.
-    // The count is cleared before the state changes: while not capturing the
-    // writer does not touch it, and an in-flight block left over from cancel()
-    // fails its compare-exchange on the cleared count.
-    void arm() noexcept
+    // idle/done -> capturing, from empty. Returns false (and does nothing)
+    // while already capturing, while a copyOut() is reading or while prepare()
+    // is reallocating.
+    bool arm() noexcept
     {
-        if (state.load (std::memory_order_acquire) == (int) State::capturing)
-            return;
-        used.store (0, std::memory_order_seq_cst);
-        state.store ((int) State::capturing, std::memory_order_seq_cst);
+        auto w = word.load (std::memory_order_acquire);
+        while (state (w) != State::capturing && ! reading (w) && ! preparing (w))
+            if (word.compare_exchange_weak (w, pack (0, State::capturing, false, false, epoch (w) + 1),
+                                            std::memory_order_acq_rel))
+                return true;
+        return false;
     }
 
     // capturing -> idle; what was captured stays readable.
     void cancel() noexcept
     {
-        int expected = (int) State::capturing;
-        state.compare_exchange_strong (expected, (int) State::idle);
+        auto w = word.load (std::memory_order_acquire);
+        while (state (w) == State::capturing)
+            if (word.compare_exchange_weak (w, pack (used (w), State::idle, reading (w), preparing (w), epoch (w)),
+                                            std::memory_order_acq_rel))
+                return;
     }
 
     // Audio thread.
     void write (const float* const* ch, int numChannelsIn, int numSamples) noexcept
     {
-        if (state.load (std::memory_order_acquire) != (int) State::capturing
-            || numSamples <= 0 || numChannelsIn <= 0 || capacity == 0)
+        auto w = word.load (std::memory_order_acquire);
+        if (state (w) != State::capturing || numSamples <= 0 || numChannelsIn <= 0 || capacity == 0)
             return;
 
-        // Block power over the channels used.
-        const int inCh = std::min (numChannelsIn, numChannels);
+        const int channels = numChannels.load (std::memory_order_relaxed);
+        const int inCh = std::min (numChannelsIn, channels);
         double sum = 0.0;
         for (int c = 0; c < inCh; ++c)
             for (int i = 0; i < numSamples; ++i)
                 sum += (double) ch[c][i] * (double) ch[c][i];
-        if (sum / ((double) numSamples * inCh) < floorPower)
+        const double power = sum / ((double) numSamples * inCh);
+        if (! (power >= floorPower && std::isfinite (power))) // NaN/Inf and quiet blocks: not signal
             return;
 
-        const int start = used.load (std::memory_order_acquire);
+        const int start = used (w);
         const int n = std::min (numSamples, capacity - start);
         if (n <= 0)
             return;
 
-        for (int c = 0; c < numChannels; ++c)
+        for (int c = 0; c < channels; ++c)
         {
             const float* src = ch[c < inCh ? c : 0]; // missing channels repeat channel 0
             std::copy (src, src + n, data[(size_t) c].data() + start);
         }
 
-        int expected = start;
-        if (! used.compare_exchange_strong (expected, start + n, std::memory_order_acq_rel))
-            return; // re-armed meanwhile: block discarded
-
-        if (start + n >= targetSamples || start + n >= capacity)
-        {
-            int capturing = (int) State::capturing;
-            state.compare_exchange_strong (capturing, (int) State::done, std::memory_order_acq_rel);
-        }
+        const int total = start + n;
+        const auto next = (total >= targetSamples || total >= capacity) ? State::done : State::capturing;
+        word.compare_exchange_strong (w, pack (total, next, false, false, epoch (w)),
+                                      std::memory_order_acq_rel); // fails: discarded
     }
 
-    State getState() const noexcept { return (State) state.load (std::memory_order_acquire); }
+    State getState() const noexcept { return state (word.load (std::memory_order_acquire)); }
     double getCapturedSeconds() const noexcept
     {
-        return sampleRate > 0.0 ? (double) used.load (std::memory_order_acquire) / sampleRate : 0.0;
+        const auto fs = sampleRate.load (std::memory_order_relaxed);
+        return fs > 0.0 ? (double) used (word.load (std::memory_order_acquire)) / fs : 0.0;
     }
     bool hasEnough() const noexcept { return getCapturedSeconds() >= minSeconds; }
 
-    // Returns samples per channel (0 while capturing or empty).
+    // Returns samples per channel. 0 (dest empty) while capturing, while
+    // prepare() runs or while another copyOut() is in progress. Safe against a
+    // concurrent arm()/prepare()/cancel(): they wait or refuse until it ends.
     int copyOut (std::vector<std::vector<float>>& dest) const
     {
         dest.clear();
-        if (getState() == State::capturing)
-            return 0;
-        const int n = used.load (std::memory_order_acquire);
-        dest.resize ((size_t) numChannels);
-        for (int c = 0; c < numChannels; ++c)
-            dest[(size_t) c].assign (data[(size_t) c].begin(), data[(size_t) c].begin() + n);
-        return n;
+        auto w = word.load (std::memory_order_acquire);
+        while (state (w) != State::capturing && ! reading (w) && ! preparing (w))
+            if (word.compare_exchange_weak (w, pack (used (w), state (w), true, false, epoch (w)),
+                                            std::memory_order_acq_rel))
+            {
+                const int n = used (w);
+                const auto channels = data.size(); // stable: prepare() waits for us
+                dest.resize (channels);
+                for (size_t c = 0; c < channels; ++c)
+                    dest[c].assign (data[c].begin(), data[c].begin() + n);
+                word.fetch_and (~readingBit, std::memory_order_release);
+                return n;
+            }
+        return 0;
     }
 
-    double getSampleRate() const noexcept { return sampleRate; }
-    int getNumChannels() const noexcept { return numChannels; }
+    double getSampleRate() const noexcept { return sampleRate.load (std::memory_order_relaxed); }
+    int getNumChannels() const noexcept { return numChannels.load (std::memory_order_relaxed); }
 
 private:
-    std::vector<std::vector<float>> data;
-    double sampleRate = 0.0;
-    int numChannels = 1;
-    int capacity = 0;
+    static constexpr std::uint64_t readingBit = 1ull << 34, preparingBit = 1ull << 35;
+
+    static constexpr std::uint64_t pack (int usedSamples, State s, bool isReading, bool isPreparing,
+                                         std::uint64_t ep) noexcept
+    {
+        return (std::uint64_t) (std::uint32_t) usedSamples | ((std::uint64_t) s << 32)
+               | (isReading ? readingBit : 0) | (isPreparing ? preparingBit : 0) | ((ep & 0xfffffffull) << 36);
+    }
+    static constexpr int used (std::uint64_t w) noexcept { return (int) (std::uint32_t) w; }
+    static constexpr State state (std::uint64_t w) noexcept { return (State) ((w >> 32) & 3u); }
+    static constexpr bool reading (std::uint64_t w) noexcept { return (w & readingBit) != 0; }
+    static constexpr bool preparing (std::uint64_t w) noexcept { return (w & preparingBit) != 0; }
+    static constexpr std::uint64_t epoch (std::uint64_t w) noexcept { return w >> 36; }
+
+    std::vector<std::vector<float>> data; // reallocated only under `preparing`
+    int capacity = 0;                     // written under `preparing`
     int targetSamples = 0;
     double floorPower = 1.0e-6;
-    std::atomic<int> state { (int) State::idle };
-    std::atomic<int> used { 0 };
+    std::atomic<double> sampleRate { 0.0 };
+    std::atomic<int> numChannels { 1 };
+    mutable std::atomic<std::uint64_t> word { 0 }; // idle, empty
 };
 } // namespace iaq8::analysis

@@ -11,7 +11,11 @@
 #include "plugin/Iaq8Processor.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <limits>
+#include <thread>
 #include <vector>
 
 using namespace iaq8;
@@ -179,4 +183,120 @@ LQ_TEST ("capture: mono bus captures one channel")
         return;
     // Captured is the input (before the EQ), not the output.
     LQ_CHECK (std::equal (out[0].begin(), out[0].begin() + kBlock, x.begin()), "pre-EQ input captured");
+}
+
+LQ_TEST ("capture: NaN and Inf blocks are not captured")
+{
+    analysis::CaptureBuffer c;
+    c.prepare (kFs, 1);
+    c.arm();
+    Signal bad (kBlock, 0.5f);
+    const float* p = bad.data();
+    bad[10] = std::numeric_limits<float>::quiet_NaN();
+    c.write (&p, 1, kBlock);
+    bad[10] = std::numeric_limits<float>::infinity();
+    c.write (&p, 1, kBlock);
+    bad[10] = 0.5f;
+    bad[20] = -std::numeric_limits<float>::infinity();
+    c.write (&p, 1, kBlock);
+    LQ_CHECK (c.getCapturedSeconds() == 0.0, "non-finite blocks ignored");
+    bad[20] = 0.5f;
+    c.write (&p, 1, kBlock);
+    LQ_CHECK (c.getCapturedSeconds() > 0.0, "a finite block counts");
+}
+
+LQ_TEST ("capture: arm refuses while capturing")
+{
+    analysis::CaptureBuffer c;
+    c.prepare (kFs, 1);
+    LQ_CHECK (c.arm(), "arm from idle");
+    feed (c, noise (1.0, 11), 1);
+    LQ_CHECK (! c.arm(), "arm while capturing is refused");
+    LQ_CHECK (c.getCapturedSeconds() > 0.9, "and does not clear");
+}
+
+// A reader copies in the background while the main thread arms, cancels and
+// prepares and an audio-like thread writes. Every block written is constant
+// and the value grows with each block, so any capture that is read must be
+// block-wise constant and non-decreasing: a tear (old and new capture mixed),
+// a stale block or a reallocated buffer shows up as a decrease or a zero.
+LQ_TEST ("capture: copyOut is safe against concurrent arm, cancel, prepare and write")
+{
+    analysis::CaptureBuffer c;
+    c.prepare (kFs, 2);
+
+    std::atomic<bool> stop { false }, pauseAudio { false }, audioParked { false };
+    std::atomic<long> reads { 0 }, nonEmptyReads { 0 }, bad { 0 };
+
+    std::thread audio ([&]
+    {
+        std::vector<float> a ((size_t) kBlock), b ((size_t) kBlock);
+        float counter = 0.0f;
+        while (! stop.load())
+        {
+            if (pauseAudio.load())
+            {
+                audioParked.store (true);
+                std::this_thread::yield();
+                continue;
+            }
+            audioParked.store (false);
+            counter += 1.0f;
+            std::fill (a.begin(), a.end(), counter);
+            std::fill (b.begin(), b.end(), counter);
+            const float* ptrs[2] { a.data(), b.data() };
+            c.write (ptrs, 2, kBlock);
+        }
+    });
+
+    std::thread reader ([&]
+    {
+        std::vector<std::vector<float>> out;
+        while (! stop.load())
+        {
+            const auto n = c.copyOut (out);
+            ++reads;
+            if (n == 0)
+                continue;
+            ++nonEmptyReads;
+            bool ok = out.size() == 2 && n % kBlock == 0;
+            for (size_t ch = 0; ok && ch < out.size(); ++ch)
+            {
+                float last = 0.0f;
+                for (int i = 0; i < n && ok; i += kBlock)
+                {
+                    const float v = out[ch][(size_t) i];
+                    ok = v >= 1.0f && v >= last && out[ch][(size_t) (i + kBlock - 1)] == v;
+                    last = v;
+                }
+            }
+            if (! ok)
+                ++bad;
+        }
+    });
+
+    long spuriousDone = 0;
+    for (int i = 0; i < 400; ++i)
+    {
+        c.arm();
+        std::this_thread::sleep_for (std::chrono::microseconds (200 + 50 * (i % 7)));
+        if (c.getState() == analysis::CaptureBuffer::State::done && c.getCapturedSeconds() <= 0.0)
+            ++spuriousDone;
+        c.cancel();
+        if (i % 25 == 24)
+        {
+            pauseAudio = true; // prepareToPlay never overlaps processBlock
+            while (! audioParked.load())
+                std::this_thread::yield();
+            c.prepare (i % 50 == 24 ? kFs : 44100.0, 2);
+            pauseAudio = false;
+        }
+    }
+    stop = true;
+    audio.join();
+    reader.join();
+
+    LQ_CHECK (bad.load() == 0, str ("torn or invalid reads: ", bad.load()));
+    LQ_CHECK (spuriousDone == 0, str ("done with no samples: ", spuriousDone));
+    LQ_CHECK (nonEmptyReads.load() > 0, str ("reads ", reads.load(), ", non-empty ", nonEmptyReads.load()));
 }

@@ -2,6 +2,7 @@
 
 #include "ui/Iaq8LookAndFeel.h"
 #include "ui/Iaq8Preferences.h"
+#include "ui/LevelMeterView.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -96,6 +97,7 @@ private:
 
     std::unique_ptr<juce::Component> content;
     std::array<std::unique_ptr<juce::Component>, 2> hotSpots;
+    std::unique_ptr<labq8::ui::LevelMeterView> meters;
     std::unique_ptr<juce::AlertWindow> dialog;
     DialogHandler onDialogClosed;
     juce::TooltipWindow tooltips { this, 600 };

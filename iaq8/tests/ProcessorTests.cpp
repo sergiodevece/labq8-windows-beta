@@ -11,6 +11,8 @@
 #include "parameters/Iaq8Parameters.h"
 #include "parameters/ParameterIDs.h"
 #include "plugin/Iaq8Processor.h"
+#include "ui/Iaq8Editor.h"
+#include "ui/LevelMeterView.h"
 
 #include <algorithm>
 #include <array>
@@ -610,4 +612,99 @@ LQ_TEST ("processor: proposal handoff delivers whole proposals across threads")
     LQ_CHECK (backwards == 0, str ("stale or repeated messages: ", backwards));
     LQ_CHECK (last == count, str ("ends on the latest message, got ", last));
     LQ_CHECK (! handoff.take (m), "nothing new after the last one");
+}
+
+//==============================================================================
+// P3.3: real IN / OUT meters.
+namespace
+{
+// Peak of channel 0 of the meter after running `n` samples of `x`, dB.
+double meterDb (labq8::LevelMeter& meter, int channel = 0)
+{
+    return toDb ((double) meter.takePeak (channel));
+}
+} // namespace
+
+LQ_TEST ("meters: processor measures input before and output after the EQ")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 2, kFs, kBlock);
+    p.setProposal (cutAt1k());
+    LQ_CHECK (p.applyProposal(), "apply succeeds");
+
+    const auto x = makeSine (1000.0, kFs, (size_t) kFs, 0.5); // -6 dBFS
+    run (p, x, kBlock);                                       // settle the ramp
+    p.getInputMeter().reset();
+    p.getOutputMeter().reset();
+    run (p, x, kBlock);
+
+    const auto in = meterDb (p.getInputMeter());
+    const auto out = meterDb (p.getOutputMeter());
+    LQ_CHECK (std::abs (in + 6.0) < 1.0, str ("input meter: ", in, " dB"));
+    LQ_CHECK (std::abs (out + 18.0) < 1.0, str ("output meter: ", out, " dB"));
+    LQ_CHECK (p.getInputMeter().getNumChannels() == 2, "stereo is measured as two channels");
+}
+
+LQ_TEST ("meters: bypassed blocks are metered too")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 2, kFs, kBlock);
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    juce::MidiBuffer midi;
+    const auto x = makeSine (1000.0, kFs, (size_t) kBlock, 0.5);
+    for (int c = 0; c < 2; ++c)
+        buffer.copyFrom (c, 0, x.data(), kBlock);
+    p.processBlockBypassed (buffer, midi);
+    LQ_CHECK (std::abs (meterDb (p.getInputMeter()) + 6.0) < 1.0, "bypass input is metered");
+    LQ_CHECK (std::abs (meterDb (p.getOutputMeter()) + 6.0) < 1.0, "bypass output is metered");
+}
+
+LQ_TEST ("meters: processBlock still does not allocate")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 2, kFs, kBlock);
+    juce::AudioBuffer<float> buffer (2, kBlock);
+    juce::MidiBuffer midi;
+    const auto noise = makeNoise ((size_t) kBlock, 9);
+    long allocations = 0;
+    for (int i = 0; i < 20; ++i)
+    {
+        for (int c = 0; c < 2; ++c)
+            buffer.copyFrom (c, 0, noise.data(), kBlock);
+        ScopedAllocationCounter counter;
+        if (i % 2 == 0)
+            p.processBlock (buffer, midi);
+        else
+            p.processBlockBypassed (buffer, midi);
+        allocations += counter.count();
+    }
+    LQ_CHECK (allocations == 0, str ("allocations with meters: ", allocations));
+    LQ_CHECK (p.getInputMeter().takePeak (0) > 0.0f, "the meters measured");
+}
+
+LQ_TEST ("meters: mono shows the same channel in both columns")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 1, kFs, kBlock);
+    labq8::ui::LevelMeterView view (p.getInputMeter(), p.getOutputMeter()); // discards older peaks
+    const auto x = makeSine (1000.0, kFs, (size_t) kFs / 2, 0.5);
+    run (p, x, kBlock);
+    LQ_CHECK (p.getInputMeter().getNumChannels() == 1, "mono is one measured channel");
+
+    view.advance (1.0);
+    LQ_CHECK (view.getLitCells (0) > 0, "IN L lit");
+    LQ_CHECK (view.getLitCells (0) == view.getLitCells (1), "IN R shows the same channel");
+    LQ_CHECK (view.getLitCells (2) == view.getLitCells (3), "OUT R shows the same channel");
+}
+
+LQ_TEST ("meters: the editor hosts the meter view")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 2, kFs, kBlock);
+    ui::Iaq8Editor editor (p);
+    labq8::ui::LevelMeterView* found = nullptr;
+    for (auto* child : editor.getContent().getChildren())
+        if (auto* v = dynamic_cast<labq8::ui::LevelMeterView*> (child))
+            found = v;
+    LQ_CHECK (found != nullptr, "LevelMeterView is a child of the content");
 }

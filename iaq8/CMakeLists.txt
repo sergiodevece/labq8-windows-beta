@@ -121,7 +121,10 @@ set(IAQ8_PLUGIN_SOURCES
     src/plugin/Iaq8Processor.cpp
     src/plugin/DebugEditor.cpp
     src/assist/Session.cpp
-    ${IAQ8_UI_SOURCES})
+    ${IAQ8_UI_SOURCES}
+    # LABQ8's meter view, compiled unchanged (uses the iaq8_ui_assets sprites).
+    ${IAQ8_LABQ8_DIR}/src/ui/LevelMeterView.cpp
+    ${IAQ8_LABQ8_DIR}/src/ui/UiModel.cpp)
 
 target_sources(IAQ8 PRIVATE ${IAQ8_PLUGIN_SOURCES})
 

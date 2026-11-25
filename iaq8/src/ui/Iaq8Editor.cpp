@@ -126,6 +126,11 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
         hotSpots[i] = std::move (spot);
     }
 
+    // The IN / OUT meters show the processor's real sample peaks; the view
+    // places itself in reference coordinates (LABQ8's meter window).
+    meters = std::make_unique<labq8::ui::LevelMeterView> (iaq8Processor.getInputMeter(), iaq8Processor.getOutputMeter());
+    content->addAndMakeVisible (*meters);
+
     // No resize corner and no resizing by the host: the size only changes
     // through the zoom menu. Opens at the stored zoom, or at the largest
     // smaller choice that fits this screen (the preference is kept).

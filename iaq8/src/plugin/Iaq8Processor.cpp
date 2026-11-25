@@ -211,6 +211,8 @@ void Iaq8AudioProcessor::prepareToPlay (double sampleRate, int maximumExpectedSa
     pushToEngine();
 
     capture.prepare (sampleRate, channels); // allocates; resets to idle
+    inputMeter.reset();
+    outputMeter.reset();
 }
 
 void Iaq8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -227,7 +229,17 @@ void Iaq8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     const auto numChannels = juce::jmin (numIn, buffer.getNumChannels());
     // Input before the EQ (no-op unless armed).
     capture.write (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
     engine.process (buffer.getArrayOfWritePointers(), numChannels, buffer.getNumSamples());
+    outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+}
+
+void Iaq8AudioProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    const auto numChannels = juce::jmin (getTotalNumInputChannels(), buffer.getNumChannels());
+    inputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
+    AudioProcessor::processBlockBypassed (buffer, midi);
+    outputMeter.measure (buffer.getArrayOfReadPointers(), numChannels, buffer.getNumSamples());
 }
 
 juce::AudioProcessorEditor* Iaq8AudioProcessor::createEditor()

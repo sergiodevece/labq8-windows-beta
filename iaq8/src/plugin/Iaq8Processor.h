@@ -2,6 +2,7 @@
 
 #include "analysis/CaptureBuffer.h"
 #include "dsp/AssistEngine.h"
+#include "plugin/LevelMeter.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -95,6 +96,8 @@ public:
 
     void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
     using AudioProcessor::processBlock;
+    // Host bypass: the default pass-through, still metered (IN = OUT).
+    void processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -164,6 +167,11 @@ public:
     // thread; prepared in prepareToPlay, which resets it to idle).
     analysis::CaptureBuffer& getCapture() noexcept { return capture; }
 
+    // IN / OUT sample peaks for the editor's meters (audio thread writes,
+    // editor takes; lock-free).
+    labq8::LevelMeter& getInputMeter() noexcept { return inputMeter; }
+    labq8::LevelMeter& getOutputMeter() noexcept { return outputMeter; }
+
     // Loudness compensation of the preview path (dB). Any thread.
     double getCompensationDb() const noexcept { return engine.getCompensationDb(); }
 
@@ -182,6 +190,7 @@ private:
     std::array<BandParameters, 8> bandParameters;
     dsp::AssistEngine engine;
     analysis::CaptureBuffer capture;
+    labq8::LevelMeter inputMeter, outputMeter;
 
     // Message thread -> audio thread.
     ProposalHandoff handoff;

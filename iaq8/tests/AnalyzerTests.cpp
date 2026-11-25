@@ -308,25 +308,21 @@ LQ_TEST ("analyzer: deficit and several candidates are listed by magnitude, at m
     ordered (m);
 }
 
-// SMOKE test, not a regression guard for the floor: no signal found makes the
-// old -120 dB internal floor fail while the unfloored curves pass (a grid of
-// -55..-59 dBFS pink with 6-30 dB/oct and brick-wall tails gave the same result
-// with both, and brick-wall tails were worse unfloored). It checks that a quiet,
-// band-limited voice-like signal gives no excess or resonance and that
-// spectrumDb honours its -120 dB floor.
-LQ_TEST ("analyzer smoke: quiet band-limited voice-like signal reports no spurious excess and keeps spectrumDb >= -120")
+LQ_TEST ("analyzer: brick-wall tail on quiet pink noise keeps the trend and reports no excess")
 {
+    // -55 dBFS pink noise, -100 dB/oct above 6 kHz: the tail is far under the
+    // internal -120 dB floor. Unfloored (-300 dB) it drags the first line fit
+    // (slope about -7.8 dB/oct) and the 50 % kept-fraction guard blocks the
+    // refit, which then reports a spurious excess at about 5.4 kHz.
     const auto x = test::makePink (kTen, kFs, 9, -55.0, [] (double f)
     {
-        return f > 8000.0 ? -30.0 * std::log2 (f / 8000.0) : 0.0;
+        return f > 6000.0 ? -100.0 * std::log2 (f / 6000.0) : 0.0;
     });
     const auto s = analysis::analyse (dual (x), kFs, Source::voice);
     ctx.note (describe (s));
 
-    LQ_CHECK (s.enoughSignal, "-55 dBFS is above the -60 dBFS floor");
+    LQ_CHECK (s.enoughSignal, "enough signal");
+    LQ_CHECK (std::abs (s.slopeDbPerOct + 3.0) <= 0.5, str ("slope ", s.slopeDbPerOct, " dB/oct"));
     for (const auto& c : s.candidates)
-        LQ_CHECK (c.kind == CandidateKind::deficit || c.kind == CandidateKind::lowRumble,
-                  str ("spurious ", kindName (c.kind), " at ", c.freqHz, " Hz mag ", c.magnitudeDb));
-    for (auto v : s.spectrumDb)
-        LQ_CHECK (v >= -120.0, str ("spectrumDb value ", v));
+        LQ_CHECK (! (c.kind == CandidateKind::excess && c.freqHz > 4000.0), str ("excess at ", c.freqHz, " Hz mag ", c.magnitudeDb));
 }

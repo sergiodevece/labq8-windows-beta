@@ -15,11 +15,14 @@ namespace
 namespace tn = tuning;
 
 double ampToDbfs (double amplitude) { return amplitude > 0 ? std::max (tn::floorDb, 20.0 * std::log10 (amplitude)) : tn::floorDb; }
-// Density in dB re 1 FS^2/Hz for the internal curves (1/3 oct, 1/24 oct,
-// reference): only a very low floor, so quiet or band-limited material does
-// not saturate the top of the fit range. The -120 dB floor is applied by
-// outputDb, only to the spectrumDb that is reported.
-inline constexpr double internalMinDensity = 1.0e-30;
+// Density in dB re 1 FS^2/Hz. The internal curves (1/3 oct, 1/24 oct,
+// reference) are floored at -120 dB like the reported spectrumDb: a much lower
+// floor (1e-30 was tried) lets a steep, very quiet tail reach -300 dB, which
+// drags the first least-squares fit (slope -7.8 instead of -3 dB/oct on -55 dBFS
+// pink with a -100 dB/oct tail above 6 kHz), and the 50 % kept-fraction guard
+// then blocks the refit, so a spurious excess appears (test "brick-wall tail").
+// outputDb clamps the reported spectrumDb at the same floor.
+inline constexpr double internalMinDensity = 1.0e-12;
 double densityDb (double density) { return 10.0 * std::log10 (std::max (density, internalMinDensity)); }
 double outputDb (double density) { return std::max (tn::floorDb, densityDb (density)); }
 

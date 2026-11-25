@@ -19,6 +19,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -697,4 +698,112 @@ LQ_TEST ("session: a refused arm() is retried and never re-analyses the previous
     fillCapture (*rig.p, 12.5, 4);
     s.poll();
     LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "then listens normally");
+}
+
+LQ_TEST ("session: an analysis that throws does not crash; the session listens again")
+{
+    Rig rig;
+    auto& s = rig.s();
+    auto calls = std::make_shared<std::atomic<int>> (0);
+    s.setAnalyseFunctionForTesting ([calls] (const std::vector<std::vector<float>>& ch, double fs, assist::Source src)
+    {
+        if (++*calls == 1)
+            throw std::runtime_error ("analysis failed"); // e.g. std::bad_alloc
+        return analysis::analyse (ch, fs, src);
+    });
+    s.say ("Voz");
+    fillCapture (*rig.p, 12.5);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return calls->load() == 1 && ! s.getNotice().empty(); }, 5000), "the failure is answered");
+    LQ_CHECK (s.getStage() == Stage::listening && s.getListenProgress() == 0.0, "still listening, nothing captured");
+    LQ_CHECK (rig.p->getCapture().getState() == analysis::CaptureBuffer::State::capturing
+                  && rig.p->getCapture().getCapturedSeconds() == 0.0,
+              "re-armed from empty");
+    ctx.note ("notice: " + s.getNotice());
+
+    fillCapture (*rig.p, 12.5, 9);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "the next listening is analysed");
+    LQ_CHECK (s.getNotice().empty() && rig.state->posts == 0, "notice cleared, nothing sent");
+}
+
+LQ_TEST ("session: a capture emptied by a re-prepare is listened to again without a notice")
+{
+    // The worker's first copy must find a capture running again (busy: poll()
+    // retries) before the host re-prepares, which empties the buffer. The test
+    // re-arms the capture right after the analysis starts; if the worker
+    // copied first, the attempt is repeated with a fresh plugin.
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        Rig rig;
+        auto& s = rig.s();
+        auto withData = std::make_shared<std::atomic<int>> (0);
+        auto empty = std::make_shared<std::atomic<int>> (0);
+        s.setAnalyseFunctionForTesting ([withData, empty] (const std::vector<std::vector<float>>& ch, double fs, assist::Source src)
+        {
+            ++*(ch.empty() || ch[0].empty() ? empty : withData);
+            return analysis::analyse (ch, fs, src);
+        });
+        s.say ("Voz");
+        fillCapture (*rig.p, 7.0); // enough, still capturing
+        auto& capture = rig.p->getCapture();
+
+        s.say ("ya");
+        const bool rearmed = capture.arm();
+        if (! pumpUntil ([&] { return s.getListenProgress() < 1.0; }, 5000) || ! rearmed || withData->load() > 0)
+            continue; // the worker copied first
+
+        ctx.note (str ("scenario reached at attempt ", attempt + 1));
+        rig.p->prepareToPlay (kFs, kBlock);
+        s.poll(); // retries the analysis: the copy has 0 samples
+        LQ_CHECK (pumpUntil ([&] { return s.getListenProgress() < 1.0 && capture.getState() == analysis::CaptureBuffer::State::capturing; }, 5000),
+                  "listening again");
+        LQ_CHECK (empty->load() == 0, str ("an empty capture is never analysed (", empty->load(), " times)"));
+        LQ_CHECK (s.getStage() == Stage::listening && s.getNotice().empty(), "no misleading notice: " + s.getNotice());
+
+        fillCapture (*rig.p, 12.5, 3);
+        s.poll();
+        LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "then listens normally");
+        return;
+    }
+    ctx.skip ("the worker always copied before the test re-armed the capture");
+}
+
+LQ_TEST ("session: applying while listening keeps listening")
+{
+    Rig rig;
+    reachProposal (ctx, rig);
+    auto& s = rig.s();
+    s.listenAgain();
+    LQ_CHECK (s.getStage() == Stage::listening && s.canApply(), "listening with the proposal still pending");
+    s.apply();
+    LQ_CHECK (rig.p->getUndoDepth() == 1 && ! rig.p->hasProposal() && s.getListen() == dsp::Listen::applied, "applied");
+    LQ_CHECK (s.getStage() == Stage::listening, "the listening goes on");
+    LQ_CHECK (rig.p->getCapture().getState() == analysis::CaptureBuffer::State::capturing, "capture still armed");
+    fillCapture (*rig.p, 12.5, 5);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "the listening ends normally");
+    LQ_CHECK (s.canUndo(), "undo still available");
+}
+
+LQ_TEST ("session: applying while offline drops the retry key")
+{
+    Rig rig;
+    reachProposal (ctx, rig);
+    auto& s = rig.s();
+    const auto proposalReplies = s.getQuickReplies();
+    s.say ("Más suave");
+    reply (*rig.state, (size_t) rig.state->posts.load() - 1, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::offline; }, 2000), "offline");
+    LQ_CHECK ((s.getQuickReplies() == std::vector<std::string> { Session::retryReply() }), "retry key while offline");
+
+    s.apply();
+    LQ_CHECK (s.getStage() == Stage::applied, "applied");
+    LQ_CHECK (s.getQuickReplies() == proposalReplies, "the keys from before the request come back");
+    const auto posts = rig.state->posts.load();
+    s.undo();
+    LQ_CHECK (s.getStage() == Stage::askGoal, "undone");
+    for (const auto& q : s.getQuickReplies())
+        LQ_CHECK (q != Session::retryReply(), "no retry key after leaving offline");
+    LQ_CHECK (rig.state->posts.load() == posts, "nothing sent");
 }

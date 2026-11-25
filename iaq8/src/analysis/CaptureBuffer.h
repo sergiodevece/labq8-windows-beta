@@ -146,8 +146,11 @@ public:
     bool hasEnough() const noexcept { return getCapturedSeconds() >= minSeconds; }
 
     // Returns samples per channel. 0 (dest empty) while capturing, while
-    // prepare() runs or while another copyOut() is in progress. Safe against a
-    // concurrent arm()/prepare()/cancel(): they wait or refuse until it ends.
+    // prepare() runs or while another copyOut() is in progress; 0 with one
+    // empty vector per channel when nothing is stored (e.g. after prepare()).
+    // Safe against a concurrent arm()/prepare()/cancel(): they wait or refuse
+    // until it ends. May throw std::bad_alloc (dest is then unspecified and
+    // the buffer is left as if the copy had not happened).
     int copyOut (std::vector<std::vector<float>>& dest) const
     {
         dest.clear();
@@ -156,12 +159,14 @@ public:
             if (word.compare_exchange_weak (w, pack (used (w), state (w), true, false, epoch (w)),
                                             std::memory_order_acq_rel))
             {
+                // Cleared however the copy ends: a throwing allocation below
+                // must not leave `reading` set (prepare() would wait forever).
+                const ReadingGuard guard { word };
                 const int n = used (w);
                 const auto channels = data.size(); // stable: prepare() waits for us
                 dest.resize (channels);
                 for (size_t c = 0; c < channels; ++c)
                     dest[c].assign (data[c].begin(), data[c].begin() + n);
-                word.fetch_and (~readingBit, std::memory_order_release);
                 return n;
             }
         return 0;
@@ -172,6 +177,15 @@ public:
 
 private:
     static constexpr std::uint64_t readingBit = 1ull << 34, preparingBit = 1ull << 35;
+
+    // write() runs on the audio thread: the word must never fall back to a lock.
+    static_assert (std::atomic<std::uint64_t>::is_always_lock_free);
+
+    struct ReadingGuard
+    {
+        std::atomic<std::uint64_t>& w;
+        ~ReadingGuard() { w.fetch_and (~readingBit, std::memory_order_release); }
+    };
 
     static constexpr std::uint64_t pack (int usedSamples, State s, bool isReading, bool isPreparing,
                                          std::uint64_t ep) noexcept

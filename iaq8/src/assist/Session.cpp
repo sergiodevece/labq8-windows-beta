@@ -21,6 +21,7 @@ constexpr const char* kListen = "Dale al play en una parte representativa; escuc
 constexpr const char* kAskGoal = "¿Qué te gustaría mejorar?";
 constexpr const char* kNeedMore = "Aún no he escuchado bastante: dale al play unos segundos más.";
 constexpr const char* kNoSignal = "No he oído bastante señal: dale al play en una parte con sonido.";
+constexpr const char* kAnalysisFailed = "No he podido analizar lo escuchado: dale al play otra vez.";
 constexpr const char* kRetry = "Reintentar";
 
 constexpr std::array<Source, 7> kSources { Source::voice, Source::acousticGuitar, Source::electricGuitar, Source::bass,
@@ -49,6 +50,21 @@ double nowMs() { return juce::Time::getMillisecondCounterHiRes(); }
 } // namespace
 
 //==============================================================================
+// What one analysis job ended with.
+struct AnalysisOutcome
+{
+    enum class Kind
+    {
+        busy,   // no copy could be taken (another reader, a prepare, re-armed, cancelled): retry
+        empty,  // the copy had 0 samples (a host re-prepare emptied the capture): listen again
+        failed, // the analysis threw (e.g. std::bad_alloc): listen again with a notice
+        done
+    };
+    Kind kind = Kind::busy;
+    std::optional<analysis::AnalysisSummary> summary; // with `done`
+};
+
+//==============================================================================
 // Runs the analysis of one listening on its own std::thread (never detached).
 //
 // Lifetime: each job gets a shared `alive` flag. cancel() (message thread)
@@ -60,11 +76,15 @@ double nowMs() { return juce::Time::getMillisecondCounterHiRes(); }
 // cancels and joins: a copy retry stops within one retry period, analyse()
 // itself is not interruptible but bounded (at most 20 s of audio, about a
 // second in Debug). `done` only captures the session pointer, which is never
-// dereferenced off the message thread.
+// dereferenced off the message thread. Nothing thrown on the thread escapes
+// it (an escaping exception would terminate the host): the copy and the
+// analysis end as `failed`, and a result that cannot even be posted is
+// dropped (the session then stays analysing until the user listens again or
+// starts over).
 class AnalysisWorker
 {
 public:
-    using Done = std::function<void (std::optional<analysis::AnalysisSummary>)>;
+    using Done = std::function<void (AnalysisOutcome)>;
 
     static constexpr int retryMs = 10, maxAttempts = 100; // copyOut "busy" retried for up to ~1 s
 
@@ -83,16 +103,31 @@ public:
         join();
         auto flag = std::make_shared<std::atomic<bool>> (true);
         alive = flag;
-        thread = std::thread ([&capture, source, flag, fn = std::move (analyse), done = std::move (onDone)]
+        thread = std::thread ([&capture, source, flag, fn = std::move (analyse), done = std::move (onDone)]() noexcept
         {
-            auto result = run (capture, source, fn, *flag);
-            if (! flag->load())
-                return;
-            juce::MessageManager::callAsync ([flag, done, summary = std::move (result)]
+            try
             {
-                if (flag->load()) // message thread, where cancel() runs
-                    done (summary);
-            });
+                AnalysisOutcome result;
+                try
+                {
+                    result = run (capture, source, fn, *flag);
+                }
+                catch (...)
+                {
+                    result = { AnalysisOutcome::Kind::failed, std::nullopt };
+                }
+                if (! flag->load())
+                    return;
+                juce::MessageManager::callAsync ([flag, done, outcome = std::move (result)]
+                {
+                    if (flag->load()) // message thread, where cancel() runs
+                        done (outcome);
+                });
+            }
+            catch (...)
+            {
+                // Could not post (out of memory): the result is lost, the host lives.
+            }
         });
     }
 
@@ -111,25 +146,28 @@ private:
             thread.join();
     }
 
-    // nullopt: no copy could be taken (busy for too long, re-armed, cancelled).
-    static std::optional<analysis::AnalysisSummary> run (analysis::CaptureBuffer& capture, Source source,
-                                                         const Session::AnalyseFunction& analyse,
-                                                         const std::atomic<bool>& alive)
+    static AnalysisOutcome run (analysis::CaptureBuffer& capture, Source source, const Session::AnalyseFunction& analyse,
+                                const std::atomic<bool>& alive)
     {
         std::vector<std::vector<float>> channels;
         for (int attempt = 0; attempt < maxAttempts && alive.load(); ++attempt)
         {
             const auto sampleRate = capture.getSampleRate();
-            capture.copyOut (channels);
+            const auto samples = capture.copyOut (channels);
             // Empty `channels` is "busy" (another copy or a prepare), not
             // "nothing captured"; a rate change means a prepare() slipped in.
             if (! channels.empty() && juce::exactlyEqual (capture.getSampleRate(), sampleRate) && sampleRate > 0.0)
-                return analyse ? analyse (channels, sampleRate, source) : analysis::analyse (channels, sampleRate, source);
+            {
+                if (samples == 0) // a prepare() emptied it
+                    return { AnalysisOutcome::Kind::empty, std::nullopt };
+                return { AnalysisOutcome::Kind::done,
+                         analyse ? analyse (channels, sampleRate, source) : analysis::analyse (channels, sampleRate, source) };
+            }
             if (capture.getState() == analysis::CaptureBuffer::State::capturing)
-                return std::nullopt;
+                return {};
             std::this_thread::sleep_for (std::chrono::milliseconds (retryMs));
         }
-        return std::nullopt;
+        return {};
     }
 
     std::thread thread;
@@ -456,34 +494,53 @@ void Session::startAnalysis()
     capture.cancel(); // capturing -> idle; what was captured stays readable
     analysing = true;
     worker->start (capture, source.value_or (Source::other), analyseFunction,
-                   [this, g = generation] (std::optional<analysis::AnalysisSummary> summary)
-                   { analysisFinished (g, std::move (summary)); });
+                   [this, g = generation] (AnalysisOutcome outcome) { analysisFinished (g, std::move (outcome)); });
     changed();
 }
 
-void Session::analysisFinished (std::uint64_t forGeneration, std::optional<analysis::AnalysisSummary> summary)
+void Session::listenFromScratch()
+{
+    armed = processor.getCapture().arm();
+    lastCapturedSeconds = 0.0;
+    lastGrowthMs = nowMs();
+}
+
+void Session::analysisFinished (std::uint64_t forGeneration, AnalysisOutcome outcome)
 {
     if (syncWithStateLoad() || forGeneration != generation || stage != Stage::listening || ! analysing)
         return;
     analysing = false;
 
-    if (! summary.has_value())
+    switch (outcome.kind)
     {
-        analysisRetry = true; // the capture was busy: poll() tries again
-        return;
+        case AnalysisOutcome::Kind::busy:
+            analysisRetry = true; // the capture was busy: poll() tries again
+            return;
+
+        case AnalysisOutcome::Kind::empty: // nothing to analyse, and nothing the user did wrong
+            listenFromScratch();
+            changed();
+            return;
+
+        case AnalysisOutcome::Kind::failed:
+            notice = kAnalysisFailed;
+            listenFromScratch();
+            changed();
+            return;
+
+        case AnalysisOutcome::Kind::done:
+            break;
     }
 
-    if (! summary->enoughSignal)
+    if (! outcome.summary.has_value() || ! outcome.summary->enoughSignal)
     {
         notice = kNoSignal;
-        armed = processor.getCapture().arm();
-        lastCapturedSeconds = 0.0;
-        lastGrowthMs = nowMs();
+        listenFromScratch();
         changed();
         return;
     }
 
-    analysis = std::move (*summary);
+    analysis = std::move (*outcome.summary);
     analysisDelivered = false;
     notice.clear();
     addMessage (Message::Role::assistant, kAskGoal);
@@ -648,10 +705,24 @@ void Session::apply()
     currentProposal.reset();
     listen = dsp::Listen::applied;
     processor.setListen (listen);
-    if (stage == Stage::waiting)
-        stageBeforeWaiting = Stage::applied;
-    else
-        stage = Stage::applied;
+    switch (stage)
+    {
+        case Stage::waiting:   // the reply decides the next stage; an error comes back here
+            stageBeforeWaiting = Stage::applied;
+            break;
+        case Stage::listening: // the listening goes on and ends in askGoal as usual
+            break;
+        case Stage::offline:   // leaving it: its retry key no longer applies
+            quickReplies = quickRepliesBeforeWaiting;
+            stage = Stage::applied;
+            break;
+        case Stage::askSource:
+        case Stage::askGoal:
+        case Stage::proposal:
+        case Stage::applied:
+            stage = Stage::applied;
+            break;
+    }
     persist();
     changed();
 }

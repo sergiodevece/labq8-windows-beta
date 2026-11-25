@@ -20,7 +20,8 @@ class Iaq8AudioProcessor;
 
 namespace iaq8::assist
 {
-class AnalysisWorker; // Session.cpp
+class AnalysisWorker;    // Session.cpp
+struct AnalysisOutcome; // Session.cpp
 
 // The conversation (spec §5.1). Message-thread object: create, use and
 // destroy it there (the processor owns it; a timer polls the capture and the
@@ -32,7 +33,9 @@ class AnalysisWorker; // Session.cpp
 //  listening  The capture is armed; progress 0..1 of targetSeconds. When it
 //             is full (or has >= 6 s and playback stalls, or the user says
 //             anything with >= 6 s), the analysis runs on a background
-//             thread owned by the session.
+//             thread owned by the session. An analysis that throws listens
+//             again with a notice; a capture a host re-prepare emptied listens
+//             again silently. apply() here keeps listening.
 //  askGoal    "¿Qué te gustaría mejorar?" with quick replies by source (local).
 //             Also the stage after a server question and after a restore.
 //  waiting    One request in flight (say() is ignored until it answers).
@@ -42,6 +45,8 @@ class AnalysisWorker; // Session.cpp
 //             ecualización sigue activa"; the applied EQ (and a pending
 //             proposal) are untouched. say ("Reintentar") resends the same
 //             conversation; any other text is sent as a new message.
+//             apply() leaves it for applied with the keys from before the
+//             request (the retry key no longer applies).
 //
 // Requests carry the analysis of the last listening until a request that
 // carried it is answered (question or proposal), so the analysis reaches the
@@ -130,7 +135,8 @@ private:
     void addMessage (Message::Role role, std::string text);
     void beginListening();
     void startAnalysis();
-    void analysisFinished (std::uint64_t forGeneration, std::optional<analysis::AnalysisSummary> summary);
+    void analysisFinished (std::uint64_t forGeneration, AnalysisOutcome outcome);
+    void listenFromScratch(); // re-arms the capture of the current listening
     void sendTurn();
     void handleReply (std::uint64_t forGeneration, Reply reply);
     void cancelWork();

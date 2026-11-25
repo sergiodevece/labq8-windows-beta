@@ -4,6 +4,7 @@
 #include "dsp/EqCore.h"
 
 #include <array>
+#include <vector>
 
 namespace iaq8::dsp
 {
@@ -27,6 +28,11 @@ public:
 
     void prepare (double sampleRate, int numChannels);
 
+    // K-weighted mean square of a whole signal: same filters as the running
+    // meter, power summed over channels, averaged over the length (offline
+    // renders). 0 for empty input.
+    static double wholeSignalMeanSquare (const std::vector<std::vector<float>>& channels, double sampleRate);
+
     void push (const float* const* applied, const float* const* preview, int numChannels, int numSamples) noexcept
     {
         push (applied, preview, numChannels, numSamples, nullptr);
@@ -46,6 +52,8 @@ public:
     void restartMeasurement() noexcept { meanSquareApplied = meanSquarePreview = 0.0; }
 
 private:
+    static void designWeighting (double sampleRate, labq8::dsp::BiquadCoefficients& shelf, labq8::dsp::BiquadCoefficients& cut);
+
     struct Biquad
     {
         double z1 = 0.0, z2 = 0.0;

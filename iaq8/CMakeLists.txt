@@ -137,6 +137,23 @@ target_link_libraries(iaq8_analyze
         juce::juce_recommended_warning_flags)
 
 #==============================================================================
+# iaq8_render <in.wav> <reply.json> <prefix>: offline before/after WAVs.
+juce_add_console_app(iaq8_render
+    PRODUCT_NAME "iaq8_render"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+
+target_sources(iaq8_render PRIVATE tools/RenderMain.cpp)
+target_compile_definitions(iaq8_render PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(iaq8_render
+    PRIVATE
+        iaq8_core
+        juce::juce_audio_formats
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+#==============================================================================
 # Tests: run without any DAW. Reuses LABQ8's harness by path (no copies).
 if(IAQ8_BUILD_TESTS)
     enable_testing()

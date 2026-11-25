@@ -9,12 +9,39 @@ void LoudnessMatcher::prepare (double sampleRate, int numChannels)
 {
     const auto fs = labq8::dsp::sanitiseSampleRate (sampleRate);
     channelCount = std::clamp (numChannels, 1, maxChannels);
-    shelfCoeffs = labq8::dsp::designHighShelf (fs, 1681.97, 3.9998, 0.7071);
-    cutCoeffs = labq8::dsp::designLowCut (fs, 38.135, 0.5003);
+    designWeighting (fs, shelfCoeffs, cutCoeffs);
     windowAlpha = std::exp (-2.0 / (windowSeconds * fs)) /* tau = window / 2 */;
     smoothingBeta = 1.0 - std::exp (-1.0 / (smoothingSeconds * fs));
     silenceLinear = std::pow (10.0, silenceDb / 10.0);
     reset();
+}
+
+void LoudnessMatcher::designWeighting (double fs, labq8::dsp::BiquadCoefficients& shelf, labq8::dsp::BiquadCoefficients& cut)
+{
+    shelf = labq8::dsp::designHighShelf (fs, 1681.97, 3.9998, 0.7071);
+    cut = labq8::dsp::designLowCut (fs, 38.135, 0.5003);
+}
+
+double LoudnessMatcher::wholeSignalMeanSquare (const std::vector<std::vector<float>>& channels, double sampleRate)
+{
+    labq8::dsp::BiquadCoefficients shelf, cut;
+    designWeighting (labq8::dsp::sanitiseSampleRate (sampleRate), shelf, cut);
+    size_t length = 0;
+    for (const auto& ch : channels)
+        length = std::max (length, ch.size());
+    if (length == 0)
+        return 0.0;
+    double sum = 0.0;
+    for (const auto& ch : channels)
+    {
+        Biquad a, b;
+        for (const auto v : ch)
+        {
+            const auto y = b.process (cut, a.process (shelf, (double) v));
+            sum += y * y;
+        }
+    }
+    return sum / (double) length;
 }
 
 void LoudnessMatcher::reset() noexcept

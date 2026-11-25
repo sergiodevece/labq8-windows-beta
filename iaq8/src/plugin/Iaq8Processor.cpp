@@ -238,6 +238,7 @@ juce::AudioProcessorEditor* Iaq8AudioProcessor::createEditor()
 //==============================================================================
 void Iaq8AudioProcessor::invalidateIfStateLoaded()
 {
+    JUCE_ASSERT_MESSAGE_THREAD
     const auto loads = getStateLoadCount();
     if (loads == stateLoadsSeen)
         return;
@@ -274,6 +275,7 @@ dsp::Listen Iaq8AudioProcessor::getListenRequest() const noexcept
 
 void Iaq8AudioProcessor::setProposal (const dsp::BandSet& newProposal)
 {
+    JUCE_ASSERT_MESSAGE_THREAD
     invalidateIfStateLoaded();
     proposal = newProposal;
     handoff.publish ({ newProposal, true });
@@ -281,6 +283,7 @@ void Iaq8AudioProcessor::setProposal (const dsp::BandSet& newProposal)
 
 void Iaq8AudioProcessor::clearProposal()
 {
+    JUCE_ASSERT_MESSAGE_THREAD
     invalidateIfStateLoaded();
     proposal.reset();
     handoff.publish ({ {}, false });
@@ -314,6 +317,7 @@ void Iaq8AudioProcessor::writeBands (const dsp::BandSet& bands)
 
 bool Iaq8AudioProcessor::applyProposal()
 {
+    JUCE_ASSERT_MESSAGE_THREAD
     invalidateIfStateLoaded();
     if (! proposal.has_value())
         return false;
@@ -331,6 +335,7 @@ bool Iaq8AudioProcessor::applyProposal()
 
 bool Iaq8AudioProcessor::undoApply()
 {
+    JUCE_ASSERT_MESSAGE_THREAD
     invalidateIfStateLoaded();
     if (undoHistory.empty())
         return false;

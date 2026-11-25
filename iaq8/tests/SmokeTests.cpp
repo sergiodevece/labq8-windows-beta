@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "assist/Settings.h"
 #include "plugin/DebugEditor.h"
 #include "plugin/Iaq8Processor.h"
 
@@ -63,9 +64,15 @@ LQ_TEST ("iaq8 smoke: buses are mono->mono and stereo->stereo only")
 
 // Network spike, headless half: the same GET the debug editor's button does.
 // Without an API key api.anthropic.com answers 401; any HTTP status proves the
-// HTTPS path works. No connectivity -> skipped (never a false PASS).
+// HTTPS path works. Only with IAQ8_NETWORK_TESTS=1 (the suite never touches
+// the network otherwise); no connectivity -> skipped (never a false PASS).
 LQ_TEST ("iaq8 smoke: HTTPS probe reaches api.anthropic.com (401 without key)")
 {
+    if (juce::SystemStats::getEnvironmentVariable ("IAQ8_NETWORK_TESTS", {}) != "1")
+    {
+        ctx.skip ("needs the network; set IAQ8_NETWORK_TESTS=1");
+        return;
+    }
     const auto result = probeHttpStatus ("https://api.anthropic.com/v1/models", 10000);
 
     if (result.statusCode == 0)
@@ -80,6 +87,25 @@ LQ_TEST ("iaq8 smoke: HTTPS probe reaches api.anthropic.com (401 without key)")
 
 LQ_TEST ("iaq8 smoke: debug editor constructs, shows UTF-8 text and closes promptly")
 {
+    // The editor reads the access code through Settings: never the real user
+    // settings, a temporary folder for this test.
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("iaq8-smoke-editor", "", false);
+    juce::PropertiesFile::Options o;
+    o.applicationName = "IAQ8";
+    o.filenameSuffix = "settings";
+    o.osxLibrarySubFolder = "Application Support";
+    o.folderName = dir.getFullPathName();
+    assist::Settings::setFileOptionsForTesting (o);
+    const struct Restore
+    {
+        juce::File folder;
+        ~Restore()
+        {
+            assist::Settings::setFileOptionsForTesting (std::nullopt);
+            folder.deleteRecursively();
+        }
+    } restore { dir };
+
     Iaq8AudioProcessor processor;
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     LQ_CHECK (editor != nullptr, "editor created");

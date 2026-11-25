@@ -121,6 +121,7 @@ public:
     // The applied set as the 40 parameters currently hold it.
     dsp::BandSet getAppliedBands() const;
 
+    // Message thread (asserted), like every proposal and undo call below.
     // Preview only: no parameter is written, no host notification.
     void setProposal (const dsp::BandSet& proposal);
     void clearProposal();

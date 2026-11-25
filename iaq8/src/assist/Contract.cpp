@@ -124,6 +124,35 @@ juce::String toJsonText (const analysis::AnalysisSummary& summary)
 {
     return juce::JSON::toString (toJson (summary), true, 4);
 }
+
+std::optional<analysis::AnalysisSummary> analysisCandidatesFromJson (const juce::String& json)
+{
+    const auto root = juce::JSON::parse (json);
+    const auto* o = root.getDynamicObject();
+    const auto* list = o != nullptr ? o->getProperty ("candidates").getArray() : nullptr;
+    if (list == nullptr)
+        return std::nullopt;
+
+    const auto number = [] (const juce::var& v) { return v.isInt() || v.isInt64() || v.isDouble() ? (double) v : 0.0; };
+    analysis::AnalysisSummary a;
+    a.enoughSignal = (bool) o->getProperty ("enough_signal");
+    for (const auto& item : *list)
+    {
+        const auto* c = item.getDynamicObject();
+        if (c == nullptr || ! c->getProperty ("id").isString() || ! c->getProperty ("kind").isString())
+            return std::nullopt;
+        std::optional<analysis::CandidateKind> kind;
+        for (const auto k : { analysis::CandidateKind::excess, analysis::CandidateKind::deficit, analysis::CandidateKind::resonance,
+                              analysis::CandidateKind::lowRumble, analysis::CandidateKind::sibilance })
+            if (c->getProperty ("kind").toString() == kindName (k))
+                kind = k;
+        if (! kind)
+            return std::nullopt;
+        a.candidates.push_back ({ c->getProperty ("id").toString().toStdString(), *kind, number (c->getProperty ("freq_hz")),
+                                  number (c->getProperty ("magnitude_db")), number (c->getProperty ("width_oct")) });
+    }
+    return a;
+}
 } // namespace iaq8::assist
 
 

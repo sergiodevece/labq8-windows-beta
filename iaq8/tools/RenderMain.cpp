@@ -1,8 +1,10 @@
-// iaq8_render <input.wav> <reply.json> <output_prefix> [--source <source>]
+// iaq8_render <input.wav> <reply.json> <output_prefix> [--source <source>] [--analysis <analysis.json>]
 //
 // Offline before/after render of a proposal. <reply.json> is a contract reply
 // of kind "proposal" or a full request (its "proposal" object is used). The
-// bands go through assist::sanitize (source by --source, default "other"),
+// bands go through assist::sanitize (source by --source, default "other"; the
+// candidates of --analysis, an iaq8_analyze output, so a notch on a resonance
+// candidate keeps its Q up to 18 as in the plugin; without it, no analysis),
 // then through labq8's EqCore with whole-file K-weighted loudness matching
 // (+-6 dB, as in the plugin). Writes <prefix>_antes.wav (the input, first two
 // channels) and <prefix>_despues.wav, both 24-bit at the input sample rate;
@@ -20,6 +22,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace
@@ -27,7 +30,7 @@ namespace
 int fail (const char* message)
 {
     std::fprintf (stderr, "iaq8_render: %s\n", message);
-    std::fprintf (stderr, "usage: iaq8_render <input.wav> <reply.json> <output_prefix> [--source voice|acoustic_guitar|electric_guitar|bass|drums|mix|other]\n");
+    std::fprintf (stderr, "usage: iaq8_render <input.wav> <reply.json> <output_prefix> [--source voice|acoustic_guitar|electric_guitar|bass|drums|mix|other] [--analysis <analysis.json>]\n");
     return 2;
 }
 
@@ -54,6 +57,7 @@ bool writeWav (const juce::File& file, const std::vector<std::vector<float>>& ch
 int main (int argc, char** argv)
 {
     auto source = iaq8::assist::Source::other;
+    std::optional<iaq8::analysis::AnalysisSummary> analysis;
     std::vector<const char*> positional;
     for (int i = 1; i < argc; ++i)
     {
@@ -63,6 +67,18 @@ int main (int argc, char** argv)
             if (! s)
                 return fail ("--source needs a valid source");
             source = *s;
+            ++i;
+        }
+        else if (std::string (argv[i]) == "--analysis")
+        {
+            if (i + 1 >= argc)
+                return fail ("--analysis needs a file");
+            const auto file = juce::File::getCurrentWorkingDirectory().getChildFile (argv[i + 1]);
+            if (! file.existsAsFile())
+                return fail ("cannot read the analysis file");
+            analysis = iaq8::assist::analysisCandidatesFromJson (file.loadFileAsString());
+            if (! analysis)
+                return fail ("the analysis file has no valid candidates");
             ++i;
         }
         else
@@ -116,7 +132,7 @@ int main (int argc, char** argv)
         channels.emplace_back (buffer.getReadPointer (c), buffer.getReadPointer (c) + length);
 
     iaq8::assist::LimitReport report;
-    const auto bands = iaq8::assist::sanitize (std::get<iaq8::assist::Proposal> (reply), source, nullptr, report);
+    const auto bands = iaq8::assist::sanitize (std::get<iaq8::assist::Proposal> (reply), source, analysis ? &*analysis : nullptr, report);
     const auto result = iaq8::analysis::render (channels, reader->sampleRate, bands);
 
     const juce::String prefix (positional[2]);

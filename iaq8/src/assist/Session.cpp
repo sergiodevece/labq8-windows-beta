@@ -46,6 +46,12 @@ const char* stageName (Session::Stage stage)
 
 juce::String utf8 (const std::string& text) { return juce::String::fromUTF8 (text.data(), (int) text.size()); }
 
+// Trimmed, and cut to Session::maxTextChars characters (whole code points).
+std::string cappedText (const std::string& text)
+{
+    return juce::String::fromUTF8 (text.c_str()).trim().substring (0, Session::maxTextChars).trim().toStdString();
+}
+
 double nowMs() { return juce::Time::getMillisecondCounterHiRes(); }
 } // namespace
 
@@ -311,7 +317,7 @@ void Session::loadFromProcessor()
         sessionId = juce::Uuid().toDashedString().toStdString();
     source = sourceFromString (tree.getProperty ("source").toString().toStdString());
     if (source == Source::other)
-        sourceNote = tree.getProperty ("source_note").toString().toStdString();
+        sourceNote = cappedText (tree.getProperty ("source_note").toString().toStdString());
 
     for (const auto& child : tree)
     {
@@ -394,7 +400,7 @@ void Session::chooseSource (Source newSource, const std::string& note)
         client.cancelAll(); // the source changed: that answer no longer applies
 
     source = newSource;
-    const auto trimmed = juce::String::fromUTF8 (note.c_str()).trim().toStdString();
+    const auto trimmed = cappedText (note);
     sourceNote = newSource == Source::other ? trimmed : std::string();
     addMessage (Message::Role::user, sourceNote.empty() ? std::string (sourceLabel (newSource))
                                                         : std::string (sourceLabel (newSource)) + ": " + sourceNote);
@@ -554,7 +560,7 @@ void Session::analysisFinished (std::uint64_t forGeneration, AnalysisOutcome out
 void Session::say (const std::string& userText)
 {
     syncWithStateLoad();
-    const auto text = juce::String::fromUTF8 (userText.c_str()).trim().toStdString();
+    const auto text = cappedText (userText);
     if (text.empty())
         return;
 
@@ -603,7 +609,9 @@ void Session::sendTurn()
     request.sessionId = sessionId;
     request.source = source.value_or (Source::other);
     request.sourceNote = sourceNote;
-    request.messages = messages;
+    // Only the latest messages: the server's transcript limit (the history stays here).
+    const auto first = messages.size() > maxRequestMessages ? messages.size() - maxRequestMessages : 0;
+    request.messages.assign (messages.begin() + (std::ptrdiff_t) first, messages.end());
     if (analysis.has_value() && ! analysisDelivered)
         request.analysis = analysis;
     request.applied = processor.getAppliedBands();

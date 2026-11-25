@@ -78,6 +78,7 @@ DebugEditor::DebugEditor (Iaq8AudioProcessor& p)
     input.setComponentID ("input");
     input.setTextToShowWhenEmpty (ui ("Escribe aqu\xc3\xad..."), juce::Colours::grey);
     input.onReturnKey = [this] { sendInput(); };
+    input.setInputRestrictions (assist::Session::maxTextChars); // the session caps it too
     addAndMakeVisible (input);
 
     const auto button = [this] (juce::TextButton& b, const char* id, const char* text, std::function<void()> onClick)

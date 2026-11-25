@@ -55,6 +55,14 @@ juce::var toJson (const analysis::AnalysisSummary& summary);
 // 0.1 steps as 70.599999999999994.
 juce::String toJsonText (const analysis::AnalysisSummary& summary);
 
+// Reads back the candidates (id, kind, freq_hz, magnitude_db, width_oct) and
+// enough_signal of an analysis JSON in toJson's shape: what sanitize() needs to
+// allow a notch Q up to 18 on a resonance. Other fields keep their defaults.
+// nullopt when the text is not an object with a "candidates" array or a
+// candidate has no string id or an unknown kind. For tools (iaq8_render
+// --analysis); the plugin keeps its own AnalysisSummary.
+std::optional<analysis::AnalysisSummary> analysisCandidatesFromJson (const juce::String& json);
+
 //==============================================================================
 // One exchange with the server (fixed contract; the server implements it
 // against tests/fixtures/contract/*.json):

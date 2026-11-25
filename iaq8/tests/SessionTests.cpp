@@ -807,3 +807,62 @@ LQ_TEST ("session: applying while offline drops the retry key")
         LQ_CHECK (q != Session::retryReply(), "no retry key after leaving offline");
     LQ_CHECK (rig.state->posts.load() == posts, "nothing sent");
 }
+
+LQ_TEST ("session: a long conversation sends only the latest 190 messages and keeps them all")
+{
+    Rig a;
+    listenAsVoice (ctx, a);
+    auto tree = a.p->getAssistantState().createCopy();
+    for (int i = 0; i < 250; ++i)
+    {
+        juce::ValueTree m ("MESSAGE");
+        m.setProperty ("role", i % 2 == 0 ? "user" : "assistant", nullptr);
+        m.setProperty ("text", "m" + juce::String (i), nullptr);
+        tree.appendChild (m, nullptr);
+    }
+    a.p->setAssistantState (tree);
+    juce::MemoryBlock saved;
+    a.p->getStateInformation (saved);
+
+    Rig b;
+    b.p->setStateInformation (saved.getData(), (int) saved.getSize());
+    b.s().poll();
+    LQ_CHECK (b.s().getMessages().size() == 254, str ("restored: ", b.s().getMessages().size()));
+    b.s().say ("Más brillo");
+    LQ_CHECK (b.state->posts == 1, "one request");
+    const auto messages = b.body (0)["messages"];
+    LQ_CHECK (messages.size() == (int) Session::maxRequestMessages && Session::maxRequestMessages == 190,
+              str ("190 messages sent: ", messages.size()));
+    LQ_CHECK (messages[0]["text"].toString() == "m61" && messages[189]["text"].toString() == "Más brillo",
+              "the latest ones, in order");
+    LQ_CHECK (b.s().getMessages().size() == 255 && b.s().getMessages()[0].text == kAskSource, "the session keeps the full history");
+    LQ_CHECK (b.p->getAssistantState().getNumChildren() == 255, "and saves it");
+}
+
+LQ_TEST ("session: the source note and the user text are capped at 4000 characters")
+{
+    Rig rig;
+    std::string longNote;
+    for (int i = 0; i < 4500; ++i)
+        longNote += "ü"; // 2 UTF-8 bytes: the cap counts characters and never splits one
+    rig.s().say (longNote);
+    LQ_CHECK (rig.s().getSource() == assist::Source::other, "free text: other");
+    const auto note = rig.p->getAssistantState().getProperty ("source_note").toString();
+    LQ_CHECK (note.length() == Session::maxTextChars && Session::maxTextChars == 4000, str ("note capped: ", note.length()));
+    LQ_CHECK (note.containsOnly (juce::String (juce::CharPointer_UTF8 ("\xc3\xbc"))), "whole characters");
+    const auto& m = rig.s().getMessages();
+    LQ_CHECK (m.size() >= 2 && juce::String::fromUTF8 (m[1].text.c_str()).length() <= Session::maxTextChars + 6, "message: label + capped note");
+}
+
+LQ_TEST ("session: the debug editor input field takes at most 4000 characters")
+{
+    Rig rig;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (rig.p->createEditor());
+    auto* input = dynamic_cast<juce::TextEditor*> (editor->findChildWithID ("input"));
+    LQ_CHECK (input != nullptr, "input field");
+    if (input != nullptr)
+    {
+        input->insertTextAtCaret (juce::String::repeatedString ("a", 5000));
+        LQ_CHECK (input->getText().length() == 4000, str ("capped: ", input->getText().length()));
+    }
+}

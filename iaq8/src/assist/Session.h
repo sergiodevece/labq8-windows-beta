@@ -75,6 +75,12 @@ public:
     };
 
     static constexpr int pollIntervalMs = 50;
+    // Each request carries only the latest maxRequestMessages messages (the whole
+    // history stays in the session and its saved state): the server gives the model a
+    // trimmed transcript and never rejects a long session. User text (the input field
+    // and the source note) is capped at maxTextChars characters.
+    static constexpr size_t maxRequestMessages = 190;
+    static constexpr int maxTextChars = 4000;
     static constexpr int stallMs = 1500; // no new signal for this long with >= 6 s: analyse what is there
 
     // Reads the conversation from processor.getAssistantState() (a fresh one

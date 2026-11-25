@@ -8,6 +8,7 @@
 
 #include "assist/AssistClient.h"
 #include "assist/Contract.h"
+#include "assist/ProposalLimits.h"
 #include "parameters/ParameterIDs.h"
 
 #include <juce_events/juce_events.h>
@@ -578,4 +579,44 @@ LQ_TEST ("contract: end to end against a server (opt-in, IAQ8_E2E_URL)")
         ctx.note (std::string ("E2E: Error kind ") + std::to_string ((int) kind) + (kind == assist::ErrorKind::unavailable ? " (unavailable: server has no model key)" : ""));
         LQ_CHECK (kind == assist::ErrorKind::unavailable, "only 'unavailable' is acceptable as an error");
     }
+}
+
+LQ_TEST ("contract: analysis candidates read back from JSON (iaq8_render --analysis)")
+{
+    const auto a = assist::analysisCandidatesFromJson (fixtureText ("analysis_voice.json"));
+    LQ_CHECK (a.has_value() && a->candidates.size() == 2, "two candidates");
+    if (a.has_value() && a->candidates.size() == 2)
+    {
+        LQ_CHECK (a->candidates[0].id == "c1" && a->candidates[0].kind == analysis::CandidateKind::lowRumble
+                      && std::abs (a->candidates[0].freqHz - 99.0) < 1e-9,
+                  "c1 low_rumble at 99 Hz");
+        LQ_CHECK (a->candidates[1].id == "c2" && a->candidates[1].kind == analysis::CandidateKind::excess
+                      && std::abs (a->candidates[1].widthOct - 0.91) < 1e-9,
+                  "c2 excess");
+        LQ_CHECK (a->enoughSignal, "enough_signal");
+    }
+
+    analysis::AnalysisSummary s;
+    s.enoughSignal = true;
+    s.candidates = { { "c1", analysis::CandidateKind::resonance, 2480, 8, 0.04 }, { "c2", analysis::CandidateKind::sibilance, 7000, 4, 0.5 },
+                     { "c3", analysis::CandidateKind::deficit, 12000, 3, 1.0 } };
+    const auto back = assist::analysisCandidatesFromJson (assist::toJsonText (s));
+    LQ_CHECK (back.has_value() && back->candidates.size() == 3 && back->candidates[0].kind == analysis::CandidateKind::resonance
+                  && back->candidates[1].kind == analysis::CandidateKind::sibilance && back->candidates[2].kind == analysis::CandidateKind::deficit,
+              "every kind round-trips");
+
+    // With it, sanitize keeps a notch Q of 15 on the resonance (the plugin's rule).
+    assist::Proposal p;
+    assist::ProposedBand nb;
+    nb.settings = { 2480.0, 0.0, 15.0, false, FilterType::notch };
+    nb.candidateId = "c1";
+    p.bands.push_back (nb);
+    assist::LimitReport report;
+    LQ_CHECK (back.has_value() && assist::sanitize (p, Source::other, &*back, report)[0].q == 15.0, "notch Q 15 kept on the resonance");
+    assist::LimitReport report2;
+    LQ_CHECK (assist::sanitize (p, Source::other, nullptr, report2)[0].q == 8.0, "without the analysis: 8");
+
+    LQ_CHECK (! assist::analysisCandidatesFromJson ("not json").has_value(), "garbage");
+    LQ_CHECK (! assist::analysisCandidatesFromJson ("{\"candidates\":[{\"id\":\"c1\",\"kind\":\"weird\"}]}").has_value(), "unknown kind");
+    LQ_CHECK (! assist::analysisCandidatesFromJson ("{\"x\":1}").has_value(), "no candidates array");
 }

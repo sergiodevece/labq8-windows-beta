@@ -50,12 +50,14 @@ target_compile_features(labq8_dsp_for_iaq8 PUBLIC cxx_std_20)
 target_compile_options(labq8_dsp_for_iaq8 PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
 #==============================================================================
-# IAQ8 core: everything under src/ except plugin/ (host adapter). Later tasks
-# just drop their sources in; the glob picks them up on reconfigure.
-# assist/Session.cpp drives the processor, so it is built with the host
-# adapter (IAQ8_PLUGIN_SOURCES), not into the core that iaq8_analyze links.
+# IAQ8 core: everything under src/ except plugin/ (host adapter) and ui/
+# (editor). Later tasks just drop their sources in; the globs pick them up on
+# reconfigure. assist/Session.cpp drives the processor, so it is built with
+# the host adapter (IAQ8_PLUGIN_SOURCES), not into the core that iaq8_analyze
+# links; so is the editor (src/ui), which needs the UI assets.
 file(GLOB_RECURSE IAQ8_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-list(FILTER IAQ8_CORE_SOURCES EXCLUDE REGEX "/src/plugin/|/src/assist/Session\\.cpp$")
+list(FILTER IAQ8_CORE_SOURCES EXCLUDE REGEX "/src/plugin/|/src/ui/|/src/assist/Session\\.cpp$")
+file(GLOB IAQ8_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp")
 
 add_library(iaq8_core STATIC ${IAQ8_CORE_SOURCES})
 target_include_directories(iaq8_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -106,17 +108,20 @@ juce_add_plugin(IAQ8
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE
     AU_MAIN_TYPE kAudioUnitType_Effect
     VST3_CATEGORIES Fx EQ
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE)
 
+# DebugEditor (Plan 1) is no longer used by createEditor; it stays built until
+# Plan 3 Task 8 removes it.
 set(IAQ8_PLUGIN_SOURCES
     src/plugin/Iaq8Processor.cpp
     src/plugin/DebugEditor.cpp
-    src/assist/Session.cpp)
+    src/assist/Session.cpp
+    ${IAQ8_UI_SOURCES})
 
 target_sources(IAQ8 PRIVATE ${IAQ8_PLUGIN_SOURCES})
 

@@ -5,7 +5,7 @@
 #include "assist/Settings.h"
 #include "parameters/Iaq8Parameters.h"
 #include "parameters/ParameterIDs.h"
-#include "plugin/DebugEditor.h"
+#include "ui/Iaq8Editor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -232,7 +232,7 @@ void Iaq8AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
 
 juce::AudioProcessorEditor* Iaq8AudioProcessor::createEditor()
 {
-    return new DebugEditor (*this);
+    return new ui::Iaq8Editor (*this);
 }
 
 //==============================================================================

@@ -533,8 +533,8 @@ LQ_TEST ("session: the debug editor follows the session and saves the access cod
     assist::Settings::setFileOptionsForTesting (o);
 
     Rig rig;
-    std::unique_ptr<juce::AudioProcessorEditor> editor (rig.p->createEditor());
-    LQ_CHECK (dynamic_cast<DebugEditor*> (editor.get()) != nullptr, "debug editor");
+    // DebugEditor is no longer what createEditor gives (Plan 3); built directly until Task 8.
+    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (*rig.p);
     const auto find = [&] (const char* id) { return editor->findChildWithID (id); };
 
     auto* quick0 = dynamic_cast<juce::TextButton*> (find ("quick0"));
@@ -857,7 +857,7 @@ LQ_TEST ("session: the source note and the user text are capped at 4000 characte
 LQ_TEST ("session: the debug editor input field takes at most 4000 characters")
 {
     Rig rig;
-    std::unique_ptr<juce::AudioProcessorEditor> editor (rig.p->createEditor());
+    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (*rig.p);
     auto* input = dynamic_cast<juce::TextEditor*> (editor->findChildWithID ("input"));
     LQ_CHECK (input != nullptr, "input field");
     if (input != nullptr)

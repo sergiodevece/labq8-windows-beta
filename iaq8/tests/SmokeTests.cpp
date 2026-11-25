@@ -107,7 +107,7 @@ LQ_TEST ("iaq8 smoke: debug editor constructs, shows UTF-8 text and closes promp
     } restore { dir };
 
     Iaq8AudioProcessor processor;
-    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (processor); // not createEditor's since Plan 3
     LQ_CHECK (editor != nullptr, "editor created");
 
     if (editor == nullptr)

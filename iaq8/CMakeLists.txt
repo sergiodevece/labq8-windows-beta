@@ -73,6 +73,24 @@ target_link_libraries(iaq8_core
         juce::juce_recommended_warning_flags)
 
 #==============================================================================
+# UI assets. Same header and namespace as LABQ8 so LABQ8's LevelMeterView.cpp
+# (background_png, meter_lit_png) compiles unchanged; plus IAQ8's own chassis
+# and the OFL fonts.
+juce_add_binary_data(iaq8_ui_assets
+    HEADER_NAME LabQ8Assets.h
+    NAMESPACE LabQ8Assets
+    SOURCES
+        ../assets/ui/background.png
+        ../assets/ui/meter_lit.png
+        ../assets/ui/mode_face_lit.png
+        ../assets/ui/mode_face_unlit.png
+        assets/ui/iaq8_chassis.png
+        assets/fonts/VT323-Regular.ttf
+        assets/fonts/Barlow-Medium.ttf
+        assets/fonts/Barlow-SemiBold.ttf
+        assets/fonts/BarlowSemiCondensed-SemiBold.ttf)
+
+#==============================================================================
 # Plugin (AU + VST3). Never copied into system or user plug-in folders.
 juce_add_plugin(IAQ8
     COMPANY_NAME "VitaPlug"
@@ -114,6 +132,7 @@ target_link_libraries(IAQ8
         juce::juce_audio_processors
         juce::juce_gui_basics
         juce::juce_dsp
+        iaq8_ui_assets
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -189,6 +208,7 @@ if(IAQ8_BUILD_TESTS)
             juce::juce_audio_processors
             juce::juce_gui_basics
             juce::juce_dsp
+            iaq8_ui_assets
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)

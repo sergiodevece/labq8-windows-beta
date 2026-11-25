@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 #include <utility>
 
 namespace iaq8::assist
@@ -235,48 +236,236 @@ std::optional<ProposedBand> parseBand (const juce::var& v)
 
 } // namespace
 
-// Deepest [ / { nesting outside strings. JUCE's parser recurses once per
-// level without a limit, so a hostile body could overflow the pool thread's
-// stack; parseReply rejects a body that is too deep before parsing it.
-//
-// Strings follow JUCE's parser: they open with " or ', close only on the same
-// quote, and a backslash escapes the next character. A quote opens a string
-// only where JUCE's parser could start one: when the previous significant
-// (non-whitespace) character outside strings is [, {, , or :, or there is
-// none. Anywhere else (for example after '-', whose parseNumber swallows the
-// next character whatever it is) the quote is plain text and the brackets
-// after it still count. So a mistake can only over-count (reject a body),
-// never under-count: wherever this scan opens a string, JUCE either opens one
-// too or throws at that quote and stops parsing.
-int jsonNestingDepth (const juce::String& text)
+namespace
 {
-    int depth = 0, deepest = 0;
-    juce::juce_wchar quote = 0; // the open string's quote, 0 outside strings
-    juce::juce_wchar previous = 0; // last significant character outside strings, 0 = none
-    bool escaped = false;
-    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
-    {
-        const auto c = *p;
-        if (quote != 0)
-        {
-            if (escaped)         escaped = false;
-            else if (c == '\\') escaped = true;
-            else if (c == quote) { previous = quote; quote = 0; }
-            continue;
-        }
-        if (juce::CharacterFunctions::isWhitespace (c))
-            continue;
+// Strict RFC 8259 validator over the body's UTF-8 bytes, iterative (an explicit
+// stack of open containers, never recursion), so any body is checked in O(n)
+// time and constant stack.
+class StrictJson
+{
+public:
+    StrictJson (const char* text, int maxDepthIn)
+        : s (reinterpret_cast<const unsigned char*> (text)), maxDepth (maxDepthIn) {}
 
-        const bool valueStart = previous == 0 || previous == '[' || previous == '{' || previous == ',' || previous == ':';
-        if ((c == '"' || c == '\'') && valueStart)
-            quote = c;
-        else if (c == '[' || c == '{')
-            deepest = std::max (deepest, ++depth);
-        else if (c == ']' || c == '}')
-            --depth;
-        previous = c;
+    bool run()
+    {
+        // `s` is NUL-terminated (a juce::String); NUL is never valid JSON
+        // outside a string and is a control character inside one, so every
+        // check below stops at it, exactly where JUCE's parser stops reading.
+        for (;;)
+        {
+            skipWhitespace();                      // a value is expected here
+            const auto c = s[i];
+            if (c == '{' || c == '[')
+            {
+                if ((int) open.size() >= maxDepth)
+                {
+                    deepest = maxDepth + 1;
+                    return false;
+                }
+                open.push_back ((char) c);
+                deepest = std::max (deepest, (int) open.size());
+                ++i;
+                skipWhitespace();
+                if (s[i] == (c == '{' ? '}' : ']'))
+                {
+                    open.pop_back();
+                    ++i;
+                }
+                else
+                {
+                    if (c == '{' && ! key())
+                        return false;
+                    continue;                      // the first element or member value
+                }
+            }
+            else if (! scalar())
+            {
+                return false;
+            }
+
+            // After a value: close containers, or a ',' starts the next value.
+            for (;;)
+            {
+                skipWhitespace();
+                if (open.empty())
+                    return s[i] == 0;              // exactly one top-level value
+                const char close = open.back() == '{' ? '}' : ']';
+                if (s[i] == close)
+                {
+                    open.pop_back();
+                    ++i;
+                    continue;
+                }
+                if (s[i] != ',')
+                    return false;
+                ++i;
+                if (open.back() == '{' && ! key())
+                    return false;
+                break;
+            }
+        }
     }
-    return deepest;
+
+    int depth() const { return deepest; }
+
+private:
+    const unsigned char* s;
+    size_t i = 0;
+    const int maxDepth;
+    int deepest = 0;
+    std::string open; // '{' or '[' per open container
+
+    void skipWhitespace() { while (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') ++i; }
+
+    static bool isDigit (unsigned char c) { return c >= '0' && c <= '9'; }
+    static bool isHex (unsigned char c) { return isDigit (c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+    // A member name and its ':' (whitespace before both).
+    bool key()
+    {
+        skipWhitespace();
+        if (s[i] != '"' || ! string())
+            return false;
+        skipWhitespace();
+        if (s[i] != ':')
+            return false;
+        ++i;
+        return true;
+    }
+
+    bool scalar()
+    {
+        const auto c = s[i];
+        if (c == '"')                 return string();
+        if (c == '-' || isDigit (c))  return number();
+        return literal ("true") || literal ("false") || literal ("null");
+    }
+
+    bool literal (const char* word)
+    {
+        size_t n = 0;
+        while (word[n] != 0 && s[i + n] == (unsigned char) word[n]) // stops at a mismatch or NUL
+            ++n;
+        if (word[n] != 0)
+            return false;
+        i += n;
+        return true;
+    }
+
+    // -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+    bool number()
+    {
+        if (s[i] == '-')
+            ++i;
+        if (s[i] == '0')
+            ++i;
+        else if (s[i] >= '1' && s[i] <= '9')
+            while (isDigit (s[i])) ++i;
+        else
+            return false;
+        if (s[i] == '.')
+        {
+            ++i;
+            if (! isDigit (s[i]))
+                return false;
+            while (isDigit (s[i])) ++i;
+        }
+        if (s[i] == 'e' || s[i] == 'E')
+        {
+            ++i;
+            if (s[i] == '+' || s[i] == '-')
+                ++i;
+            if (! isDigit (s[i]))
+                return false;
+            while (isDigit (s[i])) ++i;
+        }
+        return true;
+    }
+
+    // From the opening '"' to just past the closing one.
+    bool string()
+    {
+        ++i;
+        for (;;)
+        {
+            const auto c = s[i];
+            if (c == '"')
+            {
+                ++i;
+                return true;
+            }
+            if (c < 0x20)                          // raw control character, or NUL (end of text)
+                return false;
+            if (c == '\\')
+            {
+                const auto e = s[i + 1];
+                if (e == 'u')
+                {
+                    for (size_t k = 2; k < 6; ++k)
+                        if (! isHex (s[i + k]))    // stops at NUL too
+                            return false;
+                    i += 6;
+                }
+                else if (e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't')
+                {
+                    i += 2;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else if (c < 0x80)
+            {
+                ++i;
+            }
+            else if (! utf8Sequence())
+            {
+                return false;
+            }
+        }
+    }
+
+    // One well-formed UTF-8 sequence (RFC 3629: no overlong forms, no
+    // surrogates, nothing above U+10FFFF). A well-formed sequence decodes to
+    // a code point >= 0x80, never to a quote, backslash, bracket or NUL, so
+    // JUCE's decoder sees the same ASCII structure as this byte scan. (JUCE 9
+    // already maps malformed sequences to U+FFFD; this check does not rely on
+    // that.)
+    bool utf8Sequence()
+    {
+        const auto c = s[i];
+        unsigned char lo = 0x80, hi = 0xbf;
+        int extra = 0;
+        if (c >= 0xc2 && c <= 0xdf)      extra = 1;
+        else if (c == 0xe0)              { extra = 2; lo = 0xa0; }
+        else if (c == 0xed)              { extra = 2; hi = 0x9f; }
+        else if (c >= 0xe1 && c <= 0xef) extra = 2;
+        else if (c == 0xf0)              { extra = 3; lo = 0x90; }
+        else if (c == 0xf4)              { extra = 3; hi = 0x8f; }
+        else if (c >= 0xf1 && c <= 0xf3) extra = 3;
+        else                             return false;
+
+        for (int k = 1; k <= extra; ++k)
+        {
+            const auto b = s[i + (size_t) k];      // a NUL fails here, so we never read past it
+            if (b < (k == 1 ? lo : 0x80) || b > (k == 1 ? hi : 0xbf))
+                return false;
+        }
+        i += (size_t) extra + 1;
+        return true;
+    }
+};
+} // namespace
+
+bool isStrictJson (const juce::String& text, int maxDepth, int* depthOut)
+{
+    StrictJson v (text.toRawUTF8(), maxDepth);
+    const bool ok = v.run();
+    if (depthOut != nullptr)
+        *depthOut = v.depth();
+    return ok;
 }
 
 namespace
@@ -285,7 +474,9 @@ namespace
 Reply parseOk (const juce::String& body)
 {
     const auto invalid = makeError (ErrorKind::invalidResponse);
-    if (jsonNestingDepth (body) > maxJsonDepth)
+    // JUCE's parser is lax and recurses once per [ / { without a limit, so
+    // only strictly valid JSON within the depth limit reaches it.
+    if (! isStrictJson (body, maxJsonDepth))
         return invalid;
     juce::var root;
     if (juce::JSON::parse (body, root).failed())

@@ -14,6 +14,7 @@
 #include <limits>
 #include <regex>
 #include <thread>
+#include <utility>
 
 using namespace iaq8;
 using assist::Source;
@@ -319,67 +320,160 @@ LQ_TEST ("contract: error statuses")
     LQ_CHECK (assist::makeError (K::unavailable).userMessage == "Sin conexi\xc3\xb3n: tu ecualizaci\xc3\xb3n sigue activa", "offline text of the spec");
 }
 
+namespace
+{
+bool isInvalidResponse (const assist::Reply& r)
+{
+    const auto* e = std::get_if<assist::Error> (&r);
+    return e != nullptr && e->kind == assist::ErrorKind::invalidResponse;
+}
+
+// parseReply (200, body) on a default-stack (512 KB) thread like the
+// transport's pool thread, joined before the locals it uses go away.
+assist::Reply parseOnThread (const juce::String& body)
+{
+    assist::Reply r;
+    std::thread ([&] { r = assist::parseReply (200, body); }).join();
+    return r;
+}
+
+bool strict (const juce::String& body) { return assist::isStrictJson (body, assist::maxJsonDepth); }
+
+juce::String rawUtf8 (const char* bytes) { return juce::String (juce::CharPointer_UTF8 (bytes)); }
+} // namespace
+
 LQ_TEST ("contract: deeply nested bodies are rejected before parsing")
 {
-    // JUCE's parser recurses per level; 100k levels would overflow a thread
-    // stack. Run on a default-stack (512 KB) thread like the transport's pool
-    // thread, joined before the locals it uses go away.
-    const auto brackets = juce::String::repeatedString ("[", 100000) + juce::String::repeatedString ("]", 100000);
-    const juce::String bodies[] = {
-        juce::String::repeatedString ("[", 100000),
-        juce::String::repeatedString ("{\"a\":", 100000),
-        "['\"', " + brackets + "]",   // a " inside a '-string must not hide the brackets
-        "[\"'\", " + brackets + "]",   // and the mirror case
+    // JUCE's parser recurses once per [ / { it sees, without a limit, and it is
+    // lax (single quotes; after '-' it swallows any character, quotes and
+    // brackets included), so these bodies would overflow a thread stack. Each
+    // one is first checked against the validator; parseReply only runs when the
+    // validator rejects it, so a regression fails the test instead of crashing.
+    const auto repeat = [] (const char* s, int n) { return juce::String::repeatedString (s, n); };
+    const auto brackets = repeat ("[", 100000) + repeat ("]", 100000);
+    const juce::String overlongQuote = rawUtf8 ("\xc0\xa2"); // '"' as an overlong 2-byte sequence
+    const std::pair<const char*, juce::String> bodies[] = {
+        { "[[[...", repeat ("[", 100000) },
+        { "{\"a\":{\"a\":...", repeat ("{\"a\":", 100000) },
+        { "['\"', <deep>]", "['\"', " + brackets + "]" },
+        { "[\"'\", <deep>]", "[\"'\", " + brackets + "]" },
+        { "[-\"1, <deep>]", "[-\"1, " + brackets + "]" },
+        { "[-'1, <deep>]", "[-'1, " + brackets + "]" },
+        { "{\"a\":-\"1, \"b\":<deep>}", "{\"a\":-\"1, \"b\":" + brackets + "}" },
+        { "[-], x200000 + 1", repeat ("[-],", 200000) + "1" },
+        { "{\"a\": ({\"a\":-},\"b\":) x100000 + 1", "{\"a\":" + repeat ("{\"a\":-},\"b\":", 100000) + "1" },
+        { "[\"<overlong \">, <deep>, <overlong \">\"]", "[\"" + overlongQuote + "," + brackets + "," + overlongQuote + "\"]" },
     };
-    int invalid = 0;
-    std::thread ([&]
+    for (const auto& [name, body] : bodies)
     {
-        for (const auto& body : bodies)
-        {
-            const auto r = assist::parseReply (200, body);
-            const auto* e = std::get_if<assist::Error> (&r);
-            invalid += (e != nullptr && e->kind == assist::ErrorKind::invalidResponse) ? 1 : 0;
-        }
-    }).join();
-    LQ_CHECK (invalid == 4, str ("100k levels are invalidResponse, no crash (", invalid, " of 4)"));
-
-    // JUCE's parseNumber swallows the character after '-' (a quote too), so
-    // a quote there never opens a string: the brackets after it must count.
-    // The depth is asserted first, and parseReply only runs when the guard
-    // would reject the body (so a regression fails instead of crashing).
-    const juce::String afterMinus[] = {
-        "[-\"1, " + brackets + "]",
-        "[-'1, " + brackets + "]",
-        "{\"a\":-\"1, \"b\":" + brackets + "}",
-    };
-    int rejected = 0;
-    for (const auto& body : afterMinus)
-    {
-        const auto depth = assist::jsonNestingDepth (body);
-        LQ_CHECK (depth > assist::maxJsonDepth, str ("quote after '-' does not hide the brackets: depth ", depth));
-        if (depth > assist::maxJsonDepth)
-            std::thread ([&]
-            {
-                const auto r = assist::parseReply (200, body);
-                const auto* e = std::get_if<assist::Error> (&r);
-                rejected += (e != nullptr && e->kind == assist::ErrorKind::invalidResponse) ? 1 : 0;
-            }).join();
+        const bool accepted = strict (body);
+        LQ_CHECK (! accepted, str ("validator rejects ", name));
+        if (! accepted)
+            LQ_CHECK (isInvalidResponse (parseOnThread (body)), str ("invalidResponse, no crash: ", name));
     }
-    LQ_CHECK (rejected == 3, str ("quote-after-minus bodies are invalidResponse (", rejected, " of 3)"));
 
-    // Single-quoted strings are strings too (JUCE accepts them), and a quote
-    // of the other kind inside a string does not open or close anything.
-    const auto single = juce::String ("{\"kind\":\"question\",\"text\":'it\\'s [[[{{ \" fine'}");
-    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, single)), "brackets inside a single-quoted string are ignored");
+    // Exactly 32 levels are accepted, 33 are not (objects and arrays count alike).
+    int depth = 0;
+    LQ_CHECK (assist::isStrictJson (repeat ("[", 32) + repeat ("]", 32), 32, &depth) && depth == 32, str ("32 levels accepted, depth ", depth));
+    LQ_CHECK (! assist::isStrictJson (repeat ("[", 33) + repeat ("]", 33), 32, &depth) && depth == 33, str ("33 levels rejected, depth ", depth));
+    LQ_CHECK (assist::isStrictJson (repeat ("{\"a\":[", 16) + "1" + repeat ("]}", 16), 32, &depth) && depth == 32, "32 mixed levels accepted");
+    LQ_CHECK (! assist::isStrictJson (repeat ("{\"a\":[", 16) + "{}" + repeat ("]}", 16), 32), "33 mixed levels rejected");
+
+    const auto head = juce::String ("{\"kind\":\"question\",\"text\":\"x\",\"extra\":");
+    LQ_CHECK (std::holds_alternative<assist::Question> (parseOnThread (head + repeat ("[", 31) + repeat ("]", 31) + "}")), "a 32-level reply parses");
+    LQ_CHECK (isInvalidResponse (parseOnThread (head + repeat ("[", 32) + repeat ("]", 32) + "}")), "a 33-level reply is invalidResponse");
+
+    // Brackets inside strings do not count.
+    const auto inString = juce::String ("{\"kind\":\"question\",\"text\":\"") + repeat ("[{", 1000) + "\\\"]\"}";
+    LQ_CHECK (std::holds_alternative<assist::Question> (parseOnThread (inString)), "brackets inside strings are ignored");
     const auto mixed = juce::String ("{\"kind\":\"question\",\"text\":\"it's [[[{{\"}");
-    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, mixed)), "a ' inside a double-quoted string is plain text");
+    LQ_CHECK (std::holds_alternative<assist::Question> (parseOnThread (mixed)), "a ' inside a double-quoted string is plain text");
+}
 
-    // Brackets inside strings do not count; 32 levels are still accepted.
-    const auto inString = juce::String ("{\"kind\":\"question\",\"text\":\"") + juce::String::repeatedString ("[{", 1000) + "\\\"]\"}";
-    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, inString)), "brackets inside strings are ignored");
-    const auto at32 = juce::String ("{\"kind\":\"question\",\"text\":\"x\",\"extra\":") + juce::String::repeatedString ("[", 31)
-                      + juce::String::repeatedString ("]", 31) + "}";
-    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, at32)), "32 levels accepted");
+LQ_TEST ("contract: replies must be strict JSON")
+{
+    // Each body is a valid question except for the one grammar fault named.
+    const std::pair<const char*, juce::String> rejected[] = {
+        { "single-quoted string", "{\"kind\":\"question\",\"text\":'x'}" },
+        { "single-quoted key", "{'kind':\"question\",\"text\":\"x\"}" },
+        { "unquoted key", "{kind:\"question\",\"text\":\"x\"}" },
+        { "trailing comma in object", "{\"kind\":\"question\",\"text\":\"x\",}" },
+        { "trailing comma in array", "{\"kind\":\"question\",\"text\":\"x\",\"quick_replies\":[\"a\",]}" },
+        { "leading comma in array", "{\"kind\":\"question\",\"text\":\"x\",\"quick_replies\":[,\"a\"]}" },
+        { "missing colon", "{\"kind\" \"question\",\"text\":\"x\"}" },
+        { "missing comma", "{\"kind\":\"question\" \"text\":\"x\"}" },
+        { "leading zero", "{\"kind\":\"question\",\"text\":\"x\",\"n\":01}" },
+        { "bare '-'", "{\"kind\":\"question\",\"text\":\"x\",\"n\":-}" },
+        { "'-' then a space", "{\"kind\":\"question\",\"text\":\"x\",\"n\":- 1}" },
+        { "leading '+'", "{\"kind\":\"question\",\"text\":\"x\",\"n\":+1}" },
+        { "leading '.'", "{\"kind\":\"question\",\"text\":\"x\",\"n\":.5}" },
+        { "trailing '.'", "{\"kind\":\"question\",\"text\":\"x\",\"n\":1.}" },
+        { "empty exponent", "{\"kind\":\"question\",\"text\":\"x\",\"n\":1e}" },
+        { "signed empty exponent", "{\"kind\":\"question\",\"text\":\"x\",\"n\":1e+}" },
+        { "NaN", "{\"kind\":\"question\",\"text\":\"x\",\"n\":NaN}" },
+        { "Infinity", "{\"kind\":\"question\",\"text\":\"x\",\"n\":Infinity}" },
+        { "-Infinity", "{\"kind\":\"question\",\"text\":\"x\",\"n\":-Infinity}" },
+        { "hex number", "{\"kind\":\"question\",\"text\":\"x\",\"n\":0x10}" },
+        { "capitalised literal", "{\"kind\":\"question\",\"text\":\"x\",\"n\":True}" },
+        { "truncated literal", "{\"kind\":\"question\",\"text\":\"x\",\"n\":nul}" },
+        { "raw tab in a string", "{\"kind\":\"question\",\"text\":\"a\tb\"}" },
+        { "raw newline in a string", "{\"kind\":\"question\",\"text\":\"a\nb\"}" },
+        { "raw control 0x01 in a string", "{\"kind\":\"question\",\"text\":\"a\x01" "b\"}" },
+        { "unknown escape \\x", "{\"kind\":\"question\",\"text\":\"a\\x41\"}" },
+        { "escape \\a (JUCE accepts it)", "{\"kind\":\"question\",\"text\":\"a\\a\"}" },
+        { "escape \\' (JUCE accepts it)", "{\"kind\":\"question\",\"text\":\"a\\'\"}" },
+        { "short \\u escape", "{\"kind\":\"question\",\"text\":\"a\\u12\"}" },
+        { "non-hex \\u escape", "{\"kind\":\"question\",\"text\":\"a\\u12G4\"}" },
+        { "unterminated string", "{\"kind\":\"question\",\"text\":\"x}" },
+        { "block comment", "{\"kind\":\"question\",/* c */\"text\":\"x\"}" },
+        { "line comment", "{\"kind\":\"question\",\"text\":\"x\"// c\n}" },
+        { "two top-level values", "{\"kind\":\"question\",\"text\":\"x\"} {}" },
+        { "trailing garbage", "{\"kind\":\"question\",\"text\":\"x\"}x" },
+        { "unclosed object", "{\"kind\":\"question\",\"text\":\"x\"" },
+        { "mismatched close", "{\"kind\":\"question\",\"text\":\"x\",\"a\":[1}]" },
+        { "extra close", "{\"kind\":\"question\",\"text\":\"x\"}}" },
+        { "non-JSON whitespace (vertical tab)", "{\"kind\":\"question\",\"text\":\"x\"}\v" },
+        { "byte >= 0x80 outside a string", rawUtf8 ("{\"kind\":\"question\",\"text\":\"x\"}\xc2\xa0") },
+        { "overlong UTF-8", rawUtf8 ("{\"kind\":\"question\",\"text\":\"\xc0\xa2\"}") },
+        { "lone continuation byte", rawUtf8 ("{\"kind\":\"question\",\"text\":\"\x80\"}") },
+        { "UTF-8 surrogate", rawUtf8 ("{\"kind\":\"question\",\"text\":\"\xed\xa0\x80\"}") },
+        { "truncated UTF-8", rawUtf8 ("{\"kind\":\"question\",\"text\":\"\xc3\"}") },
+        { "beyond U+10FFFF", rawUtf8 ("{\"kind\":\"question\",\"text\":\"\xf4\x90\x80\x80\"}") },
+    };
+    for (const auto& [name, body] : rejected)
+    {
+        LQ_CHECK (! strict (body), str ("validator rejects: ", name));
+        LQ_CHECK (isInvalidResponse (parseOnThread (body)), str ("invalidResponse: ", name));
+    }
+
+    // Accepted: every escape, raw UTF-8, numbers in every RFC 8259 form,
+    // whitespace around the value, empty containers and nested extras.
+    const auto question = juce::String (
+        " \t\r\n{ \"kind\" : \"question\" ,\n\"text\":\"\\u00bfQu\\u00e9? \\\" \\\\ \\/ \\b \\f \\n \\r \\t \\ud83c\\udfb5 ") + rawUtf8 ("\xc3\xa1\xe2\x82\xac\xf0\x9f\x8e\xb5")
+        + "\", \"quick_replies\": [ \"a\" , \"b\" ], \"extra\": { \"o\": {}, \"a\": [], \"n\": [0, -0, 12, -3.25, 1e3, 2E-2, -0.5e+10, 1.5E3],"
+          " \"l\": [true, false, null], \"deep\": {\"x\": [1, {\"y\": [ {\"z\": null} ]}]} } }\r\n ";
+    LQ_CHECK (strict (question), "validator accepts the full question");
+    const auto q = parseOnThread (question);
+    const auto* qq = std::get_if<assist::Question> (&q);
+    LQ_CHECK (qq != nullptr && qq->quickReplies.size() == 2, "full question parses");
+    if (qq != nullptr)
+        LQ_CHECK (qq->text.rfind ("\xc2\xbfQu\xc3\xa9? \" \\ / \b \f \n \r \t \xf0\x9f\x8e\xb5 \xc3\xa1\xe2\x82\xac\xf0\x9f\x8e\xb5", 0) == 0,
+                  "escapes and UTF-8 decoded");
+
+    const auto proposal = juce::String ("{\"kind\":\"proposal\",\"explanation\":\"x\",\"bands\":["
+                                        "{\"type\":\"bell\",\"freq_hz\":1.0e3,\"gain_db\":-2.5E0,\"q\":0.7,\"bypass\":false,\"candidate_id\":null,\"reason\":\"r\"},"
+                                        "{\"type\":\"notch\",\"freq_hz\":250,\"gain_db\":0,\"q\":12,\"bypass\":true}],\"quick_replies\":[]}");
+    LQ_CHECK (strict (proposal), "validator accepts the proposal");
+    const auto pr = parseOnThread (proposal);
+    const auto* p = std::get_if<assist::Proposal> (&pr);
+    LQ_CHECK (p != nullptr && p->bands.size() == 2 && p->bands[0].settings.frequencyHz == 1000.0 && p->bands[0].settings.gainDb == -2.5
+                  && p->bands[1].settings.bypassed, "proposal with exponents parses");
+
+    for (const char* name : { "reply_question.json", "reply_proposal.json", "reply_error_401.json", "request_first_turn.json", "analysis_voice.json" })
+        LQ_CHECK (strict (fixtureText (name)), str ("fixture is strict JSON: ", name));
+    LQ_CHECK (strict (assist::toJson (firstTurn())), "our own request text is strict JSON");
+    LQ_CHECK (! strict (fixtureText ("reply_malformed.json")), "reply_malformed.json is not");
+    LQ_CHECK (! strict ("") && ! strict ("   "), "empty body is not JSON");
 }
 
 LQ_TEST ("contract: invalid 200 bodies are invalidResponse")

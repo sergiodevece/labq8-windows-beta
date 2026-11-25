@@ -80,7 +80,9 @@ juce::String toJsonText (const analysis::AnalysisSummary& summary);
 // 200 reply, one of:
 //   { kind: "question", text, quick_replies: [..] }
 //   { kind: "proposal", explanation, bands: [Band..], quick_replies: [..] }
-//   A body nested deeper than 32 levels ([ or {) is rejected unparsed.
+//   The body must be strict RFC 8259 JSON in UTF-8 (double-quoted strings,
+//   no comments, no trailing commas, no NaN/Infinity, one top-level value)
+//   nested at most 32 levels ([ or {); anything else is rejected unparsed.
 //   quick_replies: at most 8 kept, each trimmed and cut to 18 characters,
 //   empty ones dropped; the key may be absent. bands: at most 8 kept (the
 //   rest are ignored); bypass may be absent (false), candidate_id and reason
@@ -142,7 +144,7 @@ using Reply = std::variant<Question, Proposal, Error>;
 inline constexpr const char* pluginId = "iaq8";
 inline constexpr size_t maxBands = 8, maxQuickReplies = 8;
 inline constexpr int maxQuickReplyChars = 18;
-inline constexpr int maxJsonDepth = 32; // deeper 200 bodies are invalidResponse (checked before parsing)
+inline constexpr int maxJsonDepth = 32; // deeper 200 bodies are invalidResponse (checked by isStrictJson before parsing)
 
 // The fixed Spanish (UTF-8) text shown for each error kind.
 const char* userMessage (ErrorKind kind);
@@ -159,8 +161,13 @@ juce::String toJson (const TurnRequest& request);
 // Pure; any thread. Never throws; anything unexpected is an Error.
 Reply parseReply (int httpStatus, const juce::String& body);
 
-// The [ / { nesting depth parseReply checks before parsing (exposed for
-// tests). Conservative: it may count brackets JUCE's parser treats as string
-// text (over-counting, so a body is rejected), never the reverse.
-int jsonNestingDepth (const juce::String& text);
+// True when `text` is exactly one strict RFC 8259 JSON value (whitespace
+// around it allowed) in well-formed UTF-8, nested at most `maxDepth` levels
+// of [ / {. parseReply calls it before juce::JSON::parse, which is lax and
+// recurses once per level without a limit: for strictly valid JSON that
+// parser reads the same structure, so its recursion depth equals the bracket
+// depth checked here. Iterative (constant stack, linear time) and safe on any
+// byte sequence. `depthOut`, if given, receives the deepest level reached
+// (maxDepth + 1 when the limit stopped it). Pure; any thread; exposed for tests.
+bool isStrictJson (const juce::String& text, int maxDepth, int* depthOut = nullptr);
 } // namespace iaq8::assist

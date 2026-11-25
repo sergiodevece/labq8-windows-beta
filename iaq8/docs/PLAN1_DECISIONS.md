@@ -1,0 +1,60 @@
+# IAQ8 Plan 1: decisiones y pendientes
+
+Registro de la ejecución del Plan 1 (docs/superpowers/plans/2026-11-24-iaq8-plan-1-nucleo-plugin.md). Lo que sigue son las decisiones tomadas durante la implementación y los hallazgos menores aplazados, para tenerlos en cuenta en los planes 2 y 3.
+
+## Decisiones (en orden)
+
+- Ruling: work in the existing checkout on a new branch instead of a git worktree — external/JUCE is an untracked local clone the build needs (`../external/JUCE`); a worktree would not have it — cost if wrong: none (branch isolates commits; only untracked smoke dirs present).
+- Ruling: `.superpowers/` ignored via .git/info/exclude (not .gitignore) — LABQ8 files untouched — cost if wrong: none.
+- Ruling R1: T5 adds `double getCompensationDb() const noexcept` to Iaq8AudioProcessor (atomic copy of AssistEngine::getCompensationDb, written on the audio thread) — needed by T5 Review Focus 5 test and T10 debug editor — cost if wrong: one extra accessor.
+- Ruling R2: T5 treats the ASSISTANT child as an opaque juce::ValueTree (stores/restores whatever is set; tests use arbitrary properties/children); T10 defines its contents (source, messages) — cost if wrong: none.
+- Ruling R3: T8 defines `const char* toString (Source)` and `std::optional<Source> sourceFromString (std::string_view)` in assist/Contract.h using the contract strings (voice, acoustic_guitar, electric_guitar, bass, drums, mix, other); T9 reuses them — cost if wrong: trivial move.
+- Ruling R4: T1 implementer does build + ctest + auval + a headless HTTPS check (console run of the same GET code path, expecting an HTTP status, 401) and documents it; the Logic/VST3 manual check is left for the author and reported at the end of the plan (remaining tasks do not depend on it; only the transport would change if Logic blocks network) — cost if wrong: if Logic blocks network, Task 9 transport needs rework.
+- Ruling R5: T7 tests are the contract; the constants in AnalysisTuning.h are initial and may be retuned by the implementer to satisfy them (documented in the report), never by loosening the tests — cost if wrong: tuning differs from plan's initial numbers.
+- Ruling R6: T9 tests never write the real user settings: AssistClient takes the server/access-code functions (already in its interface); Settings tests, if any, use a temporary PropertiesFile location — cost if wrong: none.
+- Ruling: "acumulador exponencial equivalente" of a 3 s window = tau 1.5 s (matches mean lag/variance) — plan text intends equivalence — cost if wrong: faster meter, slightly noisier
+- Ruling (carry to T10): in-instance state load (preset/A-B compare) keeps pending proposal and undo history — T10 adds deferred invalidation (atomic "state loaded" counter checked on the message thread → clear proposal + undo history; Session resets to restored conversation) with an in-instance load test; drop vacuous check ProcessorTests.cpp:347 — cost if wrong: small extra work in T10
+- Ruling: approve iterative robust trend refit (fit, drop |residual|>excessDb, refit ≤3 iterations or until stable, fall back to plain fit if <50% points kept) — spec §4/§6.2 (precise measurement for the AI) outranks the plan's "recta por mínimos cuadrados" wording — cost if wrong: excess test ceiling 7 dB must still hold; slightly different numbers to tune later
+- Ruling: accept implementer's tightening refit schedule (3→2→1 dB, ≤6 refits, keep previous line under 50%) as R5 tuning — fixed 3 dB missed +4.5 dB — cost if wrong: retune with real material
+- Ruling (carry to T8): the −120 dB floor must apply only to the spectrumDb output, not internal curves (third/fine/reference) — saturates on quiet/band-limited material — small fix in T8 since T8 touches the analysis output — cost if wrong: trivial
+- Ruling (revises earlier T7→T8 carry): revert the internal floor to Task 7's 1e-12 (−120 dB) — the implementer measured that the unfloored 1e-30 curves make brick-wall tails worse (slope −7.8, spurious 17 dB excess) while no case favoured 1e-30; the reviewer's saturation concern was not reproducible — evidence beats speculation — add the brick-wall case as a discriminating regression test — cost if wrong: quiet band-limited saturation reappears (not observed)
+- Ruling I1: sanitize caps shelf Q to [0.5, 1.0] and cut Q to [0.5, 0.707] (Butterworth, no peak), each with an adjustments line and test — mirrors LABQ8 E1b.1 effective-Q spirit; §6.5 outranks brief silence — cost if wrong: slightly less flexible shelves
+- Ruling I2: pre-scan nesting depth before JSON::parse, reject >32 as invalidResponse, test with deep body
+- Ruling I3: make the read cancellable (stream pointer under a lock, cancel() from destructor and cancelAll) and add an overall 30 s per-request deadline (includes Minor 1/2)
+- Ruling I4: in-flight test uses a local StreamingSocket that accepts and never answers; the example.invalid test is gated behind env IAQ8_NETWORK_TESTS=1
+- Ruling: depth scanner opens a string only where JUCE's parser would (previous significant char outside strings is [ { , : or start); any other quote is plain text — errors only ever over-count (reject) — cost if wrong: rare false invalidResponse
+- Ruling (structural, round 4): stop mirroring JUCE's lax grammar. Before JSON::parse, run a strict RFC 8259 validator (iterative, no recursion, explicit depth limit 32) over the whole body; anything not strictly valid JSON (single quotes, "-]", trailing commas, comments, bad numbers/escapes, depth>32) → invalidResponse. For strictly valid JSON JUCE's recursion equals bracket depth, so the guarantee holds by construction — cost if wrong: replies JUCE would tolerate but aren't strict JSON get rejected (server must send valid JSON anyway)
+- Ruling: one fix wave = Important 1+2, the three must-fix-now items, plus cheap extras (message-thread asserts, Apply during listening, leftover Reintentar key, lock-free static_assert, 0-sample copy after re-prepare treated as busy, hermetic smoke editor test). Stay deferred: probe thread (remove/bound before tester build), lazy transport, parameter-order pin test (before first tester build), CMake PRIVATE link, server text length cap, typed-while-listening, MSVC encoding — cost if wrong: small extra round in Plan 3
+- Parked — combined limiter residuals (48 kHz reference under-estimates HF overlap at 96/192 kHz by up to ~2.3 dB; 1/12-oct grid misses peaks between close narrow bands, ~0.4–0.7 dB; 4-round cap rarely leaves <0.1 dB; voice line repeats original value) — Ruling: real but beyond §6.5's per-band letter; defer to Plan 2/3 (evaluate analog prototype + midpoints between band freqs) — cost if wrong: rare proposals exceed the combined +6 dB by ≤2.3 dB at high sample rates
+
+## Pendientes menores aplazados
+
+- Task 1: minor (deferred): SmokeTests pass-through near-tautological, awkward float compare
+- Task 1: minor (deferred): IAQ8_TEST_FIXTURES_DIR points at non-existent dir (will exist from Task 8)
+- Task 1: minor (deferred): DebugEditor.cpp two separate safe!=nullptr checks; accent convention in docs vs UI
+- Task 1: minor (deferred): DebugEditor detached probe thread can outlive plugin unload (≤10 s) — provisional editor; Task 9 transport must use a worker owned by a long-lived object with bounded shutdown (carry to T9 dispatch)
+- Task 1: minor (deferred): "closes promptly" test never starts a probe
+- Task 2: minor (deferred): parity test doesn't check host parameter order (matters for automation) — final review should triage
+- Task 2: minor (deferred): parity test doesn't compare getText/getValueForText, choice names, convertTo0to1/snap; redundant "same id" and stateVersion checks
+- Task 3: minor (deferred): preview EqCore ramp stacks under the crossfade if setPreview+setListen together (comment); fadeStep member redundant; unguarded clang pragma in tests (MSVC C4068 for Windows beta)
+- Task 4: minor (deferred → carry to T5 dispatch): processBlock must use juce::ScopedNoDenormals (x86_64 denormals in K-filter state)
+- Task 4: minor (deferred): prepare hard-resets compensation (jump on host re-prepare); noise variant of +3 dB bell test passes without compensation; identity test samples 1/256; stale comment AssistEngineTests ~270; silence threshold on channel-summed power undocumented
+- Task 4: minor (deferred): no tests for setPreview during deferred clear / identical re-send no-op; clang pragmas unguarded for MSVC (Windows beta)
+- Task 5: minor (deferred): no-op apply pushes an undo step; gesture order begin→value→end not asserted; no forward version guard on load; thread affinity unasserted; Iaq8Processor.h:132 array<...,8> not tied to labq8::params::numBands
+- Task 6: minor (deferred): cancelled in-flight block still publishes; per-block gating with tiny blocks / one hot channel; capture channels = max(in,out); stereo processor capture untested; gating test doesn't inspect copyOut; no straddling-block test
+- Task 6: minor (deferred): copyOut not exception-safe (bad_alloc leaves readingBit set → prepare spins forever) — add RAII guard; stress-test handshake race; no static_assert lock-free uint64 atomic
+- Task 6: note for T7/T10: arm() returns bool (refuses while reading/preparing/capturing); copyOut returns 0 + empty dest while another copy/prepare in progress — not "nothing captured"
+- Task 7: minor (deferred): rumble test doesn't exercise trigger (pink already > allowance); low male voice F0 may report rumble; LF resonances <200 Hz unresolvable (consider higher FFT order offline); dedupe over-suppression notes; fitToHz cap inconsistency; rumble width vs energy range; uniform_real_distribution portability; fftOrderFor parity test
+- Task 7: note for T8: JSON must state spectrumDb is a density in dB re FS²/Hz and rumble magnitudeDb is dB above the -20 dB allowance
+- Task 7: minor (deferred): refit usually ends on cap at 0.7–1 dB ripple (comment overstates convergence); weak magnitude assertions in new tests; cap test doesn't assert weakest dropped; robust line follows dominant segment on curved spectra (validate with real material)
+- Task 8: minor (deferred): tool silently uses first 2 channels; tool includes/alloc/length cap/I/O error message; TrackAnalyzer.h comment wrap
+- Task 9: minor (deferred): voice boost <80 Hz checks only centre freq (low_shelf/wide bell); mix gain double adjustment lines; access code plain text in PropertiesFile; cuts dropped last reinterpretation (accepted: removing a protective cut is worse than removing a small boost)
+- Task 9: minor (deferred): JUCE int64 overflow UB on 19+ digit integers / exponent overflow (optional: validator caps integer digits); empty key {"":…} jassert; Linux SIGPIPE in test server; voice <80 Hz centre-only; access code plain text
+- Task 10: minor (deferred → Plan 3 UI): no stall notice when playback stops <6 s; every processor builds a live Session/transport + random UUID ASSISTANT at construction (non-deterministic fresh state, fragile processor tests); editor rebuilds log every 50 ms; §5.4 auto-reactivation narrowed to manual retry
+- Task 10: minor (deferred): "analysis after load" test doesn't reach the generation check and may spuriously fail under load; listenAgain/chooseSource while waiting don't reset stageBeforeWaiting etc.; ≤50 ms audible stale preview window (apply syncs first)
+- Parked — combined limiter residuals (48 kHz reference under-estimates HF overlap at 96/192 kHz by up to ~2.3 dB; 1/12-oct grid misses peaks between close narrow bands, ~0.4–0.7 dB; 4-round cap rarely leaves <0.1 dB; voice line repeats original value) — Ruling: real but beyond §6.5's per-band letter; defer to Plan 2/3 (evaluate analog prototype + midpoints between band freqs) — cost if wrong: rare proposals exceed the combined +6 dB by ≤2.3 dB at high sample rates
+
+## Pendiente del autor
+
+- Instalar IAQ8.component / IAQ8.vst3 a mano, ejecutar `auval -v aufx Iaq8 Vtpl` y probar "Probar conexión" en Logic (AU) y en un host VST3 (iaq8/docs/NETWORK_SPIKE.md).
+- Prueba manual del flujo sin conexión en Logic (necesita guardar antes un código de acceso en el editor).

@@ -17,7 +17,9 @@ std::optional<Source> sourceFromString (std::string_view text); // exact match, 
 
 // The analysis as the server/AI sees it (version 1). Keys are snake_case and
 // values are rounded: dB to 0.1, Hz to 1, widths/correlation/seconds to 0.01
-// (spectrum.step_oct is 0.1667).
+// (spectrum.step_oct is 1/6 octave, rounded to 0.1667). A non-finite level or
+// spectrum value is written as -120 (the floor), a non-finite crest, slope or
+// magnitude as 0, other non-finite numbers as 0.
 //
 //   { version, sample_rate, seconds, channels,
 //     level:  { rms_dbfs, peak_dbfs, crest_db },
@@ -41,8 +43,11 @@ std::optional<Source> sourceFromString (std::string_view text); // exact match, 
 //  - trend is the robust line fitted to the 1/3-octave density between
 //    fit_from_hz and fit_to_hz (slope in dB per octave); candidates are only
 //    searched in that range.
-//  - Write it with JSON::toString (var, true, 4): the default 15 decimals prints
-//    0.1 steps as 70.599999999999994.
 //  - candidates are sorted by |magnitude_db| descending, at most 8, ids c1..c8.
 juce::var toJson (const analysis::AnalysisSummary& summary);
+
+// The only supported serialiser: compact, one line, at most 4 decimals. Do not
+// serialise toJson's var with the default JSON::toString: its 15 decimals print
+// 0.1 steps as 70.599999999999994.
+juce::String toJsonText (const analysis::AnalysisSummary& summary);
 } // namespace iaq8::assist

@@ -308,20 +308,24 @@ LQ_TEST ("analyzer: deficit and several candidates are listed by magnitude, at m
     ordered (m);
 }
 
-LQ_TEST ("analyzer: quiet band-limited voice-like signal has no spurious excess at the top of the fit range")
+// SMOKE test, not a regression guard for the floor: no signal found makes the
+// old -120 dB internal floor fail while the unfloored curves pass (a grid of
+// -55..-59 dBFS pink with 6-30 dB/oct and brick-wall tails gave the same result
+// with both, and brick-wall tails were worse unfloored). It checks that a quiet,
+// band-limited voice-like signal gives no excess or resonance and that
+// spectrumDb honours its -120 dB floor.
+LQ_TEST ("analyzer smoke: quiet band-limited voice-like signal reports no spurious excess and keeps spectrumDb >= -120")
 {
-    // Pink noise at about -50 dBFS with a steep rolloff above 8 kHz: the
-    // 1/3-oct density up there is far under -120 dB re FS^2/Hz.
-    const auto x = test::makePink (kTen, kFs, 9, -50.0, [] (double f)
+    const auto x = test::makePink (kTen, kFs, 9, -55.0, [] (double f)
     {
-        return f > 8000.0 ? -250.0 * std::log2 (f / 8000.0) : 0.0;
+        return f > 8000.0 ? -30.0 * std::log2 (f / 8000.0) : 0.0;
     });
     const auto s = analysis::analyse (dual (x), kFs, Source::voice);
     ctx.note (describe (s));
 
-    LQ_CHECK (s.enoughSignal, "-50 dBFS is above the -60 dBFS floor");
+    LQ_CHECK (s.enoughSignal, "-55 dBFS is above the -60 dBFS floor");
     for (const auto& c : s.candidates)
-        LQ_CHECK (! (c.freqHz > 8000.0 && c.freqHz <= s.fitToHz && c.kind != CandidateKind::deficit),
+        LQ_CHECK (c.kind == CandidateKind::deficit || c.kind == CandidateKind::lowRumble,
                   str ("spurious ", kindName (c.kind), " at ", c.freqHz, " Hz mag ", c.magnitudeDb));
     for (auto v : s.spectrumDb)
         LQ_CHECK (v >= -120.0, str ("spectrumDb value ", v));

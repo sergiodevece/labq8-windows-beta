@@ -1,3 +1,6 @@
+// Exact float comparisons are intentional (rounded values, fallbacks).
+#pragma clang diagnostic ignored "-Wfloat-equal"
+
 // Tests of the analysis JSON (the contract the server/AI consumes) and of the
 // Source <-> string mapping.
 
@@ -9,7 +12,9 @@
 #include "dsp/BiquadDesign.h"
 
 #include <cmath>
+#include <cctype>
 #include <cstdlib>
+#include <limits>
 
 using namespace iaq8;
 using assist::Source;
@@ -92,7 +97,7 @@ LQ_TEST ("analysis json: shape and rounding")
     LQ_CHECK (foundExcess, "excess near 250 Hz");
 
     // Round trip through text: same structure.
-    const auto parsed = juce::JSON::parse (juce::JSON::toString (j, true, 4));
+    const auto parsed = juce::JSON::parse (assist::toJsonText (s));
     LQ_CHECK (parsed.isObject() && parsed["spectrum"]["db"].size() == 60 && parsed["candidates"].size() == cs->size(), "parses back");
 
     // Every kind has its contract name.
@@ -109,7 +114,7 @@ LQ_TEST ("analysis json: shape and rounding")
     // Optional: regenerate the contract example (IAQ8_WRITE_FIXTURES=1).
     if (std::getenv ("IAQ8_WRITE_FIXTURES") != nullptr)
         juce::File (IAQ8_TEST_FIXTURES_DIR).getChildFile ("contract/analysis_voice.json")
-            .replaceWithText (juce::JSON::toString (j, true, 4) + "\n");
+            .replaceWithText (assist::toJsonText (s) + "\n");
 }
 
 LQ_TEST ("analysis json: compact")
@@ -119,16 +124,57 @@ LQ_TEST ("analysis json: compact")
     for (int i = 0; i < 8; ++i)
         s.candidates.push_back ({ "c" + std::to_string (i + 1), analysis::CandidateKind::resonance,
                                   1234.5 + 100.0 * i, -12.34 - i, 0.1234 });
-    const auto text = juce::JSON::toString (assist::toJson (s), true, 4);
+    const auto text = assist::toJsonText (s);
     ctx.note (str (text.getNumBytesAsUTF8(), " bytes"));
     LQ_CHECK (text.getNumBytesAsUTF8() < 2500, str (text.getNumBytesAsUTF8(), " bytes"));
     LQ_CHECK (! text.containsChar ('\n'), "one line");
 
-    // The committed example parses and has the same shape.
+}
+
+LQ_TEST ("analysis json: committed example equals the current output")
+{
+    // Regenerate with IAQ8_WRITE_FIXTURES=1 (test "shape and rounding").
     const auto example = juce::JSON::parse (juce::File (IAQ8_TEST_FIXTURES_DIR).getChildFile ("contract/analysis_voice.json"));
-    LQ_CHECK (example.isObject() && example["version"].toString() == "1" && example["spectrum"]["db"].size() == 60
-                  && example["candidates"].size() >= 1,
-              "fixtures/contract/analysis_voice.json is valid");
+    LQ_CHECK (example.isObject(), "fixtures/contract/analysis_voice.json parses");
+    const auto current = juce::JSON::parse (assist::toJsonText (excessSummary()));
+    LQ_CHECK (juce::JSON::toString (example, true, 4) == juce::JSON::toString (current, true, 4),
+              "fixture equals the output of the 250 Hz excess case (regenerate with IAQ8_WRITE_FIXTURES=1)");
+}
+
+LQ_TEST ("analysis json: text has at most 4 decimals and survives non-finite values")
+{
+    const auto countLongDecimals = [] (const std::string& t)
+    {
+        int bad = 0;
+        for (size_t i = 0; i < t.size(); ++i)
+            if (t[i] == '.' && i > 0 && std::isdigit ((unsigned char) t[i - 1]))
+            {
+                size_t j = i + 1;
+                while (j < t.size() && std::isdigit ((unsigned char) t[j]))
+                    ++j;
+                bad += (j - i - 1 > 4) ? 1 : 0;
+            }
+        return bad;
+    };
+
+    const auto text = assist::toJsonText (excessSummary()).toStdString();
+    LQ_CHECK (countLongDecimals (text) == 0, "no number with more than 4 decimals");
+    LQ_CHECK (text.find ("e-") == std::string::npos && text.find ("-0.0,") == std::string::npos, "no exponent or negative zero");
+
+    // The scanner itself detects the default serialisation's noise.
+    LQ_CHECK (countLongDecimals ("[70.599999999999994]") == 1, "scanner detects long decimals");
+
+    auto s = excessSummary();
+    const auto nan = std::numeric_limits<double>::quiet_NaN(), inf = std::numeric_limits<double>::infinity();
+    s.rmsDbfs = nan; s.peakDbfs = -inf; s.crestDb = inf; s.spectrumDb[3] = nan; s.slopeDbPerOct = nan;
+    s.correlation = nan; s.seconds = inf; s.candidates[0].magnitudeDb = nan; s.candidates[0].freqHz = inf;
+    const auto j = juce::JSON::parse (assist::toJsonText (s));
+    LQ_CHECK (j.isObject(), "still valid JSON");
+    LQ_CHECK ((double) j["level"]["rms_dbfs"] == -120.0 && (double) j["level"]["peak_dbfs"] == -120.0, "non-finite levels read -120");
+    LQ_CHECK ((double) j["level"]["crest_db"] == 0.0 && (double) j["trend"]["slope_db_per_oct"] == 0.0, "non-finite crest and slope read 0");
+    LQ_CHECK ((double) j["spectrum"]["db"][3] == -120.0, "non-finite spectrum value reads -120");
+    LQ_CHECK ((double) j["stereo"]["correlation"] == 0.0 && (double) j["seconds"] == 0.0, "other non-finite numbers read 0");
+    LQ_CHECK ((double) j["candidates"][0]["magnitude_db"] == 0.0 && (double) j["candidates"][0]["freq_hz"] == 0.0, "candidate non-finite values read 0");
 }
 
 LQ_TEST ("contract: source strings round-trip")

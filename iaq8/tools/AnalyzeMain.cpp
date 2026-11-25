@@ -43,6 +43,6 @@ int main (int argc, char** argv)
         channels.emplace_back (buffer.getReadPointer (c), buffer.getReadPointer (c) + length);
 
     const auto summary = iaq8::analysis::analyse (channels, reader->sampleRate, *source);
-    std::puts (juce::JSON::toString (iaq8::assist::toJson (summary), true, 4).toRawUTF8());
+    std::puts (iaq8::assist::toJsonText (summary).toRawUTF8());
     return 0;
 }

@@ -235,23 +235,28 @@ std::optional<ProposedBand> parseBand (const juce::var& v)
 
 // Deepest [ / { nesting outside strings. JUCE's parser recurses once per
 // level without a limit, so a hostile body could overflow the pool thread's
-// stack; the body is rejected before parsing when it is too deep.
+// stack; the body is rejected before parsing when it is too deep. Strings
+// follow JUCE's parser exactly: they open with " or ' (both accepted as
+// values), close only on the same quote, and a backslash escapes the next
+// character. (Wherever the parser would not accept a quote it stops with an
+// error, so it never reaches brackets this scan skipped.)
 int nestingDepth (const juce::String& text)
 {
     int depth = 0, deepest = 0;
-    bool inString = false, escaped = false;
+    juce::juce_wchar quote = 0; // the open string's quote, 0 outside strings
+    bool escaped = false;
     for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
     {
         const auto c = *p;
-        if (inString)
+        if (quote != 0)
         {
-            if (escaped)        escaped = false;
+            if (escaped)         escaped = false;
             else if (c == '\\') escaped = true;
-            else if (c == '"')  inString = false;
+            else if (c == quote) quote = 0;
         }
-        else if (c == '"')             inString = true;
-        else if (c == '[' || c == '{') deepest = std::max (deepest, ++depth);
-        else if (c == ']' || c == '}') --depth;
+        else if (c == '"' || c == '\'')  quote = c;
+        else if (c == '[' || c == '{')    deepest = std::max (deepest, ++depth);
+        else if (c == ']' || c == '}')    --depth;
     }
     return deepest;
 }

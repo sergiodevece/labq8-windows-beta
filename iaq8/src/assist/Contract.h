@@ -88,7 +88,9 @@ juce::String toJsonText (const analysis::AnalysisSummary& summary);
 //
 // Errors (the body is ignored; the server sends { error: "<kind>" }):
 //   401 -> noAccess, 429 -> limitReached, 422 -> invalidRequest,
-//   5xx, timeout (30 s), network error (status 0) or any other status
+//   5xx, timeout (an overall 30 s deadline per request, counted from when
+//   it starts running, so time queued behind another request is excluded),
+//   network error (status 0) or any other status
 //   -> unavailable; 200 with an invalid body -> invalidResponse.
 
 struct ProposedBand

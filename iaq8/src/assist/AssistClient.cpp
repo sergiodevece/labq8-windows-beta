@@ -266,18 +266,23 @@ std::unique_ptr<Transport> makeHttpsTransport (int timeoutMs)
 
 bool isAllowedServer (const juce::URL& server)
 {
-    // Parsed by hand from the text: scheme "://" authority [/?#...].
+    // Parsed by hand from the text: scheme "://" authority [/?#...]. Anything
+    // a URL library could read differently is refused outright: a backslash
+    // anywhere (NSURL percent-encodes it, so "http://localhost\\@evil.com"
+    // would reach evil.com), user info, and any authority character outside
+    // [A-Za-z0-9.-:[]].
     const auto text = server.toString (false).trim();
     const auto schemeEnd = text.indexOf ("://");
-    if (schemeEnd <= 0 || hasControlCharacters (text) || text.containsChar (' '))
+    if (schemeEnd <= 0 || hasControlCharacters (text) || text.containsAnyOf (" \\"))
         return false;
     const auto scheme = text.substring (0, schemeEnd).toLowerCase();
     auto authority = text.substring (schemeEnd + 3);
-    for (auto stop : { '/', '?', '#', '\\' })
+    for (auto stop : { '/', '?', '#' })
         if (const auto i = authority.indexOfChar (stop); i >= 0)
             authority = authority.substring (0, i);
-    if (authority.isEmpty() || authority.containsChar ('@'))
-        return false; // no user info: "http://[::1]@evil.com" is evil.com
+    if (authority.isEmpty()
+        || ! authority.containsOnly ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]"))
+        return false; // also no user info: "http://[::1]@evil.com" is evil.com
 
     juce::String host;
     if (authority.startsWithChar ('['))
@@ -294,7 +299,7 @@ bool isAllowedServer (const juce::URL& server)
     {
         host = authority.upToFirstOccurrenceOf (":", false, false);
         const auto port = authority.fromFirstOccurrenceOf (":", false, false);
-        if (port.containsChar (':') || ! port.containsOnly ("0123456789"))
+        if (host.containsAnyOf ("[]") || ! port.containsOnly ("0123456789"))
             return false;
     }
     host = host.toLowerCase();

@@ -14,6 +14,8 @@
 #include <mutex>
 #include <thread>
 
+#include <sys/socket.h>
+
 using namespace iaq8;
 using labq8::test::str;
 
@@ -68,13 +70,15 @@ public:
     {
         ok = listener.createListener (0, "127.0.0.1");
         port = listener.getBoundPort();
-        thread = std::thread ([this] { run(); });
+        if (ok)
+            thread = std::thread ([this] { run(); });
     }
 
     ~LocalServer()
     {
         stop = true;
-        thread.join();
+        if (thread.joinable())
+            thread.join();
         listener.close();
     }
 
@@ -97,6 +101,10 @@ private:
             if (client == nullptr)
                 continue;
             ++connections;
+            // Writing to a socket the client closed must fail, not raise
+            // SIGPIPE (JUCE does not set this on accepted sockets).
+            int one = 1;
+            setsockopt (client->getRawSocketHandle(), SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof (one));
             serve (*client);
         }
     }
@@ -109,7 +117,10 @@ private:
             if (client.waitUntilReady (true, 20) == 1 && client.read (buffer, (int) sizeof (buffer), false) <= 0)
                 break;
 
-        const auto send = [&client] (const juce::String& text) { client.write (text.toRawUTF8(), (int) text.getNumBytesAsUTF8()); };
+        const auto send = [&client] (const juce::String& text)
+        {
+            return client.write (text.toRawUTF8(), (int) text.getNumBytesAsUTF8()) > 0;
+        };
         const juce::String headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\n"
                                      "Cache-Control: no-store\r\nContent-Length: ";
         if (mode == Mode::reply)
@@ -135,7 +146,8 @@ private:
         {
             if (mode == Mode::drip)
             {
-                send (" ");
+                if (! send (" "))
+                    break; // the client went away
                 ++bodyBytesSent;
             }
             juce::Thread::sleep (100);
@@ -370,7 +382,9 @@ LQ_TEST ("client: no access code or unsafe server, no network")
               "[::1] with a port, https with a port and path");
     for (auto bad : { "http://localhost.example.com", "ftp://x", "", "http://[::1]@evil.com/", "http://localhost@evil.com",
                       "http://127.0.0.1:80@evil.com", "https://user@assist.example.test", "http://127.0.0.1.evil.com",
-                      "http://[::1].evil.com/", "http://localhost:80x", "https://", "http://evil.com/?x=http://localhost" })
+                      "http://[::1].evil.com/", "http://localhost:80x", "https://", "http://evil.com/?x=http://localhost",
+                      "http://localhost\\@evil.com/", "http://127.0.0.1\\@evil.com/", "http://[::1]\\@evil.com/",
+                      "https://example.com\\@evil.com/", "http://localhost/\\evil", "http://local%68ost/", "http://localhost:80:81" })
         LQ_CHECK (! assist::isAllowedServer (juce::URL (bad)), str ("refused: ", bad));
 }
 
@@ -381,10 +395,10 @@ LQ_TEST ("client: https transport reports network errors as status 0 on a backgr
         ctx.skip ("needs DNS; set IAQ8_NETWORK_TESTS=1");
         return;
     }
-    auto transport = assist::makeHttpsTransport (5000);
-    juce::WaitableEvent finished;
+    juce::WaitableEvent finished;     // declared before the transport: it outlives any callback
     std::atomic<int> status { -1 };
     std::atomic<bool> onMessageThread { true };
+    auto transport = assist::makeHttpsTransport (5000);
     transport->post (juce::URL ("https://example.invalid/v1/turn"), "Content-Type: application/json", "{}",
                      [&] (int s, juce::String)
                      {
@@ -417,8 +431,8 @@ double destroyStuck (labq8::test::Context& ctx, LocalServer::Mode mode, const ch
 {
     LocalServer server (mode);
     LQ_CHECK (server.ok, "local server listening");
+    std::atomic<int> calls { 0 };     // declared before the transport: it outlives any callback
     auto transport = assist::makeHttpsTransport (30000);
-    std::atomic<int> calls { 0 };
     transport->post (server.url(), "Content-Type: application/json", "{}", [&] (int, juce::String) { ++calls; });
 
     for (int i = 0; i < 300 && server.connections == 0; ++i)
@@ -457,9 +471,9 @@ LQ_TEST ("client: a dripping body ends at the overall deadline as unavailable")
 {
     LocalServer server (LocalServer::Mode::drip);
     LQ_CHECK (server.ok, "local server listening");
-    auto transport = assist::makeHttpsTransport (1500); // stands in for the 30 s deadline
-    juce::WaitableEvent finished;
+    juce::WaitableEvent finished;     // declared before the transport: it outlives any callback
     std::atomic<int> status { -1 };
+    auto transport = assist::makeHttpsTransport (1500); // stands in for the 30 s deadline
     const auto start = std::chrono::steady_clock::now();
     transport->post (server.url(), "Content-Type: application/json", "{}", [&] (int s, juce::String)
     {
@@ -477,15 +491,14 @@ LQ_TEST ("client: a dripping body ends at the overall deadline as unavailable")
 LQ_TEST ("client: cancelAll cancels a request in flight, the next one works")
 {
     LocalServer silent (LocalServer::Mode::silent), replying (LocalServer::Mode::reply);
+    juce::WaitableEvent finished;     // declared before the transport: it outlives any callback
+    std::atomic<int> status { -1 }, cancelledCalls { 0 };
     auto transport = assist::makeHttpsTransport (30000);
-    std::atomic<int> cancelledCalls { 0 };
     transport->post (silent.url(), "", "{}", [&] (int, juce::String) { ++cancelledCalls; });
     for (int i = 0; i < 300 && silent.connections == 0; ++i)
         juce::Thread::sleep (10);
     transport->cancelAll();
 
-    juce::WaitableEvent finished;
-    std::atomic<int> status { -1 };
     const auto start = std::chrono::steady_clock::now();
     transport->post (replying.url(), "", "{}", [&] (int s, juce::String) { status = s; finished.signal(); });
     LQ_CHECK (finished.wait (5000) && status == 200, str ("next request answered, status ", status.load()));

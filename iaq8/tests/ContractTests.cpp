@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <regex>
+#include <thread>
 
 using namespace iaq8;
 using assist::Source;
@@ -321,22 +322,33 @@ LQ_TEST ("contract: error statuses")
 LQ_TEST ("contract: deeply nested bodies are rejected before parsing")
 {
     // JUCE's parser recurses per level; 100k levels would overflow a thread
-    // stack. Run on a 512 KB thread like the transport's pool thread.
-    const auto deep = juce::String::repeatedString ("[", 100000);
-    const auto deepObjects = juce::String::repeatedString ("{\"a\":", 100000);
-    std::atomic<int> invalid { 0 };
-    juce::Thread::launch ([&]
+    // stack. Run on a default-stack (512 KB) thread like the transport's pool
+    // thread, joined before the locals it uses go away.
+    const auto brackets = juce::String::repeatedString ("[", 100000) + juce::String::repeatedString ("]", 100000);
+    const juce::String bodies[] = {
+        juce::String::repeatedString ("[", 100000),
+        juce::String::repeatedString ("{\"a\":", 100000),
+        "['\"', " + brackets + "]",   // a " inside a '-string must not hide the brackets
+        "[\"'\", " + brackets + "]",   // and the mirror case
+    };
+    int invalid = 0;
+    std::thread ([&]
     {
-        for (const auto& body : { deep, deepObjects })
+        for (const auto& body : bodies)
         {
             const auto r = assist::parseReply (200, body);
             const auto* e = std::get_if<assist::Error> (&r);
             invalid += (e != nullptr && e->kind == assist::ErrorKind::invalidResponse) ? 1 : 0;
         }
-    });
-    for (int i = 0; i < 500 && invalid.load() < 2; ++i)
-        juce::Thread::sleep (10);
-    LQ_CHECK (invalid == 2, "100k levels of [ and { are invalidResponse, no crash");
+    }).join();
+    LQ_CHECK (invalid == 4, str ("100k levels are invalidResponse, no crash (", invalid, " of 4)"));
+
+    // Single-quoted strings are strings too (JUCE accepts them), and a quote
+    // of the other kind inside a string does not open or close anything.
+    const auto single = juce::String ("{\"kind\":\"question\",\"text\":'it\\'s [[[{{ \" fine'}");
+    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, single)), "brackets inside a single-quoted string are ignored");
+    const auto mixed = juce::String ("{\"kind\":\"question\",\"text\":\"it's [[[{{\"}");
+    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, mixed)), "a ' inside a double-quoted string is plain text");
 
     // Brackets inside strings do not count; 32 levels are still accepted.
     const auto inString = juce::String ("{\"kind\":\"question\",\"text\":\"") + juce::String::repeatedString ("[{", 1000) + "\\\"]\"}";

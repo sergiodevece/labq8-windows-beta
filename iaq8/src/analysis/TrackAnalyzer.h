@@ -50,9 +50,10 @@ struct AnalysisSummary
 // the audio thread. `channels` holds 1 or 2 channels of useful signal (as
 // CaptureBuffer::copyOut gives them) at `sampleRate`.
 //
-// spectrumDb is the 1/6-octave power density of the mid signal (L+R)/2 in
-// dB re 1 FS^2/Hz (so pink noise falls at -3 dB/oct, like slopeDbPerOct). With
-// too little signal (under 6 s, or quieter than -60 dBFS) enoughSignal is
-// false, there are no candidates and spectrumDb holds 60 x -120.
+// spectrumDb is a power spectral density: the 1/6-octave average of the mid
+// signal (L+R)/2 in dB re 1 FS^2/Hz, floored at -120 (so pink noise falls at
+// -3 dB/oct, like slopeDbPerOct). It is meaningful only when enoughSignal is
+// true. With too little signal (under 6 s, or quieter than -60 dBFS)
+// enoughSignal is false, there are no candidates and spectrumDb holds 60 x -120.
 AnalysisSummary analyse (const std::vector<std::vector<float>>& channels, double sampleRate, assist::Source source);
 } // namespace iaq8::analysis

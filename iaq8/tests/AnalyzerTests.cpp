@@ -246,3 +246,64 @@ LQ_TEST ("analyzer: silence or under 6 s is not enough signal")
     const auto justEnough = analysis::analyse (dual (test::makePink (312000, kFs, 8)), kFs, Source::mix);
     LQ_CHECK (justEnough.enoughSignal, "6.5 s of pink noise is enough");
 }
+
+LQ_TEST ("analyzer: +4.5 dB bell at 500 Hz Q1 on pink noise (voice) is an excess near 500 Hz")
+{
+    for (std::uint32_t seed : { 9u, 20u, 21u })
+    {
+        auto x = test::makePink (kTen, kFs, seed);
+        test::applyBiquad (x, labq8::dsp::designBell (kFs, 500.0, 4.5, 1.0));
+        const auto s = analysis::analyse (dual (x), kFs, Source::voice);
+        ctx.note (str ("seed ", seed, ": ", describe (s)));
+
+        const auto* c = nearest (s, CandidateKind::excess, 500.0);
+        LQ_CHECK (c != nullptr, str ("seed ", seed, ": an excess is reported"));
+        if (c != nullptr)
+            LQ_CHECK (octavesBetween (c->freqHz, 500.0) <= 1.0 / 6.0 && c->magnitudeDb >= 3.0 && c->magnitudeDb <= 5.5,
+                      str ("seed ", seed, ": excess at ", c->freqHz, " Hz, ", c->magnitudeDb, " dB"));
+        LQ_CHECK (std::abs (s.slopeDbPerOct + 3.0) <= 0.5, str ("the bell does not tilt the trend: ", s.slopeDbPerOct));
+    }
+}
+
+LQ_TEST ("analyzer: deficit and several candidates are listed by magnitude, at most 8")
+{
+    // A broad dip, a broad bump and a narrow peak.
+    auto x = test::makePink (kTen, kFs, 10);
+    test::applyBiquad (x, labq8::dsp::designBell (kFs, 2000.0, -6.0, 0.7));
+    test::applyBiquad (x, labq8::dsp::designBell (kFs, 150.0, 6.0, 1.0));
+    test::applyBiquad (x, labq8::dsp::designBell (kFs, 8000.0, 12.0, 12.0));
+    const auto s = analysis::analyse (dual (x), kFs, Source::other);
+    ctx.note (describe (s));
+
+    const auto* d = nearest (s, CandidateKind::deficit, 2000.0);
+    LQ_CHECK (d != nullptr, "a deficit is reported");
+    if (d != nullptr)
+        LQ_CHECK (octavesBetween (d->freqHz, 2000.0) <= 1.0 / 3.0 && d->magnitudeDb <= -4.0 && d->widthOct >= 2.0 / 3.0,
+                  str ("deficit at ", d->freqHz, " Hz, ", d->magnitudeDb, " dB, ", d->widthOct, " oct"));
+    const auto* e = nearest (s, CandidateKind::excess, 150.0);
+    LQ_CHECK (e != nullptr && octavesBetween (e->freqHz, 150.0) <= 1.0 / 6.0, "the bump is an excess near 150 Hz");
+    const auto* r = nearest (s, CandidateKind::resonance, 8000.0);
+    LQ_CHECK (r != nullptr && octavesBetween (r->freqHz, 8000.0) <= 1.0 / 12.0, "the peak is a resonance near 8 kHz");
+
+    const auto ordered = [&ctx] (const AnalysisSummary& a)
+    {
+        LQ_CHECK (a.candidates.size() <= 8, str (a.candidates.size(), " candidates"));
+        for (size_t i = 0; i < a.candidates.size(); ++i)
+        {
+            LQ_CHECK (a.candidates[i].id == str ("c", i + 1), str ("id ", a.candidates[i].id, " at ", i));
+            if (i > 0)
+                LQ_CHECK (std::abs (a.candidates[i - 1].magnitudeDb) >= std::abs (a.candidates[i].magnitudeDb),
+                          str ("sorted by |magnitude| at ", i));
+        }
+    };
+    ordered (s);
+
+    // Ten narrow peaks 0.55 oct apart: only the 8 strongest are listed.
+    auto many = test::makePink (kTen, kFs, 11);
+    for (int k = 0; k < 10; ++k)
+        test::applyBiquad (many, labq8::dsp::designBell (kFs, 400.0 * std::exp2 (0.55 * k), 10.0 + 0.4 * k, 12.0));
+    const auto m = analysis::analyse (dual (many), kFs, Source::other);
+    ctx.note (str ("ten peaks: ", describe (m)));
+    LQ_CHECK (m.candidates.size() == 8, str ("capped at 8, got ", m.candidates.size()));
+    ordered (m);
+}

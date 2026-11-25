@@ -15,7 +15,8 @@ namespace
 namespace tn = tuning;
 
 double ampToDbfs (double amplitude) { return amplitude > 0 ? std::max (tn::floorDb, 20.0 * std::log10 (amplitude)) : tn::floorDb; }
-double densityDb (double density) { return 10.0 * std::log10 (std::max (density, 1.0e-30)); }
+// Density in dB re 1 FS^2/Hz, floored at floorDb like every other level.
+double densityDb (double density) { return density > 0 ? std::max (tn::floorDb, 10.0 * std::log10 (density)) : tn::floorDb; }
 
 //==============================================================================
 // One-sided Welch power density of x (FS^2/Hz per bin), with band averages.
@@ -175,6 +176,68 @@ double widthAbove (const std::vector<double>& v, int k, int lo, int hi, double l
     return right - left;
 }
 
+struct Line { double slope = 0, intercept = 0; };
+
+// Least-squares line of y against grid.x over the points of [lo, hi] marked
+// in keep (keep[i - lo]).
+Line fitLine (const Grid& grid, const std::vector<double>& y, int lo, int hi, const std::vector<char>& keep)
+{
+    double n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (int i = lo; i <= hi; ++i)
+        if (keep[(size_t) (i - lo)] != 0)
+        {
+            const auto x = grid.x (i), v = y[(size_t) i];
+            n += 1; sx += x; sy += v; sxx += x * x; sxy += x * v;
+        }
+
+    const auto den = n * sxx - sx * sx;
+    if (n < 2 || den <= 0)
+        return { 0.0, n > 0 ? sy / n : 0.0 };
+    const auto slope = (n * sxy - sx * sy) / den;
+    return { slope, (sy - slope * sx) / n };
+}
+
+// Least squares, then refits without the points further than a threshold
+// from the current line (the very features the trend is used to measure, which
+// would otherwise tilt it and shrink them). The threshold starts at
+// trendOutlierDb and tightens by trendOutlierStepDb per refit down to
+// trendOutlierFinalDb, so the core of a feature goes first and its skirts
+// after, once the line no longer leans on them. It stops after trendRefits
+// refits, or when the kept set no longer changes at the final threshold. A
+// refit that would keep fewer than trendMinKeptFraction of the points is not
+// made: the line so far is kept (the plain fit, if it is the first).
+Line robustTrend (const Grid& grid, const std::vector<double>& y, int lo, int hi)
+{
+    const auto count = (size_t) (hi - lo + 1);
+    std::vector<char> keep (count, 1), next (count);
+    auto line = fitLine (grid, y, lo, hi, keep);
+
+    for (int iteration = 0; iteration < tn::trendRefits; ++iteration)
+    {
+        const auto threshold = std::max (tn::trendOutlierFinalDb, tn::trendOutlierDb - iteration * tn::trendOutlierStepDb);
+        size_t kept = 0;
+        for (int i = lo; i <= hi; ++i)
+        {
+            const auto residual = y[(size_t) i] - (line.intercept + line.slope * grid.x (i));
+            next[(size_t) (i - lo)] = std::abs (residual) <= threshold ? 1 : 0;
+            kept += next[(size_t) (i - lo)] != 0 ? 1 : 0;
+        }
+
+        if ((double) kept < tn::trendMinKeptFraction * (double) count)
+            break;
+        if (next == keep)
+        {
+            if (threshold <= tn::trendOutlierFinalDb)
+                break;
+            continue;
+        }
+
+        keep = next;
+        line = fitLine (grid, y, lo, hi, keep);
+    }
+    return line;
+}
+
 struct Found
 {
     Candidate c;
@@ -293,21 +356,14 @@ AnalysisSummary analyse (const std::vector<std::vector<float>>& channels, double
     }
 
     //==========================================================================
-    // Trend: least squares of the 1/3-oct density (dB) against log2 (f).
+    // Trend of the 1/3-oct density (dB) against log2 (f) over the fit range.
     s.fitToHz = std::min (range.toHz, maxHz);
     const auto lo = grid.firstAtOrAbove (s.fitFromHz), hi = grid.lastAtOrBelow (s.fitToHz);
     if (hi - lo < 2)
         return s;
 
-    double sx = 0, sy = 0, sxx = 0, sxy = 0;
-    for (int i = lo; i <= hi; ++i)
-    {
-        const auto x = grid.x (i), y = third[(size_t) i];
-        sx += x; sy += y; sxx += x * x; sxy += x * y;
-    }
-    const auto count = (double) (hi - lo + 1);
-    const auto slope = (count * sxy - sx * sy) / (count * sxx - sx * sx);
-    const auto intercept = (sy - slope * sx) / count;
+    const auto line = robustTrend (grid, third, lo, hi);
+    const auto slope = line.slope, intercept = line.intercept;
     s.slopeDbPerOct = slope;
 
     std::vector<double> diff ((size_t) grid.size), negDiff ((size_t) grid.size), resonance ((size_t) grid.size);

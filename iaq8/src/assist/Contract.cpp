@@ -3,6 +3,7 @@
 #include "analysis/AnalysisTuning.h"
 #include "parameters/ParameterIDs.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <utility>
@@ -232,9 +233,34 @@ std::optional<ProposedBand> parseBand (const juce::var& v)
     return b;
 }
 
+// Deepest [ / { nesting outside strings. JUCE's parser recurses once per
+// level without a limit, so a hostile body could overflow the pool thread's
+// stack; the body is rejected before parsing when it is too deep.
+int nestingDepth (const juce::String& text)
+{
+    int depth = 0, deepest = 0;
+    bool inString = false, escaped = false;
+    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+    {
+        const auto c = *p;
+        if (inString)
+        {
+            if (escaped)        escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"')  inString = false;
+        }
+        else if (c == '"')             inString = true;
+        else if (c == '[' || c == '{') deepest = std::max (deepest, ++depth);
+        else if (c == ']' || c == '}') --depth;
+    }
+    return deepest;
+}
+
 Reply parseOk (const juce::String& body)
 {
     const auto invalid = makeError (ErrorKind::invalidResponse);
+    if (nestingDepth (body) > maxJsonDepth)
+        return invalid;
     juce::var root;
     if (juce::JSON::parse (body, root).failed())
         return invalid;

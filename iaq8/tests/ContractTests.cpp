@@ -318,6 +318,34 @@ LQ_TEST ("contract: error statuses")
     LQ_CHECK (assist::makeError (K::unavailable).userMessage == "Sin conexi\xc3\xb3n: tu ecualizaci\xc3\xb3n sigue activa", "offline text of the spec");
 }
 
+LQ_TEST ("contract: deeply nested bodies are rejected before parsing")
+{
+    // JUCE's parser recurses per level; 100k levels would overflow a thread
+    // stack. Run on a 512 KB thread like the transport's pool thread.
+    const auto deep = juce::String::repeatedString ("[", 100000);
+    const auto deepObjects = juce::String::repeatedString ("{\"a\":", 100000);
+    std::atomic<int> invalid { 0 };
+    juce::Thread::launch ([&]
+    {
+        for (const auto& body : { deep, deepObjects })
+        {
+            const auto r = assist::parseReply (200, body);
+            const auto* e = std::get_if<assist::Error> (&r);
+            invalid += (e != nullptr && e->kind == assist::ErrorKind::invalidResponse) ? 1 : 0;
+        }
+    });
+    for (int i = 0; i < 500 && invalid.load() < 2; ++i)
+        juce::Thread::sleep (10);
+    LQ_CHECK (invalid == 2, "100k levels of [ and { are invalidResponse, no crash");
+
+    // Brackets inside strings do not count; 32 levels are still accepted.
+    const auto inString = juce::String ("{\"kind\":\"question\",\"text\":\"") + juce::String::repeatedString ("[{", 1000) + "\\\"]\"}";
+    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, inString)), "brackets inside strings are ignored");
+    const auto at32 = juce::String ("{\"kind\":\"question\",\"text\":\"x\",\"extra\":") + juce::String::repeatedString ("[", 31)
+                      + juce::String::repeatedString ("]", 31) + "}";
+    LQ_CHECK (std::holds_alternative<assist::Question> (assist::parseReply (200, at32)), "32 levels accepted");
+}
+
 LQ_TEST ("contract: invalid 200 bodies are invalidResponse")
 {
     const auto isInvalid = [] (const juce::String& body)
@@ -335,6 +363,8 @@ LQ_TEST ("contract: invalid 200 bodies are invalidResponse")
     LQ_CHECK (isInvalid ("{\"kind\":\"question\",\"text\":\"x\",\"quick_replies\":\"a\"}"), "quick_replies not an array");
     LQ_CHECK (isInvalid ("{\"kind\":\"question\",\"text\":\"x\",\"quick_replies\":[1]}"), "quick reply not a string");
     LQ_CHECK (isInvalid ("{\"kind\":\"proposal\",\"explanation\":\"x\"}"), "proposal without bands");
+    LQ_CHECK (isInvalid ("{\"kind\":\"question\",\"text\":\"x\",\"extra\":" + juce::String::repeatedString ("[", 33) + juce::String::repeatedString ("]", 33) + "}"),
+              "nested deeper than 32 levels");
     LQ_CHECK (isInvalid ("{\"kind\":\"proposal\",\"explanation\":\"x\",\"bands\":{}}"), "bands not an array");
     const auto band = [] (const char* fields) { return juce::String ("{\"kind\":\"proposal\",\"explanation\":\"x\",\"bands\":[{") + fields + "}]}"; };
     LQ_CHECK (isInvalid (band ("\"type\":\"peak\",\"freq_hz\":100,\"gain_db\":1,\"q\":1")), "unknown band type");

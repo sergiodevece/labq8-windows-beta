@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 
 namespace iaq8::assist
 {
@@ -13,19 +15,28 @@ namespace
 {
 using labq8::dsp::FilterType;
 
-// Lines use '.' as decimal separator (C locale), e.g. "Banda 1: ganancia 9.0 dB ajustada a 6.0 dB".
-std::string format (const char* pattern, int band, double a, double b)
+// Fixed-point text with '.' as decimal separator whatever the process or
+// C++ global locale is (the host may change either).
+std::string fixed (double v, int decimals)
 {
-    char buffer[160];
-    std::snprintf (buffer, sizeof (buffer), pattern, band, a, b);
-    return buffer;
+    std::ostringstream os;
+    os.imbue (std::locale::classic());
+    os << std::fixed << std::setprecision (decimals) << v;
+    return os.str();
 }
 
-std::string format (const char* pattern, int band)
+// Patterns use {n} (band number), {a} and {b} (old and new value).
+std::string makeLine (std::string pattern, int band, const std::string& a = {}, const std::string& b = {})
 {
-    char buffer[160];
-    std::snprintf (buffer, sizeof (buffer), pattern, band);
-    return buffer;
+    const auto replace = [&pattern] (const std::string& key, const std::string& value)
+    {
+        if (const auto i = pattern.find (key); i != std::string::npos)
+            pattern.replace (i, key.size(), value);
+    };
+    replace ("{n}", std::to_string (band));
+    replace ("{a}", a);
+    replace ("{b}", b);
+    return pattern;
 }
 
 // The texts below spell these values out.
@@ -43,13 +54,14 @@ bool namesResonance (const std::string& candidateId, const analysis::AnalysisSum
     return false;
 }
 
-// Clamps `value` into [lo, hi]; on a change adds `pattern` (band, old, new).
-void clampInto (double& value, double lo, double hi, const char* pattern, int band, LimitReport& report)
+// Clamps `value` into [lo, hi]; on a change adds `pattern` with the old and
+// new values written with `decimals` decimals.
+void clampInto (double& value, double lo, double hi, int decimals, const char* pattern, int band, LimitReport& report)
 {
     if (value < lo || value > hi)
     {
         const auto clamped = std::clamp (value, lo, hi);
-        report.adjustments.push_back (format (pattern, band, value, clamped));
+        report.adjustments.push_back (makeLine (pattern, band, fixed (value, decimals), fixed (clamped, decimals)));
         value = clamped;
     }
 }
@@ -69,7 +81,7 @@ dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::
         out[i] = unusedBand (i);
 
     for (size_t i = maxBands; i < proposal.bands.size(); ++i)
-        report.adjustments.push_back (format ("Banda %d descartada: como mucho 8 bandas", (int) i + 1));
+        report.adjustments.push_back (makeLine ("Banda {n} descartada: como mucho 8 bandas", (int) i + 1));
 
     const bool isVoice = source == Source::voice, isBass = source == Source::bass, isMix = source == Source::mix;
 
@@ -80,15 +92,15 @@ dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::
 
         if (! std::isfinite (b.frequencyHz) || ! std::isfinite (b.gainDb) || ! std::isfinite (b.q))
         {
-            report.adjustments.push_back (format ("Banda %d descartada: valores no válidos", n));
+            report.adjustments.push_back (makeLine ("Banda {n} descartada: valores no válidos", n));
             continue;
         }
 
-        clampInto (b.frequencyHz, limits::minFrequencyHz, limits::maxFrequencyHz, "Banda %d: frecuencia %.0f Hz ajustada a %.0f Hz", n, report);
+        clampInto (b.frequencyHz, limits::minFrequencyHz, limits::maxFrequencyHz, 0, "Banda {n}: frecuencia {a} Hz ajustada a {b} Hz", n, report);
         if (b.type == FilterType::lowCut && isVoice)
-            clampInto (b.frequencyHz, 0.0, limits::voiceMaxLowCutHz, "Banda %d (voz): corte de graves en %.0f Hz bajado a %.0f Hz", n, report);
+            clampInto (b.frequencyHz, 0.0, limits::voiceMaxLowCutHz, 0, "Banda {n} (voz): corte de graves en {a} Hz bajado a {b} Hz", n, report);
         if (b.type == FilterType::lowCut && isBass)
-            clampInto (b.frequencyHz, 0.0, limits::bassMaxLowCutHz, "Banda %d (bajo): corte de graves en %.0f Hz bajado a %.0f Hz", n, report);
+            clampInto (b.frequencyHz, 0.0, limits::bassMaxLowCutHz, 0, "Banda {n} (bajo): corte de graves en {a} Hz bajado a {b} Hz", n, report);
 
         if (isCutLike (b.type))
         {
@@ -96,24 +108,36 @@ dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::
         }
         else
         {
-            clampInto (b.gainDb, limits::minGainDb, limits::maxGainDb, "Banda %d: ganancia %.1f dB ajustada a %.1f dB", n, report);
+            clampInto (b.gainDb, limits::minGainDb, limits::maxGainDb, 1, "Banda {n}: ganancia {a} dB ajustada a {b} dB", n, report);
             if (isMix)
-                clampInto (b.gainDb, limits::mixMinGainDb, limits::mixMaxGainDb, "Banda %d (mezcla): ganancia %.1f dB ajustada a %.1f dB", n, report);
+                clampInto (b.gainDb, limits::mixMinGainDb, limits::mixMaxGainDb, 1, "Banda {n} (mezcla): ganancia {a} dB ajustada a {b} dB", n, report);
             if (isVoice && b.gainDb > 0.0 && b.frequencyHz < limits::voiceNoBoostBelowHz)
             {
-                report.adjustments.push_back (format ("Banda %d descartada (voz): sin realces por debajo de 80 Hz", n));
+                report.adjustments.push_back (makeLine ("Banda {n} descartada (voz): sin realces por debajo de 80 Hz", n));
                 continue;
             }
         }
 
-        if (b.type == FilterType::bell)
-            clampInto (b.q, limits::minBellQ, limits::maxBellQ, "Banda %d: Q %.2f ajustada a %.2f", n, report);
-        else if (b.type == FilterType::notch)
-            clampInto (b.q, limits::minBellQ,
-                       namesResonance (proposal.bands[i].candidateId, analysis) ? limits::maxResonanceNotchQ : limits::maxBellQ,
-                       "Banda %d: Q %.2f ajustada a %.2f", n, report);
-        else
-            clampInto (b.q, labq8::dsp::limits::minQ, labq8::dsp::limits::maxQ, "Banda %d: Q %.2f ajustada a %.2f", n, report);
+        constexpr const char* qLine = "Banda {n}: Q {a} ajustada a {b}";
+        switch (b.type)
+        {
+            case FilterType::bell:
+                clampInto (b.q, limits::minBellQ, limits::maxBellQ, 2, qLine, n, report);
+                break;
+            case FilterType::notch:
+                clampInto (b.q, limits::minBellQ,
+                           namesResonance (proposal.bands[i].candidateId, analysis) ? limits::maxResonanceNotchQ : limits::maxBellQ,
+                           2, qLine, n, report);
+                break;
+            case FilterType::lowShelf:
+            case FilterType::highShelf:
+                clampInto (b.q, limits::minShelfQ, limits::maxShelfQ, 2, qLine, n, report);
+                break;
+            case FilterType::lowCut:
+            case FilterType::highCut:
+                clampInto (b.q, limits::minCutQ, limits::maxCutQ, 3, qLine, n, report);
+                break;
+        }
 
         out[i] = b;
         used[i] = true;
@@ -148,7 +172,7 @@ dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::
             if (better)
                 victim = i;
         }
-        report.adjustments.push_back (format ("Banda %d descartada: como mucho 5 bandas activas", (int) victim + 1));
+        report.adjustments.push_back (makeLine ("Banda {n} descartada: como mucho 5 bandas activas", (int) victim + 1));
         out[victim] = unusedBand (victim);
         used[victim] = false;
     }

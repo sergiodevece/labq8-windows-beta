@@ -80,6 +80,7 @@ juce::String toJsonText (const analysis::AnalysisSummary& summary);
 // 200 reply, one of:
 //   { kind: "question", text, quick_replies: [..] }
 //   { kind: "proposal", explanation, bands: [Band..], quick_replies: [..] }
+//   A body nested deeper than 32 levels ([ or {) is rejected unparsed.
 //   quick_replies: at most 8 kept, each trimmed and cut to 18 characters,
 //   empty ones dropped; the key may be absent. bands: at most 8 kept (the
 //   rest are ignored); bypass may be absent (false), candidate_id and reason
@@ -139,6 +140,7 @@ using Reply = std::variant<Question, Proposal, Error>;
 inline constexpr const char* pluginId = "iaq8";
 inline constexpr size_t maxBands = 8, maxQuickReplies = 8;
 inline constexpr int maxQuickReplyChars = 18;
+inline constexpr int maxJsonDepth = 32; // deeper 200 bodies are invalidResponse (checked before parsing)
 
 // The fixed Spanish (UTF-8) text shown for each error kind.
 const char* userMessage (ErrorKind kind);

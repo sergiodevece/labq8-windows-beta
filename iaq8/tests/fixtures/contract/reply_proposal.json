@@ -6,7 +6,7 @@
       "type": "low_cut",
       "freq_hz": 90.0,
       "gain_db": 0.0,
-      "q": 0.71,
+      "q": 0.707,
       "bypass": false,
       "candidate_id": null,
       "reason": "Quita el retumbe por debajo de la voz"

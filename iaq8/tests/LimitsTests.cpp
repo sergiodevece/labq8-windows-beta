@@ -8,7 +8,10 @@
 #include "assist/ProposalLimits.h"
 #include "parameters/ParameterIDs.h"
 
+#include <clocale>
+#include <cstdio>
 #include <limits>
+#include <locale>
 
 using namespace iaq8;
 using assist::Source;
@@ -71,7 +74,7 @@ analysis::AnalysisSummary withCandidates()
 
 LQ_TEST ("limits: a safe proposal passes unchanged, unused slots are defaults")
 {
-    const auto r = run ({ band (FilterType::bell, 250, -3, 1.4), band (FilterType::highShelf, 8000, 2, 0.7), band (FilterType::lowCut, 60, 0, 0.71) });
+    const auto r = run ({ band (FilterType::bell, 250, -3, 1.4), band (FilterType::highShelf, 8000, 2, 0.7), band (FilterType::lowCut, 60, 0, 0.707) });
     LQ_CHECK (r.lines.empty(), "no adjustments: " + allLines (r));
     LQ_CHECK (r.bands[0].frequencyHz == 250 && r.bands[0].gainDb == -3 && r.bands[0].q == 1.4 && ! r.bands[0].bypassed, "band 1 kept");
     LQ_CHECK (r.bands[1].type == FilterType::highShelf && r.bands[1].gainDb == 2, "band 2 kept");
@@ -82,12 +85,12 @@ LQ_TEST ("limits: a safe proposal passes unchanged, unused slots are defaults")
 
 LQ_TEST ("limits: at most 5 active bands, smallest |gain| discarded, cuts count")
 {
-    const auto r = run ({ band (FilterType::lowCut, 40, 0, 0.71),    // cut: kept
+    const auto r = run ({ band (FilterType::lowCut, 40, 0, 0.707),    // cut: kept
                           band (FilterType::bell, 200, -1.0, 1),     // smallest |gain|: discarded
                           band (FilterType::bell, 500, 4.0, 1),
                           band (FilterType::bell, 1000, -2.0, 1),    // second smallest: discarded
                           band (FilterType::bell, 3000, -5.0, 2),
-                          band (FilterType::highCut, 18000, 0, 0.71),// cut: kept
+                          band (FilterType::highCut, 18000, 0, 0.707),// cut: kept
                           band (FilterType::bell, 5000, 2.5, 1),
                           band (FilterType::bell, 7000, 3.0, 1, {}, true) }); // bypassed: not active, kept
     int active = 0;
@@ -105,7 +108,7 @@ LQ_TEST ("limits: at most 5 active bands, smallest |gain| discarded, cuts count"
     // Six cuts: the last one goes.
     std::vector<assist::ProposedBand> cuts;
     for (int i = 0; i < 6; ++i)
-        cuts.push_back (band (i % 2 == 0 ? FilterType::lowCut : FilterType::notch, 30.0 + 1000.0 * i, 0, 2));
+        cuts.push_back (band (i % 2 == 0 ? FilterType::lowCut : FilterType::notch, 30.0 + 1000.0 * i, 0, i % 2 == 0 ? 0.7 : 2.0));
     const auto c = run (cuts);
     LQ_CHECK (isUnused (c.bands[5], 5) && ! c.bands[4].bypassed && hasLine (c, "Banda 6 descartada"), "the last cut is discarded");
 }
@@ -143,6 +146,54 @@ LQ_TEST ("limits: notch Q up to 18 only on a measured resonance")
     LQ_CHECK (unknownId.bands[0].q == 8.0, "unknown candidate id: 8");
 }
 
+LQ_TEST ("limits: shelf Q 0.5..1")
+{
+    const auto r = run ({ band (FilterType::lowShelf, 200, 3, 4), band (FilterType::highShelf, 8000, 2, 0.2), band (FilterType::highShelf, 9000, 2, 0.8) });
+    LQ_CHECK (r.bands[0].q == 1.0 && r.bands[1].q == 0.5 && r.bands[2].q == 0.8, "shelf Q clamped");
+    LQ_CHECK (r.lines.size() == 2 && hasLine (r, "Banda 1: Q 4.00 ajustada a 1.00") && hasLine (r, "Banda 2: Q 0.20 ajustada a 0.50"), allLines (r));
+}
+
+LQ_TEST ("limits: cut Q 0.5..0.707")
+{
+    const auto r = run ({ band (FilterType::lowCut, 60, 0, 2.0), band (FilterType::highCut, 15000, 0, 18.0),
+                          band (FilterType::lowCut, 50, 0, 0.1), band (FilterType::highCut, 16000, 0, 0.6) });
+    LQ_CHECK (r.bands[0].q == 0.707 && r.bands[1].q == 0.707 && r.bands[2].q == 0.5 && r.bands[3].q == 0.6, "cut Q clamped");
+    LQ_CHECK (r.lines.size() == 3 && hasLine (r, "Banda 1: Q 2.000 ajustada a 0.707") && hasLine (r, "Banda 2: Q 18.000 ajustada a 0.707")
+                  && hasLine (r, "Banda 3: Q 0.100 ajustada a 0.500"), allLines (r));
+}
+
+LQ_TEST ("limits: lines use '.' decimals in any locale")
+{
+    // Both the C locale (printf) and the C++ global locale set to Spanish.
+    const std::string oldC = std::setlocale (LC_NUMERIC, nullptr);
+    const auto oldGlobal = std::locale();
+    const char* names[] = { "es_ES.UTF-8", "es_ES", "de_DE.UTF-8", "fr_FR.UTF-8" };
+    const char* used = nullptr;
+    for (auto n : names)
+        if (std::setlocale (LC_NUMERIC, n) != nullptr)
+        {
+            used = n;
+            break;
+        }
+    if (used == nullptr)
+    {
+        ctx.skip ("no comma-decimal locale installed");
+        return;
+    }
+    try { std::locale::global (std::locale (used)); } catch (...) {}
+
+    char probe[16];
+    std::snprintf (probe, sizeof (probe), "%.1f", 9.0);
+    ctx.note (str ("locale ", used, ": printf gives ", probe));
+    const auto r = run ({ band (FilterType::bell, 1000, 9, 1) });
+
+    std::locale::global (oldGlobal);
+    std::setlocale (LC_NUMERIC, oldC.c_str());
+
+    LQ_CHECK (std::string (probe) == "9,0", "the locale really uses a decimal comma (the test is meaningful)");
+    LQ_CHECK (hasLine (r, "Banda 1: ganancia 9.0 dB ajustada a 6.0 dB"), "'.' decimals: " + allLines (r));
+}
+
 LQ_TEST ("limits: frequency 20..20000 Hz")
 {
     const auto r = run ({ band (FilterType::bell, 10, -3, 1), band (FilterType::highCut, 25000, 0, 0.7) });
@@ -166,17 +217,17 @@ LQ_TEST ("limits: voice, no boosts below 80 Hz")
 
 LQ_TEST ("limits: voice low cut <= 150 Hz")
 {
-    const auto r = run ({ band (FilterType::lowCut, 220, 0, 0.71), band (FilterType::lowCut, 120, 0, 0.71) }, Source::voice);
+    const auto r = run ({ band (FilterType::lowCut, 220, 0, 0.707), band (FilterType::lowCut, 120, 0, 0.707) }, Source::voice);
     LQ_CHECK (r.bands[0].frequencyHz == 150.0 && r.bands[1].frequencyHz == 120.0, "low cut capped at 150 Hz");
     LQ_CHECK (r.lines.size() == 1 && hasLine (r, "Banda 1 (voz): corte de graves en 220 Hz bajado a 150 Hz"), allLines (r));
 }
 
 LQ_TEST ("limits: bass low cut <= 50 Hz")
 {
-    const auto r = run ({ band (FilterType::lowCut, 80, 0, 0.71) }, Source::bass);
+    const auto r = run ({ band (FilterType::lowCut, 80, 0, 0.707) }, Source::bass);
     LQ_CHECK (r.bands[0].frequencyHz == 50.0, "low cut capped at 50 Hz");
     LQ_CHECK (r.lines.size() == 1 && hasLine (r, "Banda 1 (bajo): corte de graves en 80 Hz bajado a 50 Hz"), allLines (r));
-    const auto guitar = run ({ band (FilterType::lowCut, 80, 0, 0.71) }, Source::electricGuitar);
+    const auto guitar = run ({ band (FilterType::lowCut, 80, 0, 0.707) }, Source::electricGuitar);
     LQ_CHECK (guitar.bands[0].frequencyHz == 80.0 && guitar.lines.empty(), "other sources keep it");
 }
 

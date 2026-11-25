@@ -40,6 +40,113 @@ struct FakeState
         std::lock_guard<std::mutex> lock (mutex);
         return pending.at (i);
     }
+
+    // Moves the request out, so the caller holds the only copy of `done`.
+    Pending takeOut (size_t i)
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        auto p = std::move (pending.at (i));
+        pending.at (i).done = nullptr;
+        return p;
+    }
+};
+
+// A local HTTP server on 127.0.0.1 (no network needed) that misbehaves on
+// purpose. One connection at a time, served on its own (joined) thread.
+class LocalServer
+{
+public:
+    enum class Mode
+    {
+        silent,     // accepts and never answers
+        stallBody,  // sends the headers and part of the body, then nothing
+        drip,       // sends the headers, then one body byte every 100 ms, forever
+        reply       // answers 200 with a question
+    };
+
+    explicit LocalServer (Mode m) : mode (m)
+    {
+        ok = listener.createListener (0, "127.0.0.1");
+        port = listener.getBoundPort();
+        thread = std::thread ([this] { run(); });
+    }
+
+    ~LocalServer()
+    {
+        stop = true;
+        thread.join();
+        listener.close();
+    }
+
+    juce::URL url() const { return juce::URL ("http://127.0.0.1:" + juce::String (port) + "/v1/turn"); }
+    juce::URL base() const { return juce::URL ("http://127.0.0.1:" + juce::String (port)); }
+
+    bool ok = false;
+    std::atomic<int> connections { 0 };
+    std::atomic<bool> headersSent { false };
+    std::atomic<int> bodyBytesSent { 0 };
+
+private:
+    void run()
+    {
+        while (! stop)
+        {
+            if (listener.waitUntilReady (true, 20) != 1)
+                continue;
+            std::unique_ptr<juce::StreamingSocket> client (listener.waitForNextConnection());
+            if (client == nullptr)
+                continue;
+            ++connections;
+            serve (*client);
+        }
+    }
+
+    void serve (juce::StreamingSocket& client)
+    {
+        // Read the request (headers and the small body) without parsing it.
+        char buffer[8192];
+        for (int i = 0; i < 10 && ! stop; ++i)
+            if (client.waitUntilReady (true, 20) == 1 && client.read (buffer, (int) sizeof (buffer), false) <= 0)
+                break;
+
+        const auto send = [&client] (const juce::String& text) { client.write (text.toRawUTF8(), (int) text.getNumBytesAsUTF8()); };
+        const juce::String headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\n"
+                                     "Cache-Control: no-store\r\nContent-Length: ";
+        if (mode == Mode::reply)
+        {
+            const juce::String body = "{\"kind\":\"question\",\"text\":\"Hola\",\"quick_replies\":[]}";
+            send (headers + juce::String ((int) body.getNumBytesAsUTF8()) + "\r\n\r\n" + body);
+            headersSent = true;
+        }
+        else if (mode == Mode::stallBody)
+        {
+            send (headers + "100000\r\n\r\n" + juce::String::repeatedString (" ", 600) + "{");
+            headersSent = true;
+            bodyBytesSent = 601;
+        }
+        else if (mode == Mode::drip)
+        {
+            send (headers + "100000\r\n\r\n" + juce::String::repeatedString (" ", 600));
+            headersSent = true;
+            bodyBytesSent = 600;
+        }
+
+        while (! stop)
+        {
+            if (mode == Mode::drip)
+            {
+                send (" ");
+                ++bodyBytesSent;
+            }
+            juce::Thread::sleep (100);
+        }
+    }
+
+    const Mode mode;
+    juce::StreamingSocket listener;
+    int port = 0;
+    std::atomic<bool> stop { false };
+    std::thread thread;
 };
 
 struct FakeTransport final : assist::Transport
@@ -194,6 +301,33 @@ LQ_TEST ("client: destroyed before the transport replies, the callback is never 
     LQ_CHECK (delivered == 0, str ("no callback after destruction, got ", delivered));
 }
 
+LQ_TEST ("client: a dropped callback is destroyed on the message thread")
+{
+    struct Sentinel
+    {
+        std::shared_ptr<std::atomic<int>> where; // 0 alive, 1 message thread, 2 other thread
+        ~Sentinel() { where->store (juce::MessageManager::getInstance()->isThisTheMessageThread() ? 1 : 2); }
+    };
+    auto where = std::make_shared<std::atomic<int>> (0);
+    auto state = std::make_shared<FakeState>();
+    auto client = makeClient (state);
+    {
+        auto sentinel = std::make_shared<Sentinel>();
+        sentinel->where = where;
+        client->send (request(), [sentinel] (assist::Reply) {});
+    }
+    auto p = state->takeOut (0); // the transport's only copy of `done`
+    client.reset();
+    std::thread ([pending = std::move (p)]() mutable
+    {
+        pending.done (200, kQuestion);   // dropped: the client is gone
+        pending.done = nullptr;          // last reference released on this thread
+    }).join();
+    LQ_CHECK (where->load() == 0, "not destroyed on the transport thread");
+    pumpUntil ([&] { return where->load() != 0; }, 2000);
+    LQ_CHECK (where->load() == 1, str ("destroyed on the message thread (", where->load(), ")"));
+}
+
 LQ_TEST ("client: cancelAll drops pending replies, later sends work")
 {
     auto state = std::make_shared<FakeState>();
@@ -232,12 +366,21 @@ LQ_TEST ("client: no access code or unsafe server, no network")
     LQ_CHECK (assist::isAllowedServer (juce::URL ("https://example.invalid")), "https allowed");
     LQ_CHECK (assist::isAllowedServer (juce::URL ("http://localhost:8787")) && assist::isAllowedServer (juce::URL ("http://127.0.0.1:8787/")),
               "http on localhost allowed (development)");
-    LQ_CHECK (! assist::isAllowedServer (juce::URL ("http://localhost.example.com")) && ! assist::isAllowedServer (juce::URL ("ftp://x"))
-                  && ! assist::isAllowedServer (juce::URL ("")), "other schemes and hosts refused");
+    LQ_CHECK (assist::isAllowedServer (juce::URL ("http://[::1]:8787/")) && assist::isAllowedServer (juce::URL ("https://assist.example.test:8443/x")),
+              "[::1] with a port, https with a port and path");
+    for (auto bad : { "http://localhost.example.com", "ftp://x", "", "http://[::1]@evil.com/", "http://localhost@evil.com",
+                      "http://127.0.0.1:80@evil.com", "https://user@assist.example.test", "http://127.0.0.1.evil.com",
+                      "http://[::1].evil.com/", "http://localhost:80x", "https://", "http://evil.com/?x=http://localhost" })
+        LQ_CHECK (! assist::isAllowedServer (juce::URL (bad)), str ("refused: ", bad));
 }
 
 LQ_TEST ("client: https transport reports network errors as status 0 on a background thread")
 {
+    if (juce::SystemStats::getEnvironmentVariable ("IAQ8_NETWORK_TESTS", {}) != "1")
+    {
+        ctx.skip ("needs DNS; set IAQ8_NETWORK_TESTS=1");
+        return;
+    }
     auto transport = assist::makeHttpsTransport (5000);
     juce::WaitableEvent finished;
     std::atomic<int> status { -1 };
@@ -254,22 +397,101 @@ LQ_TEST ("client: https transport reports network errors as status 0 on a backgr
     LQ_CHECK (! onMessageThread, "done runs on a background thread");
 }
 
-LQ_TEST ("client: https transport destroyed with a request in flight returns quickly")
+LQ_TEST ("client: transport end to end against a local server")
 {
-    // 10.255.255.1 is a non-routable private address: the connection hangs
-    // until its timeout (30 s) unless cancelled. Offline, it fails at once;
-    // both must end in a bounded destructor and no callback.
+    LocalServer server (LocalServer::Mode::reply);
+    LQ_CHECK (server.ok, "local server listening");
+    auto client = std::make_unique<assist::AssistClient> (assist::makeHttpsTransport (5000), [&] { return server.base(); },
+                                                          [] { return juce::String ("dummy-code-7Q2"); });
+    auto got = std::make_shared<Received>();
+    client->send (request(), recorder (got));
+    LQ_CHECK (pumpUntil ([&] { return got->calls > 0; }, 5000), "reply delivered");
+    LQ_CHECK (got->onMessageThread && got->reply.has_value() && std::holds_alternative<assist::Question> (*got->reply),
+              "question parsed from the wire, on the message thread");
+}
+
+namespace
+{
+// Destroys a transport whose request is stuck against `mode`; returns ms.
+double destroyStuck (labq8::test::Context& ctx, LocalServer::Mode mode, const char* what)
+{
+    LocalServer server (mode);
+    LQ_CHECK (server.ok, "local server listening");
     auto transport = assist::makeHttpsTransport (30000);
     std::atomic<int> calls { 0 };
-    transport->post (juce::URL ("https://10.255.255.1/v1/turn"), "Content-Type: application/json", "{}",
-                     [&] (int, juce::String) { ++calls; });
-    juce::Thread::sleep (200);
+    transport->post (server.url(), "Content-Type: application/json", "{}", [&] (int, juce::String) { ++calls; });
+
+    for (int i = 0; i < 300 && server.connections == 0; ++i)
+        juce::Thread::sleep (10);
+    LQ_CHECK (server.connections == 1, str (what, ": request reached the server"));
+    juce::Thread::sleep (300); // the client is now waiting for the response or the rest of the body
+    if (mode != LocalServer::Mode::silent)
+        LQ_CHECK (server.headersSent.load(), str (what, ": headers sent"));
+
     const auto start = std::chrono::steady_clock::now();
     transport.reset();
     const auto ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - start).count();
-    ctx.note (str ("destructor took ", (int) ms, " ms"));
-    LQ_CHECK (ms < 2500.0, str ("bounded destructor, took ", ms, " ms"));
-    LQ_CHECK (calls == 0, "no callback once destroyed");
+    ctx.note (str (what, ": destructor took ", ms, " ms"));
+    LQ_CHECK (ms < 1000.0, str (what, ": destroyed quickly, took ", ms, " ms"));
+    LQ_CHECK (calls == 0, str (what, ": no callback once destroyed"));
+    return ms;
+}
+} // namespace
+
+LQ_TEST ("client: transport destroyed while waiting for the response returns quickly")
+{
+    destroyStuck (ctx, LocalServer::Mode::silent, "no response");
+}
+
+LQ_TEST ("client: transport destroyed while the body is stalled returns quickly")
+{
+    destroyStuck (ctx, LocalServer::Mode::stallBody, "stalled body");
+}
+
+LQ_TEST ("client: transport destroyed while the body drips returns quickly")
+{
+    destroyStuck (ctx, LocalServer::Mode::drip, "dripping body");
+}
+
+LQ_TEST ("client: a dripping body ends at the overall deadline as unavailable")
+{
+    LocalServer server (LocalServer::Mode::drip);
+    LQ_CHECK (server.ok, "local server listening");
+    auto transport = assist::makeHttpsTransport (1500); // stands in for the 30 s deadline
+    juce::WaitableEvent finished;
+    std::atomic<int> status { -1 };
+    const auto start = std::chrono::steady_clock::now();
+    transport->post (server.url(), "Content-Type: application/json", "{}", [&] (int s, juce::String)
+    {
+        status = s;
+        finished.signal();
+    });
+    LQ_CHECK (finished.wait (10000), "done called");
+    const auto ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - start).count();
+    ctx.note (str ("dripping body ended after ", ms, " ms, ", server.bodyBytesSent.load(), " body bytes sent"));
+    LQ_CHECK (status == 0 && assist::parseReply (status, {}).index() == 2, str ("status 0 (unavailable), got ", status.load()));
+    LQ_CHECK (ms >= 1400.0 && ms < 4000.0, str ("ended at the deadline, ", ms, " ms"));
+    LQ_CHECK (server.bodyBytesSent > 600, "the server kept sending (the idle timeout never fired)");
+}
+
+LQ_TEST ("client: cancelAll cancels a request in flight, the next one works")
+{
+    LocalServer silent (LocalServer::Mode::silent), replying (LocalServer::Mode::reply);
+    auto transport = assist::makeHttpsTransport (30000);
+    std::atomic<int> cancelledCalls { 0 };
+    transport->post (silent.url(), "", "{}", [&] (int, juce::String) { ++cancelledCalls; });
+    for (int i = 0; i < 300 && silent.connections == 0; ++i)
+        juce::Thread::sleep (10);
+    transport->cancelAll();
+
+    juce::WaitableEvent finished;
+    std::atomic<int> status { -1 };
+    const auto start = std::chrono::steady_clock::now();
+    transport->post (replying.url(), "", "{}", [&] (int s, juce::String) { status = s; finished.signal(); });
+    LQ_CHECK (finished.wait (5000) && status == 200, str ("next request answered, status ", status.load()));
+    const auto ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - start).count();
+    LQ_CHECK (ms < 2000.0, str ("not stuck behind the cancelled one, ", ms, " ms"));
+    LQ_CHECK (cancelledCalls == 0, "cancelled request never calls done");
 }
 
 LQ_TEST ("settings: temporary file, defaults and access code")

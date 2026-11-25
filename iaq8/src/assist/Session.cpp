@@ -247,6 +247,15 @@ double Session::getListenProgress() const
     return std::clamp (seconds / analysis::CaptureBuffer::targetSeconds, 0.0, 1.0);
 }
 
+std::optional<double> Session::getListenedSeconds() const
+{
+    if (stage == Stage::listening)
+        return getListenProgress() * analysis::CaptureBuffer::targetSeconds;
+    if (analysis.has_value())
+        return analysis->seconds;
+    return std::nullopt;
+}
+
 bool Session::canApply() const { return processor.hasProposal(); }
 bool Session::canUndo() const { return processor.getUndoDepth() > 0; }
 

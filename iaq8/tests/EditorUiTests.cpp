@@ -1093,6 +1093,14 @@ LQ_TEST ("ui values: boxes show source, seconds, changes and compensation")
     editor.refreshFromSession();
     LQ_CHECK (editor.getValueText (1) == "12 s", str ("the whole listening stays: ", editor.getValueText (1)));
 
+    // The figure is the session's: an editor opened afterwards (a DAW
+    // recreates it whenever its window opens) shows it too.
+    {
+        Iaq8Editor reopened (*rig.p);
+        LQ_CHECK (reopened.getValueText (1) == "12 s", str ("reopened editor: ", reopened.getValueText (1)));
+        LQ_CHECK (reopened.getValueText (0) == "VOZ", "and the source");
+    }
+
     rig.click (editor.getQuickKey (0));
     rig.reply (0, 200, kKeysProposal1);
     LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");

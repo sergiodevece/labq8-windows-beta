@@ -866,3 +866,27 @@ LQ_TEST ("session: the debug editor input field takes at most 4000 characters")
         LQ_CHECK (input->getText().length() == 4000, str ("capped: ", input->getText().length()));
     }
 }
+
+LQ_TEST ("session: listened seconds follow the listening and stay with its analysis")
+{
+    Rig rig;
+    auto& s = rig.s();
+    LQ_CHECK (! s.getListenedSeconds().has_value(), "nothing listened at first");
+
+    s.say ("Voz");
+    LQ_CHECK (s.getListenedSeconds().has_value() && *s.getListenedSeconds() < 0.01, "listening: 0 s");
+    fillCapture (*rig.p, 6.0);
+    s.poll();
+    LQ_CHECK (std::abs (s.getListenedSeconds().value_or (-1.0) - 6.0) < 0.3, str ("6 s: ", s.getListenedSeconds().value_or (-1.0)));
+    fillCapture (*rig.p, 6.5, 11);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "analysed");
+    LQ_CHECK (std::abs (s.getListenedSeconds().value_or (-1.0) - 12.0) < 0.6,
+              str ("the analysed listening: ", s.getListenedSeconds().value_or (-1.0)));
+
+    // A new listening counts from zero; startOver forgets it.
+    s.listenAgain();
+    LQ_CHECK (s.getListenedSeconds().value_or (-1.0) < 0.01, "a new listening starts at 0 s");
+    s.startOver();
+    LQ_CHECK (! s.getListenedSeconds().has_value(), "startOver: nothing listened");
+}

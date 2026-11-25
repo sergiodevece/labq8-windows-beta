@@ -1,7 +1,6 @@
 #include "ui/Iaq8Editor.h"
 
 #include "LabQ8Assets.h"
-#include "analysis/CaptureBuffer.h"
 #include "assist/Session.h"
 #include "assist/Settings.h"
 #include "plugin/Iaq8Processor.h"
@@ -842,9 +841,8 @@ void Iaq8Editor::refreshFromSession()
     const auto dash = utf8 ("\xe2\x80\x94");
     const auto source = session.getSource();
     valueBoxes[0]->setText (source.has_value() ? Iaq8LookAndFeel::toCapitals (utf8 (assist::Session::sourceLabel (*source))) : dash);
-    if (stage == assist::Session::Stage::listening)
-        listenedSeconds = session.getListenProgress() * analysis::CaptureBuffer::targetSeconds;
-    valueBoxes[1]->setText (listenedSeconds.has_value() ? juce::String (juce::roundToInt (*listenedSeconds)) + " s" : dash);
+    const auto listened = session.getListenedSeconds();
+    valueBoxes[1]->setText (listened.has_value() ? juce::String (juce::roundToInt (*listened)) + " s" : dash);
     const auto changes = proposal.has_value() ? countActive (*proposal) : appliedBands;
     valueBoxes[2]->setText (juce::String (changes) + (changes == 1 ? " BANDA" : " BANDAS"));
     valueBoxes[3]->setText (formatLevelMatch (iaq8Processor.getCompensationDb()));

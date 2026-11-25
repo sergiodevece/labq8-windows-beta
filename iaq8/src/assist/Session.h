@@ -95,6 +95,11 @@ public:
     const std::vector<Message>& getMessages() const;
     std::vector<std::string> getQuickReplies() const;  // <= 8, shown on the 8 keys
     double getListenProgress() const;                  // 0..1 of CaptureBuffer::targetSeconds
+    // Seconds listened: while listening, the progress so far (progress x
+    // targetSeconds); otherwise the seconds of the last analysed listening.
+    // None before the first analysis, and after a restore or startOver (the
+    // analysis is never saved).
+    std::optional<double> getListenedSeconds() const;
     const std::string& getNotice() const { return notice; } // "" or a Spanish notice (offline, errors)
     std::optional<Source> getSource() const { return source; }
     dsp::Listen getListen() const { return listen; }

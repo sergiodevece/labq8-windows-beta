@@ -11,7 +11,6 @@
 #include <array>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace iaq8
@@ -172,7 +171,6 @@ private:
     std::vector<ShownNotice> shownNotices;
     juce::String lastNotice;
     size_t messagesSeen = 0;
-    std::optional<double> listenedSeconds; // of the last listening this editor saw
     std::unique_ptr<juce::MouseListener> popupForwarder;
     int settingsMenuRequests = 0;
     std::unique_ptr<juce::AlertWindow> dialog;

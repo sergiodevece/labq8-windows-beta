@@ -6,9 +6,13 @@
 
 #include "TestHarness.h"
 
+#include "assist/AssistClient.h"
 #include "assist/Contract.h"
 #include "parameters/ParameterIDs.h"
 
+#include <juce_events/juce_events.h>
+
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <limits>
@@ -532,4 +536,46 @@ LQ_TEST ("contract: numbers JUCE cannot read safely are rejected before parsing"
     LQ_CHECK (! strict ("{\"kind\":\"question\",\"text\":\"x\",\"\":1}"), "empty member name rejected");
     LQ_CHECK (! strict ("{\"\":{}}"), "empty member name rejected (only member)");
     LQ_CHECK (strict ("{\"a\":\"\"}") && strict ("[\"\"]"), "empty string values are fine");
+}
+
+// Opt-in end to end check against a running server (wrangler dev or a real
+// deployment). IAQ8_E2E_URL = server base URL; IAQ8_E2E_CODE = access code
+// (read from the environment, never stored or printed). Passes on a valid
+// question/proposal, or on "unavailable" (server without a model key).
+LQ_TEST ("contract: end to end against a server (opt-in, IAQ8_E2E_URL)")
+{
+    const auto url = juce::SystemStats::getEnvironmentVariable ("IAQ8_E2E_URL", {});
+    if (url.isEmpty())
+    {
+        ctx.skip ("set IAQ8_E2E_URL (and IAQ8_E2E_CODE) to run");
+        return;
+    }
+    const auto code = juce::SystemStats::getEnvironmentVariable ("IAQ8_E2E_CODE", {});
+    LQ_CHECK (code.isNotEmpty(), "IAQ8_E2E_CODE is required with IAQ8_E2E_URL");
+
+    assist::AssistClient client (assist::makeHttpsTransport (30000), [url] { return juce::URL (url); }, [code] { return code; });
+    std::atomic<bool> got { false };
+    std::optional<assist::Reply> reply;
+    client.send (firstTurn(), [&] (assist::Reply r) { reply = std::move (r); got = true; });
+    const auto end = juce::Time::getMillisecondCounter() + 35000u;
+    while (! got && juce::Time::getMillisecondCounter() < end)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    LQ_CHECK (got, "a reply arrived");
+    if (! got)
+        return;
+
+    if (const auto* q = std::get_if<assist::Question> (&*reply))
+    {
+        ctx.note ("E2E: valid Question (" + std::to_string (q->quickReplies.size()) + " quick replies)");
+    }
+    else if (const auto* p = std::get_if<assist::Proposal> (&*reply))
+    {
+        ctx.note ("E2E: valid Proposal (" + std::to_string (p->bands.size()) + " bands)");
+    }
+    else
+    {
+        const auto kind = std::get<assist::Error> (*reply).kind;
+        ctx.note (std::string ("E2E: Error kind ") + std::to_string ((int) kind) + (kind == assist::ErrorKind::unavailable ? " (unavailable: server has no model key)" : ""));
+        LQ_CHECK (kind == assist::ErrorKind::unavailable, "only 'unavailable' is acceptable as an error");
+    }
 }

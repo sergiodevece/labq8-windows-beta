@@ -1,5 +1,8 @@
 #include "plugin/Iaq8Processor.h"
 
+#include "assist/AssistClient.h"
+#include "assist/Session.h"
+#include "assist/Settings.h"
 #include "parameters/Iaq8Parameters.h"
 #include "parameters/ParameterIDs.h"
 #include "plugin/DebugEditor.h"
@@ -93,6 +96,14 @@ namespace
 } // namespace
 
 Iaq8AudioProcessor::Iaq8AudioProcessor()
+    : Iaq8AudioProcessor (std::make_unique<assist::AssistClient> (
+          assist::makeHttpsTransport(),
+          [] { return assist::Settings::serverUrl(); },   // read when a request is sent
+          [] { return assist::Settings::accessCode(); }))
+{
+}
+
+Iaq8AudioProcessor::Iaq8AudioProcessor (std::unique_ptr<assist::AssistClient> assistClient)
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
@@ -111,6 +122,16 @@ Iaq8AudioProcessor::Iaq8AudioProcessor()
             jassert (bandParameters[b].params[f] != nullptr && bandParameters[b].raw[f] != nullptr);
         }
     }
+
+    client = std::move (assistClient);
+    jassert (client != nullptr);
+    session = std::make_unique<assist::Session> (*this, *client);
+}
+
+Iaq8AudioProcessor::~Iaq8AudioProcessor()
+{
+    session.reset(); // cancels its requests and joins its analysis worker
+    client.reset();
 }
 
 bool Iaq8AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -215,14 +236,52 @@ juce::AudioProcessorEditor* Iaq8AudioProcessor::createEditor()
 }
 
 //==============================================================================
+void Iaq8AudioProcessor::invalidateIfStateLoaded()
+{
+    const auto loads = getStateLoadCount();
+    if (loads == stateLoadsSeen)
+        return;
+
+    stateLoadsSeen = loads;
+    undoHistory.clear();
+    proposal.reset();
+    handoff.publish ({ {}, false }); // always: the audio side may hold an older proposal
+}
+
+bool Iaq8AudioProcessor::hasProposal()
+{
+    invalidateIfStateLoaded();
+    return proposal.has_value();
+}
+
+std::optional<dsp::BandSet> Iaq8AudioProcessor::getProposal()
+{
+    invalidateIfStateLoaded();
+    return proposal;
+}
+
+int Iaq8AudioProcessor::getUndoDepth()
+{
+    invalidateIfStateLoaded();
+    return (int) undoHistory.size();
+}
+
+dsp::Listen Iaq8AudioProcessor::getListenRequest() const noexcept
+{
+    return listenRequest.load (std::memory_order_relaxed) == (int) dsp::Listen::preview ? dsp::Listen::preview
+                                                                                       : dsp::Listen::applied;
+}
+
 void Iaq8AudioProcessor::setProposal (const dsp::BandSet& newProposal)
 {
+    invalidateIfStateLoaded();
     proposal = newProposal;
     handoff.publish ({ newProposal, true });
 }
 
 void Iaq8AudioProcessor::clearProposal()
 {
+    invalidateIfStateLoaded();
     proposal.reset();
     handoff.publish ({ {}, false });
 }
@@ -255,6 +314,7 @@ void Iaq8AudioProcessor::writeBands (const dsp::BandSet& bands)
 
 bool Iaq8AudioProcessor::applyProposal()
 {
+    invalidateIfStateLoaded();
     if (! proposal.has_value())
         return false;
 
@@ -271,6 +331,7 @@ bool Iaq8AudioProcessor::applyProposal()
 
 bool Iaq8AudioProcessor::undoApply()
 {
+    invalidateIfStateLoaded();
     if (undoHistory.empty())
         return false;
 
@@ -298,6 +359,26 @@ void Iaq8AudioProcessor::setAssistantState (const juce::ValueTree& state)
     assistantState = copy;
 }
 
+juce::ValueTree Iaq8AudioProcessor::getAssistantState (std::uint32_t& loadCount) const
+{
+    const juce::ScopedLock lock (assistantLock);
+    loadCount = stateLoads.load (std::memory_order_relaxed); // only changed under this lock
+    return assistantState.createCopy();
+}
+
+bool Iaq8AudioProcessor::setAssistantStateUnlessLoaded (const juce::ValueTree& state, std::uint32_t loadCount)
+{
+    juce::ValueTree copy (assistantType);
+    if (state.isValid())
+        copy.copyPropertiesAndChildrenFrom (state, nullptr);
+
+    const juce::ScopedLock lock (assistantLock);
+    if (stateLoads.load (std::memory_order_relaxed) != loadCount)
+        return false;
+    assistantState = copy;
+    return true;
+}
+
 void Iaq8AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
@@ -323,8 +404,19 @@ void Iaq8AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
     const auto assistant = tree.getChildWithName (assistantType);
     tree.removeChild (assistant, nullptr);
 
+    // Silence a pending proposal at once (this may be any thread); the
+    // message thread drops it, and the undo history, when it sees the counter.
+    listenRequest.store ((int) dsp::Listen::applied, std::memory_order_relaxed);
+
     parameters.replaceState (tree);
-    setAssistantState (assistant); // missing child: empty conversation
+
+    juce::ValueTree copy (assistantType); // missing child: empty conversation
+    if (assistant.isValid())
+        copy.copyPropertiesAndChildrenFrom (assistant, nullptr);
+
+    const juce::ScopedLock lock (assistantLock);
+    assistantState = copy;
+    stateLoads.fetch_add (1, std::memory_order_release); // with the conversation, under the lock
 }
 } // namespace iaq8
 

@@ -344,7 +344,6 @@ LQ_TEST ("processor: state round trip keeps applied set and conversation, drops 
                          == juce::String (juce::CharPointer_UTF8 ("\xc2\xbf" "C\xc3\xb3mo suena?")),
               "message child restored (UTF-8)");
     LQ_CHECK (restored.isEquivalentTo (a.getAssistantState()), "conversation equal to the saved one");
-    LQ_CHECK (! b.hasProposal(), "no proposal after load");
 
     juce::MemoryBlock again;
     b.getStateInformation (again);
@@ -364,6 +363,68 @@ LQ_TEST ("processor: state round trip keeps applied set and conversation, drops 
     const char garbage[] = "not a state";
     b.setStateInformation (garbage, (int) sizeof (garbage));
     LQ_CHECK (std::abs (b.getAppliedBands()[0].gainDb + 7.25) < 0.006, "corrupt state ignored");
+}
+
+LQ_TEST ("processor: an in-instance state load drops the proposal and the undo history")
+{
+    Iaq8AudioProcessor p;
+    prepare (p, 2, kFs, kBlock);
+    juce::MemoryBlock neutral;
+    p.getStateInformation (neutral);
+
+    auto s = p.getAppliedBands();
+    s[0].gainDb = -3.0;
+    p.setProposal (s);
+    p.applyProposal();
+    p.setProposal (cutAt1k());
+    p.setListen (dsp::Listen::preview);
+    LQ_CHECK (p.getUndoDepth() == 1 && p.hasProposal() && p.getListenRequest() == dsp::Listen::preview, "set up");
+
+    const auto loadsBefore = p.getStateLoadCount();
+    // Host preset change / A-B compare: same instance, off the message thread.
+    std::thread ([&] { p.setStateInformation (neutral.getData(), (int) neutral.getSize()); }).join();
+    LQ_CHECK (p.getStateLoadCount() == loadsBefore + 1, "the load is counted");
+    LQ_CHECK (p.getListenRequest() == dsp::Listen::applied, "the old proposal is silenced at once (any thread)");
+
+    // Message thread: the first API call notices the load.
+    LQ_CHECK (! p.hasProposal() && ! p.getProposal().has_value(), "proposal dropped");
+    LQ_CHECK (p.getUndoDepth() == 0 && ! p.undoApply(), "undo history dropped");
+    LQ_CHECK (std::abs (p.getAppliedBands()[0].gainDb) < 0.006, "loaded parameters");
+
+    // The audio thread gets the clear: the preview path no longer differs.
+    p.setListen (dsp::Listen::preview);
+    const auto n = samples (0.3, kFs);
+    const auto y = run (p, twoTone (kFs, n), kBlock);
+    const auto db = toneRatioDb (y, samples (0.05, kFs), n, kFs);
+    LQ_CHECK (std::abs (db) < 0.3, str ("preview plays the applied set after the load: ", db, " dB"));
+
+    // Corrupt data is not a load.
+    const char garbage[] = "not a state";
+    p.setStateInformation (garbage, (int) sizeof (garbage));
+    LQ_CHECK (p.getStateLoadCount() == loadsBefore + 1, "corrupt data: not counted");
+}
+
+LQ_TEST ("processor: a conversation write never overwrites a newer loaded one")
+{
+    Iaq8AudioProcessor p;
+    juce::ValueTree mine (Iaq8AudioProcessor::assistantType);
+    mine.setProperty ("source", "voice", nullptr);
+    std::uint32_t loads = 0;
+    const auto current = p.getAssistantState (loads);
+    LQ_CHECK (current.hasType (Iaq8AudioProcessor::assistantType) && loads == p.getStateLoadCount(), "state and counter");
+    LQ_CHECK (p.setAssistantStateUnlessLoaded (mine, loads), "written while no load happened");
+
+    juce::MemoryBlock other;
+    {
+        Iaq8AudioProcessor q;
+        juce::ValueTree theirs (Iaq8AudioProcessor::assistantType);
+        theirs.setProperty ("source", "bass", nullptr);
+        q.setAssistantState (theirs);
+        q.getStateInformation (other);
+    }
+    std::thread ([&] { p.setStateInformation (other.getData(), (int) other.getSize()); }).join();
+    LQ_CHECK (! p.setAssistantStateUnlessLoaded (mine, loads), "refused after a load");
+    LQ_CHECK (p.getAssistantState().getProperty ("source").toString() == "bass", "the loaded conversation stays");
 }
 
 LQ_TEST ("processor: prepareToPlay again keeps applied and preview")

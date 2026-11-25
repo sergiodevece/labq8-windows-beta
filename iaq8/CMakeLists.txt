@@ -52,8 +52,10 @@ target_compile_options(labq8_dsp_for_iaq8 PRIVATE -Wall -Wextra -Wpedantic -Wsha
 #==============================================================================
 # IAQ8 core: everything under src/ except plugin/ (host adapter). Later tasks
 # just drop their sources in; the glob picks them up on reconfigure.
+# assist/Session.cpp drives the processor, so it is built with the host
+# adapter (IAQ8_PLUGIN_SOURCES), not into the core that iaq8_analyze links.
 file(GLOB_RECURSE IAQ8_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-list(FILTER IAQ8_CORE_SOURCES EXCLUDE REGEX "/src/plugin/")
+list(FILTER IAQ8_CORE_SOURCES EXCLUDE REGEX "/src/plugin/|/src/assist/Session\\.cpp$")
 
 add_library(iaq8_core STATIC ${IAQ8_CORE_SOURCES})
 target_include_directories(iaq8_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -95,7 +97,8 @@ juce_add_plugin(IAQ8
 
 set(IAQ8_PLUGIN_SOURCES
     src/plugin/Iaq8Processor.cpp
-    src/plugin/DebugEditor.cpp)
+    src/plugin/DebugEditor.cpp
+    src/assist/Session.cpp)
 
 target_sources(IAQ8 PRIVATE ${IAQ8_PLUGIN_SOURCES})
 

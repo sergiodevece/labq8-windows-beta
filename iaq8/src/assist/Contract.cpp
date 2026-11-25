@@ -233,17 +233,26 @@ std::optional<ProposedBand> parseBand (const juce::var& v)
     return b;
 }
 
+} // namespace
+
 // Deepest [ / { nesting outside strings. JUCE's parser recurses once per
 // level without a limit, so a hostile body could overflow the pool thread's
-// stack; the body is rejected before parsing when it is too deep. Strings
-// follow JUCE's parser exactly: they open with " or ' (both accepted as
-// values), close only on the same quote, and a backslash escapes the next
-// character. (Wherever the parser would not accept a quote it stops with an
-// error, so it never reaches brackets this scan skipped.)
-int nestingDepth (const juce::String& text)
+// stack; parseReply rejects a body that is too deep before parsing it.
+//
+// Strings follow JUCE's parser: they open with " or ', close only on the same
+// quote, and a backslash escapes the next character. A quote opens a string
+// only where JUCE's parser could start one: when the previous significant
+// (non-whitespace) character outside strings is [, {, , or :, or there is
+// none. Anywhere else (for example after '-', whose parseNumber swallows the
+// next character whatever it is) the quote is plain text and the brackets
+// after it still count. So a mistake can only over-count (reject a body),
+// never under-count: wherever this scan opens a string, JUCE either opens one
+// too or throws at that quote and stops parsing.
+int jsonNestingDepth (const juce::String& text)
 {
     int depth = 0, deepest = 0;
     juce::juce_wchar quote = 0; // the open string's quote, 0 outside strings
+    juce::juce_wchar previous = 0; // last significant character outside strings, 0 = none
     bool escaped = false;
     for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
     {
@@ -252,19 +261,31 @@ int nestingDepth (const juce::String& text)
         {
             if (escaped)         escaped = false;
             else if (c == '\\') escaped = true;
-            else if (c == quote) quote = 0;
+            else if (c == quote) { previous = quote; quote = 0; }
+            continue;
         }
-        else if (c == '"' || c == '\'')  quote = c;
-        else if (c == '[' || c == '{')    deepest = std::max (deepest, ++depth);
-        else if (c == ']' || c == '}')    --depth;
+        if (juce::CharacterFunctions::isWhitespace (c))
+            continue;
+
+        const bool valueStart = previous == 0 || previous == '[' || previous == '{' || previous == ',' || previous == ':';
+        if ((c == '"' || c == '\'') && valueStart)
+            quote = c;
+        else if (c == '[' || c == '{')
+            deepest = std::max (deepest, ++depth);
+        else if (c == ']' || c == '}')
+            --depth;
+        previous = c;
     }
     return deepest;
 }
 
+namespace
+{
+
 Reply parseOk (const juce::String& body)
 {
     const auto invalid = makeError (ErrorKind::invalidResponse);
-    if (nestingDepth (body) > maxJsonDepth)
+    if (jsonNestingDepth (body) > maxJsonDepth)
         return invalid;
     juce::var root;
     if (juce::JSON::parse (body, root).failed())

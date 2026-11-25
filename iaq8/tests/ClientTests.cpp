@@ -14,7 +14,9 @@
 #include <mutex>
 #include <thread>
 
-#include <sys/socket.h>
+#if JUCE_MAC
+ #include <sys/socket.h>
+#endif
 
 using namespace iaq8;
 using labq8::test::str;
@@ -103,8 +105,10 @@ private:
             ++connections;
             // Writing to a socket the client closed must fail, not raise
             // SIGPIPE (JUCE does not set this on accepted sockets).
+           #if JUCE_MAC
             int one = 1;
             setsockopt (client->getRawSocketHandle(), SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof (one));
+           #endif
             serve (*client);
         }
     }

@@ -158,4 +158,9 @@ juce::String toJson (const TurnRequest& request);
 
 // Pure; any thread. Never throws; anything unexpected is an Error.
 Reply parseReply (int httpStatus, const juce::String& body);
+
+// The [ / { nesting depth parseReply checks before parsing (exposed for
+// tests). Conservative: it may count brackets JUCE's parser treats as string
+// text (over-counting, so a body is rejected), never the reverse.
+int jsonNestingDepth (const juce::String& text);
 } // namespace iaq8::assist

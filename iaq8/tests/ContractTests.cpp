@@ -343,6 +343,30 @@ LQ_TEST ("contract: deeply nested bodies are rejected before parsing")
     }).join();
     LQ_CHECK (invalid == 4, str ("100k levels are invalidResponse, no crash (", invalid, " of 4)"));
 
+    // JUCE's parseNumber swallows the character after '-' (a quote too), so
+    // a quote there never opens a string: the brackets after it must count.
+    // The depth is asserted first, and parseReply only runs when the guard
+    // would reject the body (so a regression fails instead of crashing).
+    const juce::String afterMinus[] = {
+        "[-\"1, " + brackets + "]",
+        "[-'1, " + brackets + "]",
+        "{\"a\":-\"1, \"b\":" + brackets + "}",
+    };
+    int rejected = 0;
+    for (const auto& body : afterMinus)
+    {
+        const auto depth = assist::jsonNestingDepth (body);
+        LQ_CHECK (depth > assist::maxJsonDepth, str ("quote after '-' does not hide the brackets: depth ", depth));
+        if (depth > assist::maxJsonDepth)
+            std::thread ([&]
+            {
+                const auto r = assist::parseReply (200, body);
+                const auto* e = std::get_if<assist::Error> (&r);
+                rejected += (e != nullptr && e->kind == assist::ErrorKind::invalidResponse) ? 1 : 0;
+            }).join();
+    }
+    LQ_CHECK (rejected == 3, str ("quote-after-minus bodies are invalidResponse (", rejected, " of 3)"));
+
     // Single-quoted strings are strings too (JUCE accepts them), and a quote
     // of the other kind inside a string does not open or close anything.
     const auto single = juce::String ("{\"kind\":\"question\",\"text\":'it\\'s [[[{{ \" fine'}");

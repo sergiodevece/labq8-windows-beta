@@ -31,5 +31,11 @@ VST3: eso es lo que sigue.
 
 | Host | Version | Formato | Resultado del boton | Notas |
 |---|---|---|---|---|
-| Logic Pro | | AU | | |
-| (host VST3) | | VST3 | | |
+| Logic Pro | 13.0 (macOS 26.5) | AU | **HTTP 401** (red OK desde el proceso aislado de Logic) | 2026-11-25. `auval -v aufx Iaq8 Vtpl`: AU VALIDATION SUCCEEDED |
+| (host VST3) | | VST3 | pendiente | No hay host VST3 instalado; riesgo menor (los VST3 cargan en el proceso del host) |
+
+## Conclusion (2026-11-25)
+
+Logic Pro 13 permite HTTPS desde IAQ8 (AU): el transporte del Plan 1 vale tal cual.
+El riesgo principal de la spec §9 queda cerrado. Queda pendiente la comprobacion en
+un host VST3.

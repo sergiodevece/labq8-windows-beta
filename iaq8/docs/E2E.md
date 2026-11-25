@@ -21,8 +21,8 @@ Servidor, en `vitaplug-assist-server`:
 
 ```
 npx wrangler d1 migrations apply DB --local          # ya aplicadas
-npx tsx scripts/issue-code.ts "e2e-local"            # código: <redactado>
-npx wrangler d1 execute DB --local --file <INSERT impreso>
+npx tsx scripts/issue-code.ts "e2e-local" --sql-out e2e.sql   # código: <redactado>
+npx wrangler d1 execute DB --local --file e2e.sql
 npx wrangler dev --port 8787                          # sin .dev.vars: sin clave
 ```
 
@@ -43,11 +43,12 @@ Salida relevante:
 ```
 
 El log de `wrangler dev` mostró `POST /v1/turn 503` con
-`invalid worker configuration: ANTHROPIC_API_KEY is missing`: la petición
-llegó, el código de acceso fue aceptado y el servidor respondió con el 503
-`unavailable` del contrato. Eso valida transporte, cabeceras, contrato de error
-y http local. **No** valida una respuesta real del modelo: eso queda para el
-autor con la clave real (ver `DEPLOY.md` del servidor).
+`invalid worker configuration: ANTHROPIC_API_KEY is missing`. El worker valida
+la configuración antes de mirar el código de acceso, así que **cualquier código
+habría dado 503**: esta ejecución valida solo el transporte, las cabeceras,
+http en localhost y el contrato de error 503/`unavailable`. El acceso (401,
+límites) y la ruta del modelo se verifican tras el despliegue, con los `curl`
+y el recorrido en Logic de `DEPLOY.md` del servidor.
 
 Sin `IAQ8_E2E_URL`, la suite completa da 124 tests, 121 pasan, 3 omitidos.
 

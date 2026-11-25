@@ -1,9 +1,11 @@
 #include "assist/ProposalLimits.h"
 
 #include "dsp/BandLimits.h"
+#include "dsp/BiquadDesign.h"
 #include "parameters/ParameterIDs.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iomanip>
 #include <locale>
@@ -64,6 +66,142 @@ void clampInto (double& value, double lo, double hi, int decimals, const char* p
         report.adjustments.push_back (makeLine (pattern, band, fixed (value, decimals), fixed (clamped, decimals)));
         value = clamped;
     }
+}
+
+// Combined response of the active gain bands (bell, shelves). Cuts and the
+// notch only ever lower the level, so they are left out: a boost they would
+// tame is still limited as if they were not there.
+constexpr double referenceRateHz = 48000.0; // session independent
+constexpr double toleranceDb = 0.01;        // what counts as over a limit
+constexpr double contributorDb = 0.05;      // a band below this at the worst point is not scaled
+constexpr int maxIterations = 48;
+
+bool isGainBand (const labq8::dsp::BandSettings& b, bool used) { return used && ! b.bypassed && labq8::dsp::usesGain (b.type); }
+
+double bandDb (const labq8::dsp::BandSettings& b, double hz)
+{
+    const auto c = labq8::dsp::designFilter (b.type, referenceRateHz, b.frequencyHz, b.gainDb, b.q);
+    return 20.0 * std::log10 (labq8::dsp::magnitudeAt (c, hz, referenceRateHz));
+}
+
+// 1/12-octave grid 20 Hz..20 kHz plus every gain band's own frequency (a
+// bell peaks exactly there, so stacked bells are measured at their peak).
+std::vector<double> evaluationGrid (const dsp::BandSet& bands, const std::array<bool, 8>& used)
+{
+    std::vector<double> grid;
+    for (int k = 0;; ++k)
+    {
+        const auto hz = limits::minFrequencyHz * std::pow (2.0, k / 12.0);
+        if (hz >= limits::maxFrequencyHz)
+            break;
+        grid.push_back (hz);
+    }
+    grid.push_back (limits::maxFrequencyHz);
+    for (size_t i = 0; i < bands.size(); ++i)
+        if (isGainBand (bands[i], used[i]))
+            grid.push_back (bands[i].frequencyHz);
+    std::sort (grid.begin(), grid.end());
+    return grid;
+}
+
+struct Worst
+{
+    double db = 0.0, hz = 0.0;
+};
+
+// The highest (sign > 0) or lowest (sign < 0) combined level of the gain
+// bands among `only` (all of them when null) on the grid points below `belowHz`.
+Worst worstPoint (const dsp::BandSet& bands, const std::array<bool, 8>& used, const std::vector<double>& grid,
+                  double sign, double belowHz, const size_t* only = nullptr)
+{
+    Worst worst;
+    bool first = true;
+    for (const auto hz : grid)
+    {
+        if (hz >= belowHz)
+            break;
+        double db = 0.0;
+        for (size_t i = 0; i < bands.size(); ++i)
+            if (isGainBand (bands[i], used[i]) && (only == nullptr || *only == i))
+                db += bandDb (bands[i], hz);
+        if (first || sign * db > sign * worst.db)
+            worst = { db, hz };
+        first = false;
+    }
+    return worst;
+}
+
+std::string bandList (const std::vector<int>& numbers)
+{
+    std::string s = numbers.size() == 1 ? "Banda " : "Bandas ";
+    for (size_t k = 0; k < numbers.size(); ++k)
+        s += (k == 0 ? "" : ", ") + std::to_string (numbers[k]);
+    return s;
+}
+
+struct Scaling
+{
+    std::vector<int> numbers; // 1-based slots whose gain changed, in slot order
+    double beforeDb = 0.0, afterDb = 0.0; // worst combined level before and after
+};
+
+// Scales the gains of one sign (sign > 0: boosts, < 0: cuts) of the bands
+// that make the combined level pass `limitDb` (on grid points below
+// `belowHz`), all by the same factor, until it fits. Deterministic: a fixed
+// number of linearised steps at the worst grid point; if that were ever not
+// enough, those gains go to 0 (a 0 dB bell or shelf is flat, so the limit
+// then holds).
+Scaling limitCombined (dsp::BandSet& bands, const std::array<bool, 8>& used, double sign, double limitDb, double belowHz)
+{
+    const auto grid = evaluationGrid (bands, used);
+    std::array<double, 8> original {};
+    for (size_t i = 0; i < bands.size(); ++i)
+        original[i] = bands[i].gainDb;
+
+    Scaling result;
+    const auto over = [&] (const Worst& w) { return sign * (w.db - limitDb) > toleranceDb; };
+    auto worst = worstPoint (bands, used, grid, sign, belowHz);
+    result.beforeDb = worst.db;
+
+    for (int iteration = 0; iteration < maxIterations && over (worst); ++iteration)
+    {
+        std::array<bool, 8> scaled {};
+        double contribution = 0.0;
+        for (size_t i = 0; i < bands.size(); ++i)
+        {
+            if (! isGainBand (bands[i], used[i]) || sign * bands[i].gainDb <= 0.0)
+                continue;
+            const auto db = bandDb (bands[i], worst.hz);
+            if (sign * db >= contributorDb)
+            {
+                scaled[i] = true;
+                contribution += db;
+            }
+        }
+        if (sign * contribution <= 0.0)
+            break;
+        // Linearised: the scaled bands' share times `factor` plus the rest fits.
+        const auto factor = std::clamp ((limitDb - (worst.db - contribution)) / contribution, 0.0, 1.0);
+        for (size_t i = 0; i < bands.size(); ++i)
+            if (scaled[i])
+                bands[i].gainDb *= factor;
+        worst = worstPoint (bands, used, grid, sign, belowHz);
+    }
+
+    if (over (worst))
+    {
+        for (size_t i = 0; i < bands.size(); ++i)
+            if (isGainBand (bands[i], used[i]) && sign * bands[i].gainDb > 0.0
+                && sign * worstPoint (bands, used, grid, sign, belowHz, &i).db > 0.0)
+                bands[i].gainDb = 0.0;
+        worst = worstPoint (bands, used, grid, sign, belowHz);
+    }
+
+    for (size_t i = 0; i < bands.size(); ++i)
+        if (bands[i].gainDb < original[i] || bands[i].gainDb > original[i])
+            result.numbers.push_back ((int) i + 1);
+    result.afterDb = worst.db;
+    return result;
 }
 } // namespace
 
@@ -175,6 +313,50 @@ dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::
         report.adjustments.push_back (makeLine ("Banda {n} descartada: como mucho 5 bandas activas", (int) victim + 1));
         out[victim] = unusedBand (victim);
         used[victim] = false;
+    }
+
+    // The combined response of the bands, not only each band (stacked bells
+    // or a shelf under a bell add up). Lowering cuts can raise what a boost
+    // next to them shows, so the passes repeat until none changes anything.
+    const auto maxDb = isMix ? limits::mixMaxGainDb : limits::maxGainDb;
+    const auto minDb = isMix ? limits::mixMinGainDb : limits::minGainDb;
+    for (int round = 0; round < 4; ++round)
+    {
+        bool changedAny = false;
+        if (isVoice)
+        {
+            const auto s = limitCombined (out, used, 1.0, limits::voiceMaxCombinedBoostBelowDb, limits::voiceNoBoostBelowHz);
+            for (const auto n : s.numbers)
+            {
+                auto& b = out[(size_t) n - 1];
+                const auto before = proposal.bands[(size_t) n - 1].settings.gainDb;
+                if (b.gainDb < 0.05)
+                {
+                    report.adjustments.push_back (makeLine ("Banda {n} descartada (voz): sin realces por debajo de 80 Hz", n));
+                    b = unusedBand ((size_t) n - 1);
+                    used[(size_t) n - 1] = false;
+                }
+                else
+                {
+                    report.adjustments.push_back (makeLine ("Banda {n} (voz): ganancia {a} dB reducida a {b} dB, sin realces por debajo de 80 Hz", n,
+                                                            fixed (std::min (before, maxDb), 1), fixed (b.gainDb, 1)));
+                }
+            }
+            changedAny = changedAny || ! s.numbers.empty();
+        }
+        for (const auto sign : { 1.0, -1.0 })
+        {
+            const auto s = limitCombined (out, used, sign, sign > 0.0 ? maxDb : minDb, limits::maxFrequencyHz * 2.0);
+            if (s.numbers.empty())
+                continue;
+            report.adjustments.push_back (bandList (s.numbers)
+                                          + (sign > 0.0 ? ": realce combinado de " + fixed (s.beforeDb, 1) + " dB reducido a "
+                                                        : ": atenuación combinada de " + fixed (s.beforeDb, 1) + " dB reducida a ")
+                                          + fixed (s.afterDb, 1) + " dB");
+            changedAny = true;
+        }
+        if (! changedAny)
+            break;
     }
     return out;
 }

@@ -6,9 +6,12 @@
 #include "TestHarness.h"
 
 #include "assist/ProposalLimits.h"
+#include "dsp/BiquadDesign.h"
 #include "parameters/ParameterIDs.h"
 
+#include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 #include <locale>
@@ -253,4 +256,89 @@ LQ_TEST ("limits: non-finite values and more than 8 bands are discarded")
     // Cuts ignore gain: it is zeroed without a line.
     const auto cut = run ({ band (FilterType::lowCut, 60, 30, 0.7) });
     LQ_CHECK (cut.bands[0].gainDb == 0.0 && cut.lines.empty(), "cut gain zeroed silently");
+}
+
+namespace
+{
+// Combined response (dB) of the active gain bands at the 48 kHz reference rate.
+double combinedDb (const dsp::BandSet& bands, double hz)
+{
+    double db = 0.0;
+    for (const auto& b : bands)
+        if (! b.bypassed && labq8::dsp::usesGain (b.type))
+            db += 20.0 * std::log10 (labq8::dsp::magnitudeAt (labq8::dsp::designFilter (b.type, 48000.0, b.frequencyHz, b.gainDb, b.q), hz, 48000.0));
+    return db;
+}
+
+// Max and min of the combined response on a fine grid (1/48 octave, 20 Hz..20 kHz)
+// restricted to [lo, hi].
+std::pair<double, double> combinedRange (const dsp::BandSet& bands, double lo = 20.0, double hi = 20000.0)
+{
+    double mx = -1.0e9, mn = 1.0e9;
+    for (double f = 20.0; f <= 20000.0 * 1.0001; f *= std::pow (2.0, 1.0 / 48.0))
+        if (f >= lo && f <= hi)
+        {
+            const auto db = combinedDb (bands, f);
+            mx = std::max (mx, db);
+            mn = std::min (mn, db);
+        }
+    return { mx, mn };
+}
+} // namespace
+
+LQ_TEST ("limits: stacked boosts are limited to +6 dB combined")
+{
+    std::vector<assist::ProposedBand> five;
+    for (int i = 0; i < 5; ++i)
+        five.push_back (band (FilterType::bell, 1000, 6, 1));
+    const auto r = run (five);
+    const auto [mx, mn] = combinedRange (r.bands);
+    const auto atCentre = combinedDb (r.bands, 1000.0);
+    LQ_CHECK (mx <= 6.05 && atCentre <= 6.05, str ("combined max ", mx, " dB, at 1 kHz ", atCentre, " dB"));
+    LQ_CHECK (atCentre >= 5.9, str ("still close to the limit: ", atCentre));
+    for (size_t i = 0; i < 5; ++i)
+        LQ_CHECK (! r.bands[i].bypassed && r.bands[i].gainDb > 0.0 && r.bands[i].gainDb < 6.0, str ("band ", i + 1, " scaled, not dropped: ", r.bands[i].gainDb));
+    LQ_CHECK (r.lines.size() == 1 && hasLine (r, "combinad"), "one line for the scaling: " + allLines (r));
+    ctx.note (allLines (r));
+
+    // Shelf + bells: low shelf +6 under two +6 bells in its plateau.
+    const auto s = run ({ band (FilterType::lowShelf, 300, 6, 0.7), band (FilterType::bell, 100, 6, 1), band (FilterType::bell, 150, 6, 2) });
+    const auto [smx, smn] = combinedRange (s.bands);
+    LQ_CHECK (smx <= 6.05, str ("shelf + bells combined max ", smx));
+    LQ_CHECK (hasLine (s, "combinad"), "a line: " + allLines (s));
+
+    // Stacked cuts: five -12 dB bells down to -12 dB combined (mix: -6).
+    std::vector<assist::ProposedBand> cuts;
+    for (int i = 0; i < 5; ++i)
+        cuts.push_back (band (FilterType::bell, 2000, -12, 2));
+    const auto c = run (cuts);
+    const auto [cmx, cmn] = combinedRange (c.bands);
+    LQ_CHECK (cmn >= -12.05 && combinedDb (c.bands, 2000.0) >= -12.05, str ("combined min ", cmn));
+    LQ_CHECK (c.lines.size() == 1, "one line: " + allLines (c));
+    const auto m = run ({ band (FilterType::bell, 2000, -6, 2), band (FilterType::highShelf, 1500, -6, 0.7) }, Source::mix);
+    LQ_CHECK (combinedRange (m.bands).second >= -6.05, str ("mix combined min ", combinedRange (m.bands).second));
+    const auto mb = run ({ band (FilterType::bell, 5000, 4, 1), band (FilterType::bell, 5000, 4, 1) }, Source::mix);
+    LQ_CHECK (combinedRange (mb.bands).first <= 4.05, str ("mix combined max ", combinedRange (mb.bands).first));
+
+    // Separate boosts do not interact: nothing changes.
+    const auto apart = run ({ band (FilterType::bell, 100, 6, 4), band (FilterType::bell, 5000, 6, 4) });
+    LQ_CHECK (apart.lines.empty() && apart.bands[0].gainDb == 6.0 && apart.bands[1].gainDb == 6.0, "separate boosts kept: " + allLines (apart));
+}
+
+LQ_TEST ("limits: voice, combined boost below 80 Hz at most 0.5 dB")
+{
+    const auto r = run ({ band (FilterType::lowShelf, 81, 6, 0.7), band (FilterType::bell, 2000, 3, 1) }, Source::voice);
+    const auto below = combinedRange (r.bands, 20.0, 80.0).first;
+    LQ_CHECK (below <= 0.55, str ("combined boost below 80 Hz: ", below, " dB. ", allLines (r)));
+    LQ_CHECK (hasLine (r, "Banda 1") && hasLine (r, "80 Hz"), "a line for the shelf: " + allLines (r));
+    ctx.note (allLines (r));
+    LQ_CHECK (r.bands[1].gainDb == 3.0 && ! r.bands[1].bypassed, "an unrelated boost stays");
+
+    // Two bells just above 80 Hz.
+    const auto two = run ({ band (FilterType::bell, 90, 4, 1), band (FilterType::bell, 100, 4, 1) }, Source::voice);
+    LQ_CHECK (combinedRange (two.bands, 20.0, 80.0).first <= 0.55, str ("two bells: ", combinedRange (two.bands, 20.0, 80.0).first));
+
+    // Other sources: unchanged.
+    const auto bass = run ({ band (FilterType::lowShelf, 81, 6, 0.7) }, Source::bass);
+    LQ_CHECK (bass.lines.empty() && bass.bands[0].gainDb == 6.0, "bass keeps its low shelf");
 }

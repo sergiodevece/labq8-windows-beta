@@ -20,6 +20,7 @@ inline constexpr double minShelfQ = 0.5, maxShelfQ = 1.0;        // no shelf ove
 inline constexpr double minCutQ = 0.5, maxCutQ = 0.707;          // Butterworth at most: no resonant peak
 inline constexpr double minFrequencyHz = 20.0, maxFrequencyHz = 20000.0;
 inline constexpr double voiceNoBoostBelowHz = 80.0, voiceMaxLowCutHz = 150.0;
+inline constexpr double voiceMaxCombinedBoostBelowDb = 0.5; // combined boost below voiceNoBoostBelowHz
 inline constexpr double bassMaxLowCutHz = 50.0;
 inline constexpr double mixMinGainDb = -6.0, mixMaxGainDb = 4.0;
 } // namespace limits
@@ -44,8 +45,17 @@ struct LimitReport
 // Then, if more than 5 bands are active (not bypassed; cuts and notches count),
 // the extra ones are discarded: bell/shelves first, smallest |gain| first,
 // cuts/notches only after every gain band (last slot first); ties discard the
-// later slot. Bypassed bands are kept (clamped as above). Each change adds a
-// line to report.adjustments. `analysis` may be null.
+// later slot. Bypassed bands are kept (clamped as above).
+// Then the combined response of the remaining active gain bands (bell and
+// shelves; cuts and notches are left out) at a fixed 48 kHz reference rate,
+// on a 1/12-octave grid 20 Hz..20 kHz plus each gain band's frequency:
+//  - voice: above 0.5 dB anywhere below 80 Hz, the boosts that reach there
+//    are scaled down by one common factor until it fits (one line per band;
+//    a band left under 0.05 dB is discarded instead);
+//  - above +6 dB (mix +4), the boosts that make the highest point are scaled
+//    down by one common factor until it fits; below -12 dB (mix -6), the cuts
+//    likewise (one line per scaling). Deterministic; 0.01 dB tolerance.
+// Each change adds a line to report.adjustments. `analysis` may be null.
 dsp::BandSet sanitize (const Proposal& proposal, Source source, const analysis::AnalysisSummary* analysis, LimitReport& report);
 
 // The bypassed default band of `slot` (0..7).

@@ -3,6 +3,7 @@
 #include "ui/Iaq8LookAndFeel.h"
 #include "ui/Iaq8Preferences.h"
 #include "ui/LevelMeterView.h"
+#include "ui/PhosphorScreen.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -26,8 +27,9 @@ namespace iaq8::ui
 //   - content: a component in reference coordinates, scaled with an
 //     AffineTransform; it paints the worn silkscreen (top row labels, lamp
 //     captions and the text under the logo) from images cached per scale.
-//     The screen, keys, top row controls and meters (later tasks) are its
-//     children.
+//     The phosphor screen (over geometry::crt, hiding LABQ8's screen in the
+//     chassis), the meters and, in later tasks, the keys and top row
+//     controls are its children.
 //
 // Settings: a click on the panel's top-left screw or on the logo (or a
 // right-click anywhere on the chassis) opens the settings menu: zoom, the
@@ -83,6 +85,7 @@ public:
     juce::Component& getSettingsHotSpot (int index); // 0: top-left screw, 1: logo
     juce::AlertWindow* getOpenDialog() const noexcept { return dialog.get(); }
     Iaq8AudioProcessor& getIaq8Processor() noexcept { return iaq8Processor; }
+    PhosphorScreen& getScreen() noexcept { return *screen; }
 
 private:
     using DialogHandler = std::function<void (int result, juce::AlertWindow&)>;
@@ -98,6 +101,7 @@ private:
     std::unique_ptr<juce::Component> content;
     std::array<std::unique_ptr<juce::Component>, 2> hotSpots;
     std::unique_ptr<labq8::ui::LevelMeterView> meters;
+    std::unique_ptr<PhosphorScreen> screen;
     std::unique_ptr<juce::AlertWindow> dialog;
     DialogHandler onDialogClosed;
     juce::TooltipWindow tooltips { this, 600 };

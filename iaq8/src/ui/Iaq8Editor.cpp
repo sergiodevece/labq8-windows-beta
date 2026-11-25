@@ -126,6 +126,13 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
         hotSpots[i] = std::move (spot);
     }
 
+    // The phosphor screen covers the CRT. Bound to the session in Task 7;
+    // until then it shows only the system name.
+    screen = std::make_unique<PhosphorScreen>();
+    screen->setBounds (g::crt.toNearestInt());
+    screen->setStatus ("IAQ8 1.0", {}, {});
+    content->addAndMakeVisible (*screen);
+
     // The IN / OUT meters show the processor's real sample peaks; the view
     // places itself in reference coordinates (LABQ8's meter window).
     meters = std::make_unique<labq8::ui::LevelMeterView> (iaq8Processor.getInputMeter(), iaq8Processor.getOutputMeter());

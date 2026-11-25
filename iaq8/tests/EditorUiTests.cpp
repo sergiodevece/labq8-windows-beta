@@ -6,6 +6,7 @@
 #include "ui/Iaq8Geometry.h"
 #include "ui/Iaq8LookAndFeel.h"
 #include "ui/Iaq8Preferences.h"
+#include "ui/PhosphorScreen.h"
 
 #include <juce_events/juce_events.h>
 #include <juce_graphics/juce_graphics.h>
@@ -367,4 +368,284 @@ LQ_TEST ("ui look and feel: embedded fonts and a deterministic worn silkscreen")
         }
     LQ_CHECK (intact > 15000 && worn > 200 && worn < 4000, str ("mask: ", intact, " intact, ", worn, " worn of 40000"));
     LQ_CHECK (juce::exactlyEqual (LnF::wearAt ({ 10.3f, 20.7f }), LnF::wearAt ({ 10.3f, 20.7f })), "deterministic");
+}
+
+//==============================================================================
+// Plan 3, Task 4: the phosphor screen.
+
+namespace
+{
+using iaq8::ui::PhosphorScreen;
+using Who = PhosphorScreen::Line::Who;
+
+juce::String utf8 (const char* s)
+{
+    return juce::String (juce::CharPointer_UTF8 (s));
+}
+
+labq8::dsp::BandSettings band (labq8::dsp::FilterType type, double hz, double db, double q, bool bypassed = false)
+{
+    labq8::dsp::BandSettings b;
+    b.type = type;
+    b.frequencyHz = hz;
+    b.gainDb = db;
+    b.q = q;
+    b.bypassed = bypassed;
+    return b;
+}
+
+iaq8::dsp::BandSet allBypassed()
+{
+    iaq8::dsp::BandSet set;
+    for (auto& b : set)
+        b.bypassed = true;
+    return set;
+}
+
+// A wheel movement over the screen, as the mouse would send it.
+void wheel (PhosphorScreen& screen, float deltaY)
+{
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    const juce::MouseEvent e (source, { 10.0f, 10.0f }, {}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                              &screen, &screen, now, { 10.0f, 10.0f }, now, 0, false);
+    juce::MouseWheelDetails details {};
+    details.deltaY = deltaY;
+    screen.mouseWheelMove (e, details);
+}
+
+// A rendering of the whole screen at `scale` device pixels per reference pixel.
+juce::Image renderScreen (PhosphorScreen& screen, float scale)
+{
+    juce::Image image (juce::Image::ARGB, juce::roundToInt ((float) screen.getWidth() * scale),
+                       juce::roundToInt ((float) screen.getHeight() * scale), true, juce::SoftwareImageType());
+    juce::Graphics g (image);
+    g.addTransform (juce::AffineTransform::scale (scale));
+    screen.paintEntireComponent (g, true);
+    return image;
+}
+} // namespace
+
+LQ_TEST ("screen: wraps and keeps the last lines visible")
+{
+    PhosphorScreen screen;
+    screen.setSize ((int) geo::crt.getWidth(), (int) geo::crt.getHeight());
+
+    // 200 messages (Review Focus 2), every fifth long enough to wrap.
+    std::vector<PhosphorScreen::Line> lines;
+    for (int i = 0; i < 200; ++i)
+    {
+        auto text = "MENSAJE " + juce::String (i);
+        if (i % 5 == 0)
+            text << utf8 (" QUITO 4 DB EN 250 HZ (MENOS CAJA) Y SUBO 2.5 DB DESDE 8 KHZ (M\xc3\x81S AIRE). "
+                          "COMP\xc3\x81RALO CON ANTES/DESPU\xc3\x89S Y DIME QU\xc3\x89 TE PARECE.");
+        lines.push_back ({ i % 2 == 0 ? Who::assistant : Who::user, text });
+    }
+    screen.setLines (lines);
+
+    // Long messages wrap by words into rows that fit the 920 px text column.
+    LQ_CHECK (screen.getRowCount() > 200, str ("wrapped rows: ", screen.getRowCount()));
+    for (const auto& row : screen.getAllRows())
+        LQ_CHECK (row.x + row.width <= PhosphorScreen::textWidth + 0.5f, str ("row fits: ", row.text, " ", row.x + row.width));
+
+    auto visible = screen.getVisibleRows();
+    LQ_CHECK (! visible.empty() && visible.back().message == 199, str ("last message visible: ", visible.empty() ? -1 : visible.back().message));
+    LQ_CHECK (visible.size() >= 4 && visible.size() <= 6, str ("rows that fit: ", visible.size()));
+    LQ_CHECK (visible.front().message > 190, "only the last messages");
+
+    // The wheel scrolls back; the earlier messages show and the last one goes.
+    const auto firstBefore = visible.front().message;
+    wheel (screen, 1.0f);
+    visible = screen.getVisibleRows();
+    LQ_CHECK (! visible.empty() && visible.back().message < 199 && visible.front().message < firstBefore,
+              str ("scrolled up: ", visible.front().message, "..", visible.back().message));
+    for (int i = 0; i < 100; ++i)
+        wheel (screen, 1.0f);
+    visible = screen.getVisibleRows();
+    LQ_CHECK (! visible.empty() && visible.front().message == 0 && visible.front().text.startsWith ("MENSAJE 0"),
+              "scrolls to the very first message and stops");
+    wheel (screen, -0.5f);
+    LQ_CHECK (screen.getVisibleRows().front().message > 0, "and back down");
+
+    screen.scrollToEnd();
+    visible = screen.getVisibleRows();
+    LQ_CHECK (! visible.empty() && visible.back().message == 199, "scrollToEnd shows the last message");
+
+    // Prefixes: IAQ8> for the assistant, TÚ> for the user; text shown in capitals.
+    screen.setLines ({ { Who::assistant, "hola" }, { Who::user, utf8 ("s\xc3\xad, y un poco apagada") } });
+    const auto rows = screen.getAllRows();
+    LQ_CHECK (rows.size() == 2, str ("two rows: ", rows.size()));
+    if (rows.size() == 2)
+    {
+        LQ_CHECK (rows[0].prefix == "IAQ8>" && rows[0].text == "HOLA", str (rows[0].prefix, " ", rows[0].text));
+        LQ_CHECK (rows[1].prefix == utf8 ("T\xc3\x9a>") && rows[1].text == utf8 ("S\xc3\x8d, Y UN POCO APAGADA"),
+                  str (rows[1].prefix, " ", rows[1].text));
+        LQ_CHECK (rows[1].colour == iaq8::ui::colours::phosphorUser && rows[0].colour == iaq8::ui::colours::phosphor, "user lines in #6fd062");
+    }
+}
+
+LQ_TEST ("screen: no repaint at rest")
+{
+    PhosphorScreen screen;
+    screen.setSize ((int) geo::crt.getWidth(), (int) geo::crt.getHeight());
+    screen.setStatus ("IAQ8 OS 1.0", "FUENTE: VOZ", "PROPUESTA 2");
+    screen.setLines ({ { Who::assistant, "HOLA" } });
+    screen.timerCallback(); // the pending change
+    const auto afterChange = screen.getRepaintRequests();
+    LQ_CHECK (afterChange >= 1, str ("a change repaints: ", afterChange));
+
+    for (int i = 0; i < 100; ++i)
+        screen.timerCallback();
+    LQ_CHECK (screen.getRepaintRequests() == afterChange, str ("100 idle timer events: ", screen.getRepaintRequests() - afterChange, " repaints"));
+
+    // Setting the same content again changes nothing.
+    screen.setStatus ("IAQ8 OS 1.0", "FUENTE: VOZ", "PROPUESTA 2");
+    screen.setLines ({ { Who::assistant, "HOLA" } });
+    screen.setCurves (allBypassed(), std::nullopt);
+    screen.setDetailVisible (false);
+    for (int i = 0; i < 10; ++i)
+        screen.timerCallback();
+    LQ_CHECK (screen.getRepaintRequests() == afterChange, str ("same content: ", screen.getRepaintRequests() - afterChange, " repaints"));
+
+    // Several changes in one go are one repaint.
+    screen.setLines ({ { Who::assistant, "HOLA" }, { Who::user, "ADIOS" } });
+    screen.setListening (0.3);
+    for (int i = 0; i < 10; ++i)
+        screen.timerCallback();
+    LQ_CHECK (screen.getRepaintRequests() == afterChange + 1, str ("two changes, one repaint: ", screen.getRepaintRequests() - afterChange));
+
+    // Painting twice with the same content and scale reuses the cached layers.
+    renderScreen (screen, 1.0f);
+    const auto builds = screen.getLayerBuilds();
+    renderScreen (screen, 1.0f);
+    LQ_CHECK (screen.getLayerBuilds() == builds, "second paint rebuilds nothing");
+    renderScreen (screen, 2.0f);
+    LQ_CHECK (screen.getLayerBuilds().effects == builds.effects + 1 && screen.getLayerBuilds().content == builds.content + 1,
+              "a new scale rebuilds both layers");
+    screen.setLines ({ { Who::assistant, "OTRA" } });
+    renderScreen (screen, 2.0f);
+    LQ_CHECK (screen.getLayerBuilds().effects == builds.effects + 1 && screen.getLayerBuilds().content == builds.content + 2,
+              "new content rebuilds only the content layer");
+}
+
+LQ_TEST ("screen: curve marks active bands only")
+{
+    using FT = labq8::dsp::FilterType;
+    PhosphorScreen screen;
+    screen.setSize ((int) geo::crt.getWidth(), (int) geo::crt.getHeight());
+
+    auto preview = allBypassed();
+    preview[1] = band (FT::bell, 250.0, -4.0, 1.4);
+    preview[4] = band (FT::highShelf, 8000.0, 2.5, 0.7);
+    preview[6] = band (FT::bell, 1000.0, 6.0, 1.0, true); // bypassed: not shown
+    screen.setCurves (allBypassed(), preview);
+
+    const auto markers = screen.getMarkers();
+    LQ_CHECK (markers.size() == 2, str ("two markers: ", markers.size()));
+    if (markers.size() == 2)
+    {
+        LQ_CHECK (markers[0].label == "-4 DB" && markers[1].label == "+2.5 DB", str (markers[0].label, " / ", markers[1].label));
+        // 20 Hz - 20 kHz on a log scale across 920 px; 0 dB in the middle, +/-12 dB.
+        const auto x250 = 920.0f * (float) (std::log10 (250.0 / 20.0) / 3.0);
+        LQ_CHECK (std::abs (markers[0].position.x - x250) < 0.5f, str ("250 Hz at x ", markers[0].position.x, " expected ", x250));
+        LQ_CHECK (markers[0].position.y > PhosphorScreen::curveHeight * 0.5f && markers[1].position.y < PhosphorScreen::curveHeight * 0.5f,
+                  "the cut sits below 0 dB and the boost above");
+    }
+
+    // The curve follows the biquads: about -4 dB at 250 Hz, 0 dB at 30 Hz.
+    const auto& curve = screen.getPreviewCurve();
+    LQ_CHECK (curve.size() >= 150, str ("points: ", curve.size()));
+    double at250 = 0.0, at30 = 99.0, nearest = 1.0e9;
+    for (const auto& p : curve)
+    {
+        if (std::abs (std::log (p.hz / 250.0)) < nearest)
+        {
+            nearest = std::abs (std::log (p.hz / 250.0));
+            at250 = p.db;
+        }
+        if (std::abs (p.hz - 30.0) < 3.0)
+            at30 = p.db;
+    }
+    LQ_CHECK (std::abs (at250 + 4.0) < 0.3, str ("-4 dB at 250 Hz: ", at250));
+    LQ_CHECK (std::abs (at30) < 0.3, str ("flat at 30 Hz: ", at30));
+
+    // Without a preview the applied bands are marked; nothing active, nothing marked.
+    auto applied = allBypassed();
+    applied[0] = band (FT::lowCut, 80.0, 0.0, 0.7);
+    screen.setCurves (applied, std::nullopt);
+    LQ_CHECK (screen.getMarkers().size() == 1 && screen.getMarkers()[0].label == "80 HZ",
+              str ("applied low cut: ", screen.getMarkers().size()));
+    LQ_CHECK (screen.getPreviewCurve().empty(), "no preview curve");
+    screen.setCurves (allBypassed(), std::nullopt);
+    LQ_CHECK (screen.getMarkers().empty(), "all bypassed: no markers");
+}
+
+LQ_TEST ("screen: detail view lists active bands")
+{
+    using FT = labq8::dsp::FilterType;
+    PhosphorScreen screen;
+    screen.setSize ((int) geo::crt.getWidth(), (int) geo::crt.getHeight());
+
+    auto preview = allBypassed();
+    preview[1] = band (FT::bell, 250.0, -4.0, 1.4);
+    preview[4] = band (FT::highShelf, 8000.0, 2.5, 0.7);
+    preview[7] = band (FT::notch, 3000.0, 0.0, 8.0, true);
+    screen.setCurves (allBypassed(), preview);
+
+    LQ_CHECK (! screen.isDetailVisible(), "hidden by default");
+    screen.setDetailVisible (true);
+    LQ_CHECK (screen.isDetailVisible(), "shown");
+
+    const auto rows = screen.getDetailRows();
+    LQ_CHECK (rows.size() == 2, str ("two active bands: ", rows.size()));
+    if (rows.size() == 2)
+    {
+        LQ_CHECK (rows[0].band == 2 && rows[0].type == "CAMPANA" && rows[0].frequency == "250 HZ" && rows[0].gain == "-4 DB"
+                      && rows[0].width.contains ("MEDIA"),
+                  str (rows[0].band, " ", rows[0].type, " ", rows[0].frequency, " ", rows[0].gain, " ", rows[0].width));
+        LQ_CHECK (rows[1].band == 5 && rows[1].type == "REALCE DE AGUDOS" && rows[1].frequency == "8 KHZ" && rows[1].gain == "+2.5 DB",
+                  str (rows[1].band, " ", rows[1].type, " ", rows[1].frequency, " ", rows[1].gain, " ", rows[1].width));
+    }
+
+    // The detail replaces the conversation and the curve on the screen.
+    screen.setLines ({ { Who::assistant, "HOLA" } });
+    LQ_CHECK (screen.getVisibleRows().empty(), "no conversation rows in the detail view");
+    screen.setDetailVisible (false);
+    LQ_CHECK (screen.getVisibleRows().size() == 1, "conversation back");
+
+    // Nothing active: the table says so (no rows).
+    screen.setCurves (allBypassed(), std::nullopt);
+    LQ_CHECK (screen.getDetailRows().empty(), "no active bands, no rows");
+}
+
+LQ_TEST ("screen: renders the phosphor look and sits over the CRT")
+{
+    PhosphorScreen screen;
+    screen.setSize ((int) geo::crt.getWidth(), (int) geo::crt.getHeight());
+    screen.setStatus ("IAQ8 OS 1.0", "FUENTE: VOZ", "PROPUESTA 2");
+    screen.setLines ({ { Who::assistant, "NOTO GRAVE ACUMULADO HACIA 250 HZ." } });
+    screen.setListening (0.6);
+    const auto image = renderScreen (screen, 1.0f);
+
+    // Rounded corners: the chassis shows through; the centre is the dark green glass.
+    LQ_CHECK (image.getPixelAt (1, 1).getAlpha() == 0, "corner transparent");
+    const auto centre = image.getPixelAt (490, 120);
+    LQ_CHECK (centre.getAlpha() == 255 && centre.getGreen() > centre.getRed() && centre.getGreen() < 90,
+              str ("dark green glass: ", centre.toDisplayString (true)));
+    // Some bright phosphor in the conversation area.
+    int bright = 0;
+    for (int y = 158; y < 200; ++y)
+        for (int x = 30; x < 500; ++x)
+            bright += image.getPixelAt (x, y).getGreen() > 200 ? 1 : 0;
+    LQ_CHECK (bright > 100, str ("lit text pixels: ", bright));
+
+    // In the editor, the screen covers the CRT.
+    prefs::setStorageFolderForTesting (juce::File());
+    Iaq8Editor::setScreenAreaForTesting (largeScreen);
+    iaq8::Iaq8AudioProcessor processor;
+    Iaq8Editor editor (processor);
+    auto& editorScreen = editor.getScreen();
+    LQ_CHECK (editorScreen.getBounds().toFloat() == geo::crt && editorScreen.isVisible(), text (editorScreen.getBounds().toFloat()));
+    LQ_CHECK (editorScreen.getParentComponent() == &editor.getContent(), "child of the reference-space content");
+    LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 1.0" && editorScreen.getAllRows().empty(), "placeholder status, no lines");
 }

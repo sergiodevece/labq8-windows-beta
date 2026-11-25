@@ -109,6 +109,23 @@ target_link_libraries(IAQ8
         juce::juce_recommended_warning_flags)
 
 #==============================================================================
+# iaq8_analyze <file.wav> <source>: analysis JSON on stdout (reads whole files).
+juce_add_console_app(iaq8_analyze
+    PRODUCT_NAME "iaq8_analyze"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+
+target_sources(iaq8_analyze PRIVATE tools/AnalyzeMain.cpp)
+target_compile_definitions(iaq8_analyze PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(iaq8_analyze
+    PRIVATE
+        iaq8_core
+        juce::juce_audio_formats
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+#==============================================================================
 # Tests: run without any DAW. Reuses LABQ8's harness by path (no copies).
 if(IAQ8_BUILD_TESTS)
     enable_testing()

@@ -51,8 +51,10 @@ struct AnalysisSummary
 // CaptureBuffer::copyOut gives them) at `sampleRate`.
 //
 // spectrumDb is a power spectral density: the 1/6-octave average of the mid
-// signal (L+R)/2 in dB re 1 FS^2/Hz, floored at -120 (so pink noise falls at
-// -3 dB/oct, like slopeDbPerOct). It is meaningful only when enoughSignal is
+// signal (L+R)/2 in dB re 1 FS^2/Hz, floored at -120 only in this
+// output (the internal curves are not floored, so quiet material keeps its
+// shape). Pink noise falls at
+// -3 dB/oct, like slopeDbPerOct. It is meaningful only when enoughSignal is
 // true. With too little signal (under 6 s, or quieter than -60 dBFS)
 // enoughSignal is false, there are no candidates and spectrumDb holds 60 x -120.
 AnalysisSummary analyse (const std::vector<std::vector<float>>& channels, double sampleRate, assist::Source source);

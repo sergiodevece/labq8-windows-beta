@@ -15,8 +15,13 @@ namespace
 namespace tn = tuning;
 
 double ampToDbfs (double amplitude) { return amplitude > 0 ? std::max (tn::floorDb, 20.0 * std::log10 (amplitude)) : tn::floorDb; }
-// Density in dB re 1 FS^2/Hz, floored at floorDb like every other level.
-double densityDb (double density) { return density > 0 ? std::max (tn::floorDb, 10.0 * std::log10 (density)) : tn::floorDb; }
+// Density in dB re 1 FS^2/Hz for the internal curves (1/3 oct, 1/24 oct,
+// reference): only a very low floor, so quiet or band-limited material does
+// not saturate the top of the fit range. The -120 dB floor is applied by
+// outputDb, only to the spectrumDb that is reported.
+inline constexpr double internalMinDensity = 1.0e-30;
+double densityDb (double density) { return 10.0 * std::log10 (std::max (density, internalMinDensity)); }
+double outputDb (double density) { return std::max (tn::floorDb, densityDb (density)); }
 
 //==============================================================================
 // One-sided Welch power density of x (FS^2/Hz per bin), with band averages.
@@ -336,7 +341,7 @@ AnalysisSummary analyse (const std::vector<std::vector<float>>& channels, double
     const LongTermSpectrum spectrum (mid, sampleRate);
 
     for (int i = 0; i < AnalysisSummary::spectrumPoints; ++i)
-        s.spectrumDb[(size_t) i] = densityDb (spectrum.bandDensity (AnalysisSummary::spectrumStartHz * std::exp2 (i * AnalysisSummary::spectrumStepOct),
+        s.spectrumDb[(size_t) i] = outputDb (spectrum.bandDensity (AnalysisSummary::spectrumStartHz * std::exp2 (i * AnalysisSummary::spectrumStepOct),
                                                                     tn::spectrumSmoothingOct));
 
     Grid grid;

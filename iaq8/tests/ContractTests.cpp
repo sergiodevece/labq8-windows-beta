@@ -510,3 +510,26 @@ LQ_TEST ("contract: invalid 200 bodies are invalidResponse")
     LQ_CHECK (p != nullptr && p->bands.size() == 1 && ! p->bands[0].settings.bypassed && p->bands[0].reason.empty()
                   && p->quickReplies.empty(), "minimal band accepted");
 }
+
+LQ_TEST ("contract: numbers JUCE cannot read safely are rejected before parsing")
+{
+    // JUCE reads the integer part into an int64 and the exponent into an int
+    // without overflow checks (undefined behaviour on untrusted input), and
+    // asserts on an empty member name.
+    const auto withN = [] (const char* n) { return juce::String ("{\"kind\":\"question\",\"text\":\"x\",\"n\":") + n + "}"; };
+    for (auto bad : { "1234567890123456789", "-1234567890123456789", "99999999999999999999999", "1234567890123456.5",
+                      "1e1000000000000", "1E-99999999999", "1.5e+2147483648", "1e0001", "123456789012345678901234567890e1" })
+    {
+        LQ_CHECK (! strict (withN (bad)), str ("rejected: ", bad));
+        LQ_CHECK (isInvalidResponse (parseOnThread (withN (bad))), str ("invalidResponse: ", bad));
+    }
+    for (auto good : { "0", "-0", "123456789012345", "-123456789012345", "1.25", "0.000001", "1e308", "1E-307", "2.5e+12",
+                       "1.234567890123456789", "-3.5e2" })
+    {
+        LQ_CHECK (strict (withN (good)), str ("accepted: ", good));
+        LQ_CHECK (std::holds_alternative<assist::Question> (parseOnThread (withN (good))), str ("parses: ", good));
+    }
+    LQ_CHECK (! strict ("{\"kind\":\"question\",\"text\":\"x\",\"\":1}"), "empty member name rejected");
+    LQ_CHECK (! strict ("{\"\":{}}"), "empty member name rejected (only member)");
+    LQ_CHECK (strict ("{\"a\":\"\"}") && strict ("[\"\"]"), "empty string values are fine");
+}

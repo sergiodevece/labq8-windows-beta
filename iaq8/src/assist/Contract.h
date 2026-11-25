@@ -163,7 +163,9 @@ Reply parseReply (int httpStatus, const juce::String& body);
 
 // True when `text` is exactly one strict RFC 8259 JSON value (whitespace
 // around it allowed) in well-formed UTF-8, nested at most `maxDepth` levels
-// of [ / {. parseReply calls it before juce::JSON::parse, which is lax and
+// of [ / {, with no number of more than 15 integer digits or 3 exponent
+// digits and no empty member name (JUCE's parser has undefined behaviour or
+// asserts on those). parseReply calls it before juce::JSON::parse, which is lax and
 // recurses once per level without a limit: for strictly valid JSON that
 // parser reads the same structure, so its recursion depth equals the bracket
 // depth checked here. Iterative (constant stack, linear time) and safe on any

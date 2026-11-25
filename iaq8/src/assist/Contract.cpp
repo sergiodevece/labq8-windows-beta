@@ -244,6 +244,8 @@ namespace
 class StrictJson
 {
 public:
+    static constexpr size_t maxIntegerDigits = 15, maxExponentDigits = 3;
+
     StrictJson (const char* text, int maxDepthIn)
         : s (reinterpret_cast<const unsigned char*> (text)), maxDepth (maxDepthIn) {}
 
@@ -321,11 +323,12 @@ private:
     static bool isDigit (unsigned char c) { return c >= '0' && c <= '9'; }
     static bool isHex (unsigned char c) { return isDigit (c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 
-    // A member name and its ':' (whitespace before both).
+    // A member name and its ':' (whitespace before both). Not empty: JUCE
+    // stores names as Identifiers, which must not be empty.
     bool key()
     {
         skipWhitespace();
-        if (s[i] != '"' || ! string())
+        if (s[i] != '"' || s[i + 1] == '"' || ! string())
             return false;
         skipWhitespace();
         if (s[i] != ':')
@@ -353,7 +356,23 @@ private:
         return true;
     }
 
-    // -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+    // Digits per run of [0-9] that the number may have.
+    size_t digits (size_t max)
+    {
+        size_t n = 0;
+        while (isDigit (s[i]) && n <= max)
+        {
+            ++i;
+            ++n;
+        }
+        return n;
+    }
+
+    // -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?, with at most
+    // maxIntegerDigits before the '.' and maxExponentDigits in the exponent:
+    // JUCE reads the integer part into an int64 and the exponent into an int
+    // with no overflow check (undefined behaviour). Values the contract uses
+    // are far inside both caps; longer ones are rejected, not rounded.
     bool number()
     {
         if (s[i] == '-')
@@ -361,7 +380,10 @@ private:
         if (s[i] == '0')
             ++i;
         else if (s[i] >= '1' && s[i] <= '9')
-            while (isDigit (s[i])) ++i;
+        {
+            if (digits (maxIntegerDigits) > maxIntegerDigits)
+                return false;
+        }
         else
             return false;
         if (s[i] == '.')
@@ -376,9 +398,9 @@ private:
             ++i;
             if (s[i] == '+' || s[i] == '-')
                 ++i;
-            if (! isDigit (s[i]))
+            const auto n = digits (maxExponentDigits);
+            if (n == 0 || n > maxExponentDigits)
                 return false;
-            while (isDigit (s[i])) ++i;
         }
         return true;
     }

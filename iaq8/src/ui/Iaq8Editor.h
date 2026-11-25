@@ -54,6 +54,10 @@ public:
     // Settings menu: items 1..6 are zoomChoices[n - 1]; then these.
     static constexpr int accessCodeItem = 101, aboutItem = 102;
 
+    // Set (true) on a child of the content that shows its own menu on a
+    // right-click, so the settings menu does not open as well.
+    static constexpr const char* ownsPopupMenuProperty = "iaq8OwnsPopupMenu";
+
     explicit Iaq8Editor (Iaq8AudioProcessor& processor);
     ~Iaq8Editor() override;
 
@@ -86,6 +90,11 @@ public:
     juce::AlertWindow* getOpenDialog() const noexcept { return dialog.get(); }
     Iaq8AudioProcessor& getIaq8Processor() noexcept { return iaq8Processor; }
     PhosphorScreen& getScreen() noexcept { return *screen; }
+    // The listener that turns right-clicks on the chassis into the settings
+    // menu (registered on the content and all its children), and how many
+    // times the menu was asked for.
+    juce::MouseListener& getPopupMenuListener() noexcept;
+    int getSettingsMenuRequests() const noexcept { return settingsMenuRequests; }
 
 private:
     using DialogHandler = std::function<void (int result, juce::AlertWindow&)>;
@@ -95,6 +104,8 @@ private:
     void showAboutDialog();
     juce::PopupMenu createZoomMenu() const;
 
+    class PopupMenuForwarder;
+
     Iaq8AudioProcessor& iaq8Processor;
     Iaq8LookAndFeel lookAndFeel;
 
@@ -102,6 +113,8 @@ private:
     std::array<std::unique_ptr<juce::Component>, 2> hotSpots;
     std::unique_ptr<labq8::ui::LevelMeterView> meters;
     std::unique_ptr<PhosphorScreen> screen;
+    std::unique_ptr<juce::MouseListener> popupForwarder;
+    int settingsMenuRequests = 0;
     std::unique_ptr<juce::AlertWindow> dialog;
     DialogHandler onDialogClosed;
     juce::TooltipWindow tooltips { this, 600 };

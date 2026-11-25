@@ -57,14 +57,6 @@ public:
         setOpaque (false);
     }
 
-    std::function<void()> onPopupMenu;
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        if (e.mods.isPopupMenu() && onPopupMenu)
-            onPopupMenu();
-    }
-
     void paint (juce::Graphics& gr) override
     {
         // Device pixels per reference pixel: the zoom times the display density.
@@ -105,20 +97,52 @@ juce::Rectangle<int> screenAreaOverride;
 } // namespace
 
 //==============================================================================
+class Iaq8Editor::PopupMenuForwarder final : public juce::MouseListener
+{
+public:
+    explicit PopupMenuForwarder (Iaq8Editor& e) : editor (e) {}
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu())
+            return; // left clicks stay with the component that got them
+        for (auto* c = e.eventComponent; c != nullptr && c != editor.content.get(); c = c->getParentComponent())
+            if (c->getProperties()[ownsPopupMenuProperty])
+                return;
+        editor.showSettingsMenu (*editor.content);
+    }
+
+private:
+    Iaq8Editor& editor;
+};
+
+juce::MouseListener& Iaq8Editor::getPopupMenuListener() noexcept
+{
+    return *popupForwarder;
+}
+
+//==============================================================================
 Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
     : AudioProcessorEditor (p), iaq8Processor (p)
 {
     setLookAndFeel (&lookAndFeel);
 
-    auto chassis = std::make_unique<Content>();
-    chassis->onPopupMenu = [this] { showSettingsMenu (*content); };
-    content = std::move (chassis);
+    content = std::make_unique<Content>();
     addAndMakeVisible (*content);
+
+    // A right-click anywhere on the chassis opens the settings menu: one
+    // listener on the content and every component inside it (present or
+    // added later), so children such as the screen, which take the clicks
+    // for themselves, need no wiring. Children with a menu of their own set
+    // ownsPopupMenuProperty.
+    popupForwarder = std::make_unique<PopupMenuForwarder> (*this);
+    content->addMouseListener (popupForwarder.get(), true);
 
     const g::Rect spots[] = { g::settingsScrew, g::logo };
     for (size_t i = 0; i < hotSpots.size(); ++i)
     {
         auto spot = std::make_unique<HotSpot> ("Ajustes");
+        spot->getProperties().set (ownsPopupMenuProperty, true); // any click opens the menu already
         spot->setBounds (spots[i].toNearestInt());
         auto* target = spot.get();
         spot->onClick = [this, target] { showSettingsMenu (*target); };
@@ -150,6 +174,7 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
 
 Iaq8Editor::~Iaq8Editor()
 {
+    content->removeMouseListener (popupForwarder.get());
     // An open dialog closes with the editor (its callback then finds no
     // editor and saves nothing).
     dialog.reset();
@@ -266,6 +291,7 @@ void Iaq8Editor::handleSettingsMenuResult (int itemId)
 
 void Iaq8Editor::showSettingsMenu (juce::Component& target)
 {
+    ++settingsMenuRequests;
     juce::Component::SafePointer<Iaq8Editor> self (this);
     createSettingsMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
                                         [self] (int result)

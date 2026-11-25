@@ -649,3 +649,54 @@ LQ_TEST ("screen: renders the phosphor look and sits over the CRT")
     LQ_CHECK (editorScreen.getParentComponent() == &editor.getContent(), "child of the reference-space content");
     LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 1.0" && editorScreen.getAllRows().empty(), "placeholder status, no lines");
 }
+
+LQ_TEST ("editor: right-click on the screen (or any child of the chassis) opens the settings menu")
+{
+    prefs::setStorageFolderForTesting (juce::File());
+    Iaq8Editor::setScreenAreaForTesting (largeScreen);
+    iaq8::Iaq8AudioProcessor processor;
+    Iaq8Editor editor (processor);
+    auto& listener = editor.getPopupMenuListener();
+
+    const auto click = [&] (juce::Component& target, juce::ModifierKeys mods)
+    {
+        auto source = juce::Desktop::getInstance().getMainMouseSource();
+        const auto now = juce::Time::getCurrentTime();
+        const juce::MouseEvent e (source, { 20.0f, 20.0f }, mods, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                  &target, &target, now, { 20.0f, 20.0f }, now, 1, false);
+        listener.mouseDown (e);
+    };
+    const juce::ModifierKeys right (juce::ModifierKeys::rightButtonModifier), left (juce::ModifierKeys::leftButtonModifier);
+
+    // The screen takes the clicks (it scrolls with the wheel) and has no menu
+    // of its own: a right-click on it reaches the settings menu.
+    auto& screen = editor.getScreen();
+    bool self = false, children = false;
+    screen.getInterceptsMouseClicks (self, children);
+    LQ_CHECK (self, "the screen takes the mouse (wheel)");
+    click (screen, right);
+    LQ_CHECK (editor.getSettingsMenuRequests() == 1, str ("right-click on the screen: ", editor.getSettingsMenuRequests()));
+    juce::PopupMenu::dismissAllActiveMenus();
+
+    click (screen, left);
+    LQ_CHECK (editor.getSettingsMenuRequests() == 1, "a left click does not open it");
+
+    click (editor.getContent(), right);
+    LQ_CHECK (editor.getSettingsMenuRequests() == 2, "right-click on the bare chassis");
+    juce::PopupMenu::dismissAllActiveMenus();
+
+    // A child added later is covered too, unless it owns its popup menu
+    // (the settings hot spots open the menu with any click already).
+    juce::Component later, ownMenu;
+    editor.getContent().addAndMakeVisible (later);
+    ownMenu.getProperties().set (Iaq8Editor::ownsPopupMenuProperty, true);
+    later.addAndMakeVisible (ownMenu);
+    click (later, right);
+    LQ_CHECK (editor.getSettingsMenuRequests() == 3, "child added later");
+    juce::PopupMenu::dismissAllActiveMenus();
+    click (ownMenu, right);
+    click (editor.getSettingsHotSpot (0), right);
+    LQ_CHECK (editor.getSettingsMenuRequests() == 3, "children with their own menu are left alone");
+    editor.getContent().removeChildComponent (&later);
+    pump (50);
+}

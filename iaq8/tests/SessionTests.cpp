@@ -15,6 +15,7 @@
 #include <juce_events/juce_events.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -571,4 +572,129 @@ LQ_TEST ("session: the debug editor follows the session and saves the access cod
 
     assist::Settings::setFileOptionsForTesting (std::nullopt);
     dir.deleteRecursively();
+}
+
+LQ_TEST ("session: a load whose counter another call consumed still drops the stale proposal")
+{
+    Rig rig;
+    listenAsVoice (ctx, rig);
+    auto& s = rig.s();
+    juce::MemoryBlock early;
+    rig.p->getStateInformation (early);
+
+    // The race, made deterministic: the load lands, a processor call consumes
+    // the counter, then the old conversation's proposal is published and
+    // previewed (what a reply handler running across the load would do).
+    std::thread ([&] { rig.p->setStateInformation (early.getData(), (int) early.getSize()); }).join();
+    LQ_CHECK (! rig.p->hasProposal(), "the counter is consumed here");
+    dsp::BandSet stale {};
+    stale[3] = { 1000.0, -12.0, 4.0, false, FilterType::bell };
+    rig.p->setProposal (stale);
+    rig.p->setListen (dsp::Listen::preview);
+
+    s.poll();
+    LQ_CHECK (! rig.p->hasProposal() && ! s.canApply(), "stale proposal dropped");
+    LQ_CHECK (rig.p->getListenRequest() == dsp::Listen::applied && s.getListen() == dsp::Listen::applied, "listening to applied");
+}
+
+LQ_TEST ("session: an analysis result that arrives after a state load is dropped")
+{
+    Rig rig;
+    auto& s = rig.s();
+    juce::MemoryBlock fresh; // askSource
+    rig.p->getStateInformation (fresh);
+
+    auto calls = std::make_shared<std::atomic<int>> (0);
+    s.setAnalyseFunctionForTesting ([calls] (const std::vector<std::vector<float>>& ch, double fs, assist::Source src)
+    {
+        ++*calls;
+        std::this_thread::sleep_for (std::chrono::milliseconds (300)); // the load lands meanwhile
+        return analysis::analyse (ch, fs, src);
+    });
+    s.say ("Voz");
+    fillCapture (*rig.p, 12.5);
+    s.poll();
+    LQ_CHECK (s.getStage() == Stage::listening && s.getListenProgress() == 1.0, "analysing");
+    std::thread ([&] { rig.p->setStateInformation (fresh.getData(), (int) fresh.getSize()); }).join();
+    pump (800);
+    LQ_CHECK (calls->load() == 1, "the analysis ran");
+    LQ_CHECK (s.getStage() == Stage::askSource && s.getMessages().size() == 1 && s.getMessages()[0].text == kAskSource,
+              "its result was dropped: the loaded conversation stays");
+    LQ_CHECK (rig.state->posts == 0, "nothing sent");
+}
+
+LQ_TEST ("session: an analysis without enough signal says so and listens again")
+{
+    Rig rig;
+    auto& s = rig.s();
+    auto calls = std::make_shared<std::atomic<int>> (0);
+    s.setAnalyseFunctionForTesting ([calls] (const std::vector<std::vector<float>>& ch, double fs, assist::Source src)
+    {
+        auto summary = analysis::analyse (ch, fs, src);
+        if (++*calls == 1)
+            summary.enoughSignal = false; // e.g. too quiet
+        return summary;
+    });
+    s.say ("Voz");
+    fillCapture (*rig.p, 12.5);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return calls->load() == 1 && ! s.getNotice().empty(); }, 5000), "first analysis answered");
+    LQ_CHECK (s.getStage() == Stage::listening && juce::String::fromUTF8 (s.getNotice().c_str()).contains (juce::String (juce::CharPointer_UTF8 ("se\xc3\xb1" "al"))),
+              "not enough signal: notice, still listening");
+    LQ_CHECK (rig.p->getCapture().getState() == analysis::CaptureBuffer::State::capturing
+                  && rig.p->getCapture().getCapturedSeconds() == 0.0,
+              "re-armed from empty");
+    const auto before = s.getMessages().size();
+    fillCapture (*rig.p, 12.5, 9);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "second listening analysed");
+    LQ_CHECK (s.getMessages().size() == before + 1 && s.getNotice().empty(), "goal question, notice cleared");
+}
+
+LQ_TEST ("session: a refused arm() is retried and never re-analyses the previous capture")
+{
+    Rig rig;
+    auto& s = rig.s();
+    s.say ("Voz");
+    auto& capture = rig.p->getCapture();
+
+    // A reader that keeps the capture busy (copyOut sets the reading flag,
+    // during which arm() refuses).
+    std::atomic<bool> stop { false };
+    std::thread reader ([&]
+    {
+        std::vector<std::vector<float>> copy;
+        while (! stop.load())
+            capture.copyOut (copy);
+    });
+
+    bool refused = false;
+    for (int attempt = 0; attempt < 200 && ! refused; ++attempt)
+    {
+        fillCapture (*rig.p, 12.5, attempt); // a full previous capture (done)
+        s.listenAgain();
+        refused = capture.getState() != analysis::CaptureBuffer::State::capturing;
+    }
+
+    if (refused)
+    {
+        LQ_CHECK (s.getStage() == Stage::listening && s.getListenProgress() == 0.0, "listening, nothing captured yet");
+        LQ_CHECK (capture.hasEnough(), "the buffer still holds the previous capture");
+        s.say ("ya");
+        LQ_CHECK (s.getListenProgress() == 0.0 && ! s.getNotice().empty(), "not analysed: asks for more");
+    }
+    stop = true;
+    reader.join();
+
+    if (! refused)
+    {
+        ctx.skip ("arm() was never refused in 200 attempts");
+        return;
+    }
+    s.poll();
+    LQ_CHECK (capture.getState() == analysis::CaptureBuffer::State::capturing && capture.getCapturedSeconds() == 0.0,
+              "poll() arms it");
+    fillCapture (*rig.p, 12.5, 4);
+    s.poll();
+    LQ_CHECK (pumpUntil ([&] { return s.getStage() == Stage::askGoal; }, 20000), "then listens normally");
 }

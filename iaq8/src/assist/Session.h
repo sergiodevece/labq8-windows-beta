@@ -7,6 +7,7 @@
 #include <juce_events/juce_events.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -103,6 +104,11 @@ public:
     // so tests can drive it deterministically.
     void poll();
 
+    // Testing hook: the analysis the worker runs (default analysis::analyse).
+    // Pure; called on the worker thread. Set it on the message thread.
+    using AnalyseFunction = std::function<analysis::AnalysisSummary (const std::vector<std::vector<float>>&, double, Source)>;
+    void setAnalyseFunctionForTesting (AnalyseFunction f) { analyseFunction = std::move (f); }
+
     // Spanish UTF-8 texts (fixed by the brief).
     static const char* sourceLabel (Source);
     static std::vector<std::string> goalReplies (Source);
@@ -124,11 +130,10 @@ private:
     void addMessage (Message::Role role, std::string text);
     void beginListening();
     void startAnalysis();
-    void analysisFinished (std::optional<analysis::AnalysisSummary> summary);
+    void analysisFinished (std::uint64_t forGeneration, std::optional<analysis::AnalysisSummary> summary);
     void sendTurn();
-    void handleReply (Reply reply);
+    void handleReply (std::uint64_t forGeneration, Reply reply);
     void cancelWork();
-    Stage restingStage() const; // where a non-network error returns to
 
     Iaq8AudioProcessor& processor;
     AssistClient& client;
@@ -161,5 +166,10 @@ private:
     double lastGrowthMs = 0.0;
 
     std::uint32_t stateLoadsSeen = 0;
+    // Bumped whenever pending work is abandoned (state load, startOver, new
+    // listening): a reply or an analysis result of an older generation is
+    // dropped even if it was already on its way.
+    std::uint64_t generation = 0;
+    AnalyseFunction analyseFunction;
 };
 } // namespace iaq8::assist

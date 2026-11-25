@@ -77,15 +77,15 @@ public:
     // Message thread. Cancels any previous job and joins its thread first:
     // the session only starts a job after a new capture (>= 6 s), so the
     // previous one has finished by then.
-    void start (analysis::CaptureBuffer& capture, Source source, Done onDone)
+    void start (analysis::CaptureBuffer& capture, Source source, Session::AnalyseFunction analyse, Done onDone)
     {
         cancel();
         join();
         auto flag = std::make_shared<std::atomic<bool>> (true);
         alive = flag;
-        thread = std::thread ([&capture, source, flag, done = std::move (onDone)]
+        thread = std::thread ([&capture, source, flag, fn = std::move (analyse), done = std::move (onDone)]
         {
-            auto result = run (capture, source, *flag);
+            auto result = run (capture, source, fn, *flag);
             if (! flag->load())
                 return;
             juce::MessageManager::callAsync ([flag, done, summary = std::move (result)]
@@ -113,6 +113,7 @@ private:
 
     // nullopt: no copy could be taken (busy for too long, re-armed, cancelled).
     static std::optional<analysis::AnalysisSummary> run (analysis::CaptureBuffer& capture, Source source,
+                                                         const Session::AnalyseFunction& analyse,
                                                          const std::atomic<bool>& alive)
     {
         std::vector<std::vector<float>> channels;
@@ -123,7 +124,7 @@ private:
             // Empty `channels` is "busy" (another copy or a prepare), not
             // "nothing captured"; a rate change means a prepare() slipped in.
             if (! channels.empty() && juce::exactlyEqual (capture.getSampleRate(), sampleRate) && sampleRate > 0.0)
-                return analysis::analyse (channels, sampleRate, source);
+                return analyse ? analyse (channels, sampleRate, source) : analysis::analyse (channels, sampleRate, source);
             if (capture.getState() == analysis::CaptureBuffer::State::capturing)
                 return std::nullopt;
             std::this_thread::sleep_for (std::chrono::milliseconds (retryMs));
@@ -217,6 +218,12 @@ bool Session::syncWithStateLoad()
         return false;
 
     processor.invalidateIfStateLoaded(); // proposal and undo history of the old state
+    // Unconditionally too: the counter may already have been consumed by a
+    // processor call made between our last check and this one (e.g. a reply
+    // handler's setProposal right after a load), which then published the
+    // OLD conversation's proposal. Nothing of the old conversation survives.
+    processor.clearProposal();
+    processor.setListen (dsp::Listen::applied);
     cancelWork();
     loadFromProcessor();
     changed();
@@ -225,6 +232,7 @@ bool Session::syncWithStateLoad()
 
 void Session::cancelWork()
 {
+    ++generation;
     worker->cancel();
     client.cancelAll();
     processor.getCapture().cancel();
@@ -359,6 +367,7 @@ void Session::chooseSource (Source newSource, const std::string& note)
 
 void Session::beginListening()
 {
+    ++generation; // an analysis or a reply still on its way belongs to before
     worker->cancel();
     analysing = false;
     analysisRetry = false;
@@ -446,14 +455,15 @@ void Session::startAnalysis()
     auto& capture = processor.getCapture();
     capture.cancel(); // capturing -> idle; what was captured stays readable
     analysing = true;
-    worker->start (capture, source.value_or (Source::other),
-                   [this] (std::optional<analysis::AnalysisSummary> summary) { analysisFinished (std::move (summary)); });
+    worker->start (capture, source.value_or (Source::other), analyseFunction,
+                   [this, g = generation] (std::optional<analysis::AnalysisSummary> summary)
+                   { analysisFinished (g, std::move (summary)); });
     changed();
 }
 
-void Session::analysisFinished (std::optional<analysis::AnalysisSummary> summary)
+void Session::analysisFinished (std::uint64_t forGeneration, std::optional<analysis::AnalysisSummary> summary)
 {
-    if (syncWithStateLoad() || stage != Stage::listening || ! analysing)
+    if (syncWithStateLoad() || forGeneration != generation || stage != Stage::listening || ! analysing)
         return;
     analysing = false;
 
@@ -504,7 +514,9 @@ void Session::say (const std::string& userText)
         case Stage::listening:
             if (analysing)
                 return;
-            if (processor.getCapture().hasEnough())
+            // Only this listening's capture: while arm() has not succeeded
+            // the buffer still holds the previous one.
+            if (armed && processor.getCapture().hasEnough())
                 return startAnalysis();
             notice = kNeedMore;
             changed();
@@ -554,14 +566,14 @@ void Session::sendTurn()
     // The callback captures `this`: every path that could outlive it
     // (destruction, startOver, a state load, a new listening) calls
     // client.cancelAll(), after which it is never called.
-    client.send (request, [this] (Reply reply) { handleReply (std::move (reply)); });
+    client.send (request, [this, g = generation] (Reply reply) { handleReply (g, std::move (reply)); });
     persist();
     changed();
 }
 
-void Session::handleReply (Reply reply)
+void Session::handleReply (std::uint64_t forGeneration, Reply reply)
 {
-    if (syncWithStateLoad() || stage != Stage::waiting)
+    if (syncWithStateLoad() || forGeneration != generation || stage != Stage::waiting)
         return;
 
     if (const auto* error = std::get_if<Error> (&reply))
@@ -607,7 +619,10 @@ void Session::handleReply (Reply reply)
             ProposedBand band = proposal->bands[k];
             band.settings = bands[k];
             if (bands[k].bypassed && ! proposal->bands[k].settings.bypassed) // discarded by the limits
-                band.candidateId.clear(), band.reason.clear();
+            {
+                band.candidateId.clear();
+                band.reason.clear();
+            }
             previewed.push_back (std::move (band));
         }
         currentProposal = std::move (previewed);

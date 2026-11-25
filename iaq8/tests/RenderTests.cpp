@@ -83,3 +83,60 @@ LQ_TEST ("render: an all-bypassed band set is the identity")
     LQ_CHECK (maxDiff < 1.0e-6, "identity");
     LQ_CHECK (std::abs (r.compensationDb) < 1.0e-6, "no compensation");
 }
+
+LQ_TEST ("render: a would-be clipping render gets one common headroom gain on both sides")
+{
+    const auto n = (size_t) (kFs * 4);
+    std::vector<std::vector<float>> in { test::makePink (n, kFs, 5u, -3.0) };
+    auto bands = emptySet();
+    bands[0] = BandSettings { 100.0, 6.0, 0.7, false, FilterType::lowShelf };
+    bands[1] = BandSettings { 3000.0, 6.0, 1.0, false, FilterType::bell };
+    const auto r = analysis::render (in, kFs, bands);
+    LQ_CHECK (std::max (r.peakBefore, r.peakAfter) > 0.98, "the case really would clip");
+    LQ_CHECK (r.headroomDb < 0.0, "headroom applied");
+    double peakB = 0, peakA = 0;
+    for (const auto v : r.before[0])
+        peakB = std::max (peakB, (double) std::abs (v));
+    for (const auto v : r.after[0])
+        peakA = std::max (peakA, (double) std::abs (v));
+    LQ_CHECK (peakB <= 0.98 + 1.0e-6 && peakA <= 0.98 + 1.0e-6, "both outputs at most 0.98");
+    const auto kb = 10.0 * std::log10 (iaq8::dsp::LoudnessMatcher::wholeSignalMeanSquare (r.before, kFs));
+    const auto ka = 10.0 * std::log10 (iaq8::dsp::LoudnessMatcher::wholeSignalMeanSquare (r.after, kFs));
+    LQ_CHECK (std::abs (ka - kb) < 0.5, "loudness match kept after headroom");
+}
+
+LQ_TEST ("render: the first 100 ms already carry the EQ (pre-roll)")
+{
+    const auto n = (size_t) (kFs * 2);
+    std::vector<float> sine (n);
+    for (size_t i = 0; i < n; ++i)
+        sine[i] = (float) (0.1 * std::sin (2.0 * 3.14159265358979323846 * 1000.0 * (double) i / kFs));
+    auto bands = emptySet();
+    bands[0] = BandSettings { 1000.0, -12.0, 1.0, false, FilterType::bell };
+    const auto r = analysis::render ({ sine }, kFs, bands);
+    const auto rmsDb = [&] (size_t from, size_t to)
+    {
+        double s = 0;
+        for (size_t i = from; i < to; ++i)
+            s += (double) r.after[0][i] * r.after[0][i];
+        return 10.0 * std::log10 (s / (double) (to - from));
+    };
+    const auto first = rmsDb (0, 4800), steady = rmsDb (48000, 52800);
+    LQ_CHECK (std::abs (first - steady) < 0.5, "first 100 ms at steady-state level");
+}
+
+LQ_TEST ("render: the +-6 dB compensation clamp is hit")
+{
+    const auto n = (size_t) (kFs * 4);
+    std::vector<std::vector<float>> in { test::makePink (n, kFs, 6u, -40.0) };
+    auto bands = emptySet();
+    bands[0] = BandSettings { 500.0, 12.0, 0.5, false, FilterType::bell };
+    bands[1] = BandSettings { 1000.0, 12.0, 0.5, false, FilterType::bell };
+    bands[2] = BandSettings { 2000.0, 12.0, 0.5, false, FilterType::bell };
+    const auto r = analysis::render (in, kFs, bands);
+    LQ_CHECK (std::abs (r.compensationDb - (-6.0)) < 1.0e-9, "clamped to -6 dB");
+    for (size_t i = 0; i < 8; ++i) // eight octave-spaced -12 dB bells: far more than 6 dB quieter
+        bands[i] = BandSettings { 60.0 * std::pow (2.0, (double) i), -12.0, 0.5, false, FilterType::bell };
+    const auto r2 = analysis::render (in, kFs, bands);
+    LQ_CHECK (std::abs (r2.compensationDb - 6.0) < 1.0e-9, "clamped to +6 dB");
+}

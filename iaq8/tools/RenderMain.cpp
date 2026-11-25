@@ -6,7 +6,10 @@
 // then through labq8's EqCore with whole-file K-weighted loudness matching
 // (+-6 dB, as in the plugin). Writes <prefix>_antes.wav (the input, first two
 // channels) and <prefix>_despues.wav, both 24-bit at the input sample rate;
-// prints the adjustment lines and "compensation_db=<value>" on stdout.
+// prints the adjustment lines, "compensation_db=", "peak_before=",
+// "peak_after=" (linear, before headroom) and "headroom_db=" on stdout. When a
+// peak would pass 0.98, one common headroom gain is applied to BOTH files so
+// neither clips: _antes is then not level-identical to the source (a fair A/B).
 // Exit 0 on success, 2 on bad arguments, files or reply.
 
 #include "analysis/OfflineRender.h"
@@ -117,12 +120,13 @@ int main (int argc, char** argv)
     const auto result = iaq8::analysis::render (channels, reader->sampleRate, bands);
 
     const juce::String prefix (positional[2]);
-    if (! writeWav (cwd.getChildFile (prefix + "_antes.wav"), channels, reader->sampleRate)
+    if (! writeWav (cwd.getChildFile (prefix + "_antes.wav"), result.before, reader->sampleRate)
         || ! writeWav (cwd.getChildFile (prefix + "_despues.wav"), result.after, reader->sampleRate))
         return fail ("cannot write the output files");
 
     for (const auto& line : report.adjustments)
         std::printf ("%s\n", line.c_str());
     std::printf ("compensation_db=%.2f\n", result.compensationDb);
+    std::printf ("peak_before=%.4f\npeak_after=%.4f\nheadroom_db=%.2f\n", result.peakBefore, result.peakAfter, result.headroomDb);
     return 0;
 }

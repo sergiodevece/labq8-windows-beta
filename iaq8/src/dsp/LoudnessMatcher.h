@@ -24,6 +24,7 @@ class LoudnessMatcher
 public:
     static constexpr double windowSeconds = 3.0, maxCompensationDb = 6.0, smoothingSeconds = 0.5;
     static constexpr double silenceDb = -70.0; // K-weighted mean square below this: hold
+    static constexpr double silenceMeanSquare = 1.0e-7; // 10^(silenceDb / 10)
     static constexpr int maxChannels = labq8::dsp::EqCore::maxChannels;
 
     void prepare (double sampleRate, int numChannels);

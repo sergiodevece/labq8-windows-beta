@@ -41,21 +41,21 @@ RenderResult render (const std::vector<std::vector<float>>& channels, double sam
     size_t length = 0;
     for (const auto& ch : result.after)
         length = std::max (length, ch.size());
+    for (auto& ch : result.after)
+        ch.resize (length, 0.0f);
     for (size_t pos = 0; pos < length; pos += (size_t) block)
     {
         const auto n = (int) std::min<size_t> ((size_t) block, length - pos);
         for (int c = 0; c < numChannels; ++c)
         {
-            auto& ch = result.after[(size_t) c];
-            ch.resize (length, 0.0f);
-            ptrs[(size_t) c] = ch.data() + pos;
+            ptrs[(size_t) c] = result.after[(size_t) c].data() + pos;
         }
         core.process (ptrs.data(), numChannels, n);
     }
     for (int c = 0; c < numChannels; ++c)
         result.after[(size_t) c].resize (channels[(size_t) c].size());
 
-    constexpr double silence = 1.0e-7; // -70 dB, as LoudnessMatcher::silenceDb
+    constexpr double silence = dsp::LoudnessMatcher::silenceMeanSquare;
     const auto msBefore = dsp::LoudnessMatcher::wholeSignalMeanSquare (channels, sampleRate);
     const auto msAfter = dsp::LoudnessMatcher::wholeSignalMeanSquare (result.after, sampleRate);
     if (msBefore >= silence && msAfter >= silence)
@@ -67,6 +67,29 @@ RenderResult render (const std::vector<std::vector<float>>& channels, double sam
         for (auto& ch : result.after)
             for (auto& v : ch)
                 v *= g;
+    }
+
+    const auto peakOf = [] (const std::vector<std::vector<float>>& x)
+    {
+        float peak = 0.0f;
+        for (const auto& ch : x)
+            for (const auto v : ch)
+                peak = std::max (peak, std::abs (v));
+        return (double) peak;
+    };
+    result.peakBefore = peakOf (channels);
+    result.peakAfter = peakOf (result.after);
+    result.before = channels;
+    constexpr double ceiling = 0.98;
+    const auto peak = std::max (result.peakBefore, result.peakAfter);
+    if (peak > ceiling)
+    {
+        const auto g = ceiling / peak;
+        result.headroomDb = 20.0 * std::log10 (g);
+        for (auto* set : { &result.before, &result.after })
+            for (auto& ch : *set)
+                for (auto& v : ch)
+                    v = (float) (v * g);
     }
     return result;
 }

@@ -1,0 +1,10 @@
+{
+  "kind": "question",
+  "text": "¿Qué te molesta más de la voz ahora mismo?",
+  "quick_replies": [
+    "Suena apagada",
+    "Suena nasal",
+    "Le sobra grave",
+    "Suena áspera"
+  ]
+}

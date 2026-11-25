@@ -15,6 +15,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(IAQ8_BUILD_TESTS "Build the IAQ8 test executable" ON)
 
+# Assistant server (Plan 2 sets the real one). Users may override it with the
+# server_url key of their settings file (assist/Settings).
+set(IAQ8_DEFAULT_SERVER_URL "https://example.invalid" CACHE STRING "Default assistant server URL")
+
 # IAQ8 is its own project. It reuses LABQ8's DSP sources and test harness by
 # path and never modifies anything outside iaq8/.
 set(IAQ8_LABQ8_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "LABQ8 repository root")
@@ -53,7 +57,11 @@ list(FILTER IAQ8_CORE_SOURCES EXCLUDE REGEX "/src/plugin/")
 
 add_library(iaq8_core STATIC ${IAQ8_CORE_SOURCES})
 target_include_directories(iaq8_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_compile_definitions(iaq8_core PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(iaq8_core PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    IAQ8_DEFAULT_SERVER_URL="${IAQ8_DEFAULT_SERVER_URL}"
+    IAQ8_PLUGIN_VERSION="${PROJECT_VERSION}")
 target_link_libraries(iaq8_core
     PUBLIC
         labq8_dsp_for_iaq8
@@ -150,6 +158,9 @@ if(IAQ8_BUILD_TESTS)
     target_compile_definitions(iaq8_tests PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        # Tests pump the message loop (MessageManager::runDispatchLoopUntil) to
+        # check delivery on the message thread. Tests only; never the plugin.
+        JUCE_MODAL_LOOPS_PERMITTED=1
         IAQ8_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 
     target_link_libraries(iaq8_tests

@@ -1,0 +1,194 @@
+{
+  "plugin_id": "iaq8",
+  "plugin_version": "0.1.0",
+  "session_id": "3f2b8c1e-6d4a-4f7e-9b2a-1c5d8e7f9a00",
+  "source": "voice",
+  "source_note": "",
+  "messages": [
+    {
+      "role": "user",
+      "text": "Quiero que la voz suene más clara y menos nasal"
+    }
+  ],
+  "analysis": {
+    "version": 1,
+    "sample_rate": 48000.0,
+    "seconds": 12.0,
+    "channels": 2,
+    "level": {
+      "rms_dbfs": -18.7,
+      "peak_dbfs": -4.2,
+      "crest_db": 14.5
+    },
+    "stereo": {
+      "is_mono": false,
+      "side_to_mid_db": -14.2,
+      "correlation": 0.82
+    },
+    "spectrum": {
+      "start_hz": 20.0,
+      "step_oct": 0.1667,
+      "db": [
+        -40.0,
+        -40.5,
+        -41.0,
+        -41.5,
+        -42.0,
+        -42.5,
+        -43.0,
+        -43.5,
+        -44.0,
+        -44.5,
+        -45.0,
+        -45.5,
+        -46.0,
+        -46.5,
+        -47.0,
+        -47.5,
+        -48.0,
+        -48.5,
+        -49.0,
+        -49.5,
+        -50.0,
+        -50.5,
+        -51.0,
+        -51.5,
+        -52.0,
+        -52.5,
+        -53.0,
+        -53.5,
+        -54.0,
+        -54.5,
+        -55.0,
+        -55.5,
+        -56.0,
+        -56.5,
+        -57.0,
+        -57.5,
+        -58.0,
+        -58.5,
+        -59.0,
+        -59.5,
+        -60.0,
+        -60.5,
+        -61.0,
+        -61.5,
+        -62.0,
+        -62.5,
+        -63.0,
+        -63.5,
+        -64.0,
+        -64.5,
+        -65.0,
+        -65.5,
+        -66.0,
+        -66.5,
+        -67.0,
+        -67.5,
+        -68.0,
+        -68.5,
+        -69.0,
+        -69.5
+      ]
+    },
+    "trend": {
+      "slope_db_per_oct": -3.3,
+      "fit_from_hz": 100.0,
+      "fit_to_hz": 12000.0
+    },
+    "candidates": [
+      {
+        "id": "c1",
+        "kind": "resonance",
+        "freq_hz": 2480.0,
+        "magnitude_db": 7.2,
+        "width_oct": 0.05
+      },
+      {
+        "id": "c2",
+        "kind": "excess",
+        "freq_hz": 257.0,
+        "magnitude_db": 4.5,
+        "width_oct": 0.91
+      }
+    ],
+    "enough_signal": true
+  },
+  "applied": {
+    "bands": [
+      {
+        "type": "bell",
+        "freq_hz": 1000.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 40.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 100.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 250.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 2500.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 5000.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 10000.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      },
+      {
+        "type": "bell",
+        "freq_hz": 16000.0,
+        "gain_db": 0.0,
+        "q": 1.0,
+        "bypass": true,
+        "candidate_id": null,
+        "reason": null
+      }
+    ]
+  },
+  "proposal": null
+}

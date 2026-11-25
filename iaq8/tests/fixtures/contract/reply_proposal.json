@@ -1,0 +1,48 @@
+{
+  "kind": "proposal",
+  "explanation": "Limpio el grave que no aporta, bajo la zona nasal y quito la resonancia medida en 2,5 kHz.",
+  "bands": [
+    {
+      "type": "low_cut",
+      "freq_hz": 90.0,
+      "gain_db": 0.0,
+      "q": 0.71,
+      "bypass": false,
+      "candidate_id": null,
+      "reason": "Quita el retumbe por debajo de la voz"
+    },
+    {
+      "type": "bell",
+      "freq_hz": 257.0,
+      "gain_db": -3.0,
+      "q": 1.4,
+      "bypass": false,
+      "candidate_id": "c2",
+      "reason": "Menos acumulación en 250 Hz"
+    },
+    {
+      "type": "notch",
+      "freq_hz": 2480.0,
+      "gain_db": 0.0,
+      "q": 12.0,
+      "bypass": false,
+      "candidate_id": "c1",
+      "reason": "Resonancia estrecha medida"
+    },
+    {
+      "type": "high_shelf",
+      "freq_hz": 8000.0,
+      "gain_db": 2.0,
+      "q": 0.7,
+      "bypass": false,
+      "candidate_id": null,
+      "reason": "Un poco más de aire"
+    }
+  ],
+  "quick_replies": [
+    "Aplicar",
+    "Más suave",
+    "Más brillo",
+    "Deshacer"
+  ]
+}

@@ -1,9 +1,11 @@
 #include "assist/Contract.h"
 
 #include "analysis/AnalysisTuning.h"
+#include "parameters/ParameterIDs.h"
 
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace iaq8::assist
 {
@@ -119,5 +121,241 @@ juce::var toJson (const analysis::AnalysisSummary& a)
 juce::String toJsonText (const analysis::AnalysisSummary& summary)
 {
     return juce::JSON::toString (toJson (summary), true, 4);
+}
+} // namespace iaq8::assist
+
+
+//==============================================================================
+namespace iaq8::assist
+{
+namespace
+{
+using labq8::dsp::FilterType;
+
+struct TypeName { FilterType type; const char* name; };
+constexpr std::array<TypeName, 6> kTypes { {
+    { FilterType::bell, "bell" },
+    { FilterType::lowShelf, "low_shelf" },
+    { FilterType::highShelf, "high_shelf" },
+    { FilterType::lowCut, "low_cut" },
+    { FilterType::highCut, "high_cut" },
+    { FilterType::notch, "notch" } } };
+
+juce::String fromUtf8 (const std::string& s) { return juce::String (juce::CharPointer_UTF8 (s.c_str())); }
+
+juce::var nullOr (const std::string& s) { return s.empty() ? juce::var() : juce::var (fromUtf8 (s)); }
+
+// Band values: 0.1 Hz, 0.01 dB, 0.001 Q. A non-finite value (never expected
+// from the parameters) is written as the slot's default, never as NaN.
+juce::var bandJson (const labq8::dsp::BandSettings& b, size_t slot, const std::string& candidateId, const std::string& reason)
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("type", toString (b.type));
+    o->setProperty ("freq_hz", round (b.frequencyHz, 10.0, labq8::params::defaultFrequencyHz[slot % labq8::params::defaultFrequencyHz.size()]));
+    o->setProperty ("gain_db", round (b.gainDb, 100.0, 0.0));
+    o->setProperty ("q", round (b.q, 1000.0, 1.0));
+    o->setProperty ("bypass", b.bypassed);
+    o->setProperty ("candidate_id", nullOr (candidateId));
+    o->setProperty ("reason", nullOr (reason));
+    return juce::var (o);
+}
+
+juce::var bandsObject (juce::Array<juce::var> bands)
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("bands", bands);
+    return juce::var (o);
+}
+
+// ---- reply parsing ----
+bool isNumber (const juce::var& v) { return v.isInt() || v.isInt64() || v.isDouble(); }
+
+std::optional<double> finiteNumber (const juce::var& v)
+{
+    if (! isNumber (v))
+        return std::nullopt;
+    const double d = v;
+    return std::isfinite (d) ? std::optional<double> (d) : std::nullopt;
+}
+
+// Absent or null -> "", string -> its text, anything else -> invalid.
+std::optional<std::string> optionalString (const juce::DynamicObject& o, const char* key)
+{
+    const auto v = o.getProperty (key);
+    if (v.isVoid() || v.isUndefined())
+        return std::string();
+    if (! v.isString())
+        return std::nullopt;
+    return v.toString().toStdString();
+}
+
+std::optional<std::vector<std::string>> quickReplies (const juce::DynamicObject& o)
+{
+    std::vector<std::string> out;
+    const auto v = o.getProperty ("quick_replies");
+    if (v.isVoid() || v.isUndefined())
+        return out;
+    const auto* items = v.getArray();
+    if (items == nullptr)
+        return std::nullopt;
+    for (const auto& item : *items)
+    {
+        if (! item.isString())
+            return std::nullopt;
+        const auto text = item.toString().trim().substring (0, maxQuickReplyChars).trim();
+        if (text.isNotEmpty() && out.size() < maxQuickReplies)
+            out.push_back (text.toStdString());
+    }
+    return out;
+}
+
+std::optional<ProposedBand> parseBand (const juce::var& v)
+{
+    const auto* o = v.getDynamicObject();
+    if (o == nullptr || ! o->getProperty ("type").isString())
+        return std::nullopt;
+    const auto type = filterTypeFromString (o->getProperty ("type").toString().toStdString());
+    const auto freq = finiteNumber (o->getProperty ("freq_hz"));
+    const auto gain = finiteNumber (o->getProperty ("gain_db"));
+    const auto q = finiteNumber (o->getProperty ("q"));
+    const auto candidate = optionalString (*o, "candidate_id");
+    const auto reason = optionalString (*o, "reason");
+    const auto bypass = o->getProperty ("bypass");
+    const bool bypassOk = bypass.isVoid() || bypass.isUndefined() || bypass.isBool();
+    if (! type || ! freq || ! gain || ! q || ! candidate || ! reason || ! bypassOk)
+        return std::nullopt;
+
+    ProposedBand b;
+    b.settings = { *freq, *gain, *q, bypass.isBool() && (bool) bypass, *type };
+    b.candidateId = *candidate;
+    b.reason = *reason;
+    return b;
+}
+
+Reply parseOk (const juce::String& body)
+{
+    const auto invalid = makeError (ErrorKind::invalidResponse);
+    juce::var root;
+    if (juce::JSON::parse (body, root).failed())
+        return invalid;
+    const auto* o = root.getDynamicObject();
+    if (o == nullptr || ! o->getProperty ("kind").isString())
+        return invalid;
+
+    const auto kind = o->getProperty ("kind").toString();
+    const auto replies = quickReplies (*o);
+    if (! replies)
+        return invalid;
+
+    if (kind == "question")
+    {
+        const auto text = o->getProperty ("text");
+        if (! text.isString() || text.toString().trim().isEmpty())
+            return invalid;
+        return Question { text.toString().toStdString(), *replies };
+    }
+
+    if (kind == "proposal")
+    {
+        const auto explanation = o->getProperty ("explanation");
+        const auto* bands = o->getProperty ("bands").getArray();
+        if (! explanation.isString() || bands == nullptr)
+            return invalid;
+        Proposal p;
+        p.explanation = explanation.toString().toStdString();
+        p.quickReplies = *replies;
+        for (int i = 0; i < bands->size() && p.bands.size() < maxBands; ++i)
+        {
+            auto band = parseBand ((*bands)[i]);
+            if (! band)
+                return invalid;
+            p.bands.push_back (std::move (*band));
+        }
+        return p;
+    }
+    return invalid;
+}
+} // namespace
+
+const char* userMessage (ErrorKind kind)
+{
+    switch (kind)
+    {
+        case ErrorKind::noAccess:        return "Tu código de acceso no es válido o ha caducado. Revísalo para seguir usando el asistente.";
+        case ErrorKind::limitReached:    return "Has llegado al límite de uso del asistente. Tu ecualización sigue activa.";
+        case ErrorKind::invalidRequest:  return "El asistente no ha podido entender la petición. Inténtalo de nuevo.";
+        case ErrorKind::unavailable:     return "Sin conexión: tu ecualización sigue activa";
+        case ErrorKind::invalidResponse: return "El asistente ha enviado una respuesta que no se puede usar. Inténtalo de nuevo.";
+    }
+    return "Sin conexión: tu ecualización sigue activa";
+}
+
+Error makeError (ErrorKind kind) { return { kind, userMessage (kind) }; }
+
+const char* toString (FilterType type)
+{
+    for (const auto& t : kTypes)
+        if (t.type == type)
+            return t.name;
+    return "bell";
+}
+
+std::optional<FilterType> filterTypeFromString (std::string_view text)
+{
+    for (const auto& t : kTypes)
+        if (text == t.name)
+            return t.type;
+    return std::nullopt;
+}
+
+juce::String toJson (const TurnRequest& r)
+{
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("plugin_id", pluginId);
+    root->setProperty ("plugin_version", IAQ8_PLUGIN_VERSION);
+    root->setProperty ("session_id", fromUtf8 (r.sessionId));
+    root->setProperty ("source", toString (r.source));
+    root->setProperty ("source_note", fromUtf8 (r.sourceNote));
+
+    juce::Array<juce::var> messages;
+    for (const auto& m : r.messages)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("role", m.role == Message::Role::assistant ? "assistant" : "user");
+        o->setProperty ("text", fromUtf8 (m.text));
+        messages.add (juce::var (o));
+    }
+    root->setProperty ("messages", messages);
+    root->setProperty ("analysis", r.analysis.has_value() ? toJson (*r.analysis) : juce::var());
+
+    juce::Array<juce::var> applied;
+    for (size_t i = 0; i < r.applied.size(); ++i)
+        applied.add (bandJson (r.applied[i], i, {}, {}));
+    root->setProperty ("applied", bandsObject (applied));
+
+    if (r.proposal.has_value())
+    {
+        juce::Array<juce::var> proposed;
+        for (size_t i = 0; i < r.proposal->size(); ++i)
+            proposed.add (bandJson ((*r.proposal)[i].settings, i, (*r.proposal)[i].candidateId, (*r.proposal)[i].reason));
+        root->setProperty ("proposal", bandsObject (proposed));
+    }
+    else
+    {
+        root->setProperty ("proposal", juce::var());
+    }
+    return juce::JSON::toString (juce::var (root), true, 4);
+}
+
+Reply parseReply (int httpStatus, const juce::String& body)
+{
+    switch (httpStatus)
+    {
+        case 200: return parseOk (body);
+        case 401: return makeError (ErrorKind::noAccess);
+        case 429: return makeError (ErrorKind::limitReached);
+        case 422: return makeError (ErrorKind::invalidRequest);
+        default:  return makeError (ErrorKind::unavailable); // 0 (network, timeout), 5xx, anything else
+    }
 }
 } // namespace iaq8::assist

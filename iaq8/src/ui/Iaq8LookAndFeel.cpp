@@ -194,12 +194,44 @@ void drawText (juce::Graphics& g, const SilkText& item, const Layout& l)
         juce::GlyphArrangement glyphs;
         glyphs.addLineOfText (l.font, l.lines[i], lineX (item, l.widths[(size_t) i]), baseline);
 
-        g.setColour (colours::silkShadow);
-        glyphs.draw (g, juce::AffineTransform::translation (0.0f, 1.0f));
+        if (item.worn)
+        {
+            g.setColour (colours::silkShadow);
+            glyphs.draw (g, juce::AffineTransform::translation (0.0f, 1.0f));
+        }
         g.setColour (item.colour);
         glyphs.draw (g);
     }
 }
+
+//==============================================================================
+// Block cursor of the command line (the mockup's .cur: 12 x 20 px, #b4ff9f,
+// centred on the text line). It blinks with its own timer, changing every
+// 500 ms (2 Hz; JUCE's caret uses 380 ms), and only while the owner has the
+// focus; each blink repaints only its own small rectangle.
+class BlockCaret final : public juce::CaretComponent
+{
+public:
+    static constexpr int width = 12, height = 20, blinkMs = 500;
+
+    explicit BlockCaret (juce::Component* keyFocusOwner) : juce::CaretComponent (keyFocusOwner), owner (keyFocusOwner) {}
+
+    void setCaretPosition (const juce::Rectangle<int>& characterArea) override
+    {
+        blink.startTimer (blinkMs);
+        setVisible (shouldBeShown());
+        setBounds (characterArea.getX() + 1, characterArea.getCentreY() - height / 2 + 1, width, height);
+    }
+
+private:
+    bool shouldBeShown() const
+    {
+        return owner == nullptr || (owner->hasKeyboardFocus (false) && ! owner->isCurrentlyBlockedByAnotherModalComponent());
+    }
+
+    juce::Component* owner;
+    juce::TimedCallback blink { [this] { setVisible (shouldBeShown() && ! isVisible()); } };
+};
 } // namespace
 
 //==============================================================================
@@ -222,6 +254,27 @@ Iaq8LookAndFeel::Iaq8LookAndFeel()
     setColour (juce::AlertWindow::backgroundColourId, colours::trayBottom);
     setColour (juce::AlertWindow::textColourId, colours::silk);
     setColour (juce::AlertWindow::outlineColourId, colours::dropBorder);
+}
+
+juce::CaretComponent* Iaq8LookAndFeel::createCaretComponent (juce::Component* keyFocusOwner)
+{
+    return new BlockCaret (keyFocusOwner);
+}
+
+juce::String Iaq8LookAndFeel::toCapitals (const juce::String& text)
+{
+    juce::String result;
+    result.preallocateBytes (text.getNumBytesAsUTF8());
+    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+    {
+        auto c = *p;
+        if (c >= 0xe0 && c <= 0xfe && c != 0xf7)
+            c -= 0x20;
+        else
+            c = juce::CharacterFunctions::toUpperCase (c);
+        result += c;
+    }
+    return result;
 }
 
 juce::Font Iaq8LookAndFeel::screenFont (float px)
@@ -261,6 +314,9 @@ Iaq8LookAndFeel::WornText Iaq8LookAndFeel::renderWornText (const SilkText& item,
         g.addTransform (juce::AffineTransform::translation (-area.getX(), -area.getY()).scaled (pixelScale));
         drawText (g, item, l);
     }
+
+    if (! item.worn)
+        return { image, area };
 
     const auto& mask = wearMask();
     juce::Image::BitmapData pixels (image, juce::Image::BitmapData::readWrite);

@@ -4,12 +4,15 @@
 #include "ui/Iaq8Preferences.h"
 #include "ui/LevelMeterView.h"
 #include "ui/PhosphorScreen.h"
+#include "ui/RackKey.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace iaq8
 {
@@ -30,6 +33,15 @@ namespace iaq8::ui
 //     The phosphor screen (over geometry::crt, hiding LABQ8's screen in the
 //     chassis), the meters and, in later tasks, the keys and top row
 //     controls are its children.
+//
+// Assistant (Task 5): the eight keys under the screen carry the first seven
+// quick replies of the Session (a key without one is off) and, on the
+// eighth, VER DETALLE (the screen's band table, available with a proposal or
+// something applied). The lower panel has the ASSISTANT head, the command
+// line (Enter sends), the privacy hint, the SOURCE / LISTENED / CHANGES /
+// LEVEL MATCH boxes and the ESCUCHAR, ENVIAR, DESHACER and APLICAR keys.
+// refreshFromSession() pulls everything they show from the Session and the
+// processor; it runs at construction and after every key or Enter.
 //
 // Settings: a click on the panel's top-left screw or on the logo (or a
 // right-click anywhere on the chassis) opens the settings menu: zoom, the
@@ -58,6 +70,11 @@ public:
     // right-click, so the settings menu does not open as well.
     static constexpr const char* ownsPopupMenuProperty = "iaq8OwnsPopupMenu";
 
+    // The lower panel's keys.
+    enum class PanelKey { listen, send, undo, apply };
+    // Quick replies shown on the keys under the screen (the eighth is VER DETALLE).
+    static constexpr int quickReplyKeyCount = 7;
+
     explicit Iaq8Editor (Iaq8AudioProcessor& processor);
     ~Iaq8Editor() override;
 
@@ -84,7 +101,24 @@ public:
     // Tests and tools: pretend every display has this area (empty: real displays).
     static void setScreenAreaForTesting (juce::Rectangle<int> area);
 
+    // Pulls the conversation, the quick replies, the keys' states and the
+    // panel's values from the Session and the processor. The setters it
+    // calls compare, so repeating it with nothing new repaints nothing.
+    void refreshFromSession();
+    // Sends the command line's text (Enter, ENVIAR) and clears it. Empty
+    // text sends nothing; while a request is in flight the text stays.
+    void sendCommandLine();
+
+    // A reply as a key shows it: capitals, in two lines balanced by length.
+    static juce::String keyLabel (const juce::String& reply);
+    // LEVEL MATCH, one decimal with its sign: "+0.8 dB", "-1.2 dB" (with a true minus, U+2212), "0.0 dB".
+    static juce::String formatLevelMatch (double db);
+
     // Tests and snapshots.
+    RackKey& getQuickKey (int index); // 0..7
+    RackKey& getPanelKey (PanelKey);
+    juce::TextEditor& getCommandLine() noexcept;
+    juce::String getValueText (int box) const; // 0 SOURCE, 1 LISTENED, 2 CHANGES, 3 LEVEL MATCH
     juce::Component& getContent() noexcept { return *content; }
     juce::Component& getSettingsHotSpot (int index); // 0: top-left screw, 1: logo
     juce::AlertWindow* getOpenDialog() const noexcept { return dialog.get(); }
@@ -105,6 +139,11 @@ private:
     juce::PopupMenu createZoomMenu() const;
 
     class PopupMenuForwarder;
+    class CommandLine;
+    class ValueBox;
+
+    void createAssistantControls();
+    void updateScreenLines();
 
     Iaq8AudioProcessor& iaq8Processor;
     Iaq8LookAndFeel lookAndFeel;
@@ -113,6 +152,27 @@ private:
     std::array<std::unique_ptr<juce::Component>, 2> hotSpots;
     std::unique_ptr<labq8::ui::LevelMeterView> meters;
     std::unique_ptr<PhosphorScreen> screen;
+    std::array<std::unique_ptr<RackKey>, 8> quickKeys;
+    std::array<juce::String, quickReplyKeyCount> quickReplies; // the text each key says
+    std::array<std::unique_ptr<RackKey>, 4> panelKeys;          // PanelKey order
+    std::unique_ptr<CommandLine> commandLine;
+    std::array<std::unique_ptr<ValueBox>, 4> valueBoxes;
+
+    // Where the command line's text goes; empty: Session::say. A mode such
+    // as the source note of "Otro" (Task 6) sets it for the next Enter.
+    std::function<void (const juce::String&)> commandTextTarget;
+
+    // Session notices shown on the screen as system lines, each after the
+    // messages there were when it appeared (so the lines only grow).
+    struct ShownNotice
+    {
+        size_t afterMessages;
+        juce::String text;
+    };
+    std::vector<ShownNotice> shownNotices;
+    juce::String lastNotice;
+    size_t messagesSeen = 0;
+    std::optional<double> listenedSeconds; // of the last listening this editor saw
     std::unique_ptr<juce::MouseListener> popupForwarder;
     int settingsMenuRequests = 0;
     std::unique_ptr<juce::AlertWindow> dialog;

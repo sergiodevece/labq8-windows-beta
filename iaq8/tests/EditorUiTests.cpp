@@ -647,7 +647,11 @@ LQ_TEST ("screen: renders the phosphor look and sits over the CRT")
     auto& editorScreen = editor.getScreen();
     LQ_CHECK (editorScreen.getBounds().toFloat() == geo::crt && editorScreen.isVisible(), text (editorScreen.getBounds().toFloat()));
     LQ_CHECK (editorScreen.getParentComponent() == &editor.getContent(), "child of the reference-space content");
-    LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 1.0" && editorScreen.getAllRows().empty(), "placeholder status, no lines");
+    // Placeholder status; since Task 5 the conversation comes from the session
+    // (a fresh one opens with its first question).
+    LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 1.0" && ! editorScreen.getAllRows().empty()
+                  && editorScreen.getAllRows().front().prefix == "IAQ8>",
+              "placeholder status, the session's first question");
 }
 
 LQ_TEST ("editor: right-click on the screen (or any child of the chassis) opens the settings menu")
@@ -699,4 +703,425 @@ LQ_TEST ("editor: right-click on the screen (or any child of the chassis) opens 
     LQ_CHECK (editor.getSettingsMenuRequests() == 3, "children with their own menu are left alone");
     editor.getContent().removeChildComponent (&later);
     pump (50);
+}
+
+//==============================================================================
+// Plan 3, Task 5: rack keys, the ASSISTANT panel and the command line, bound
+// to a Session over a fake transport (as in SessionTests).
+
+#include "assist/AssistClient.h"
+#include "assist/Session.h"
+#include "ui/RackKey.h"
+
+#include <functional>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+namespace
+{
+using iaq8::ui::RackKey;
+using PanelKey = Iaq8Editor::PanelKey;
+using Stage = iaq8::assist::Session::Stage;
+
+constexpr double kKeysFs = 48000.0;
+constexpr int kKeysBlock = 512;
+
+const char* kKeysProposal1 =
+    "{\"kind\":\"proposal\",\"explanation\":\"Bajo un poco la zona de 1 kHz y doy aire.\","
+    "\"bands\":[{\"type\":\"bell\",\"freq_hz\":1000,\"gain_db\":-4,\"q\":1.4,\"bypass\":false,"
+    "\"candidate_id\":null,\"reason\":\"Menos dureza\"},"
+    "{\"type\":\"high_shelf\",\"freq_hz\":8000,\"gain_db\":2,\"q\":0.7,\"reason\":\"Aire\"}],"
+    "\"quick_replies\":[\"Menos agudos\",\"M\\u00e1s suave\"]}";
+
+const char* kKeysProposal2 =
+    "{\"kind\":\"proposal\",\"explanation\":\"Quito el realce de agudos.\","
+    "\"bands\":[{\"type\":\"bell\",\"freq_hz\":1000,\"gain_db\":-4,\"q\":1.4,\"reason\":\"Menos dureza\"}],"
+    "\"quick_replies\":[\"Vale\"]}";
+
+struct KeysFakeState
+{
+    std::mutex mutex;
+    std::vector<std::function<void (int, juce::String)>> pending;
+
+    int posts()
+    {
+        std::lock_guard<std::mutex> lock (mutex);
+        return (int) pending.size();
+    }
+};
+
+struct KeysFakeTransport final : iaq8::assist::Transport
+{
+    explicit KeysFakeTransport (std::shared_ptr<KeysFakeState> s) : state (std::move (s)) {}
+
+    void post (const juce::URL&, const juce::String&, const juce::String&,
+               std::function<void (int, juce::String)> done) override
+    {
+        std::lock_guard<std::mutex> lock (state->mutex);
+        state->pending.push_back (std::move (done));
+    }
+
+    std::shared_ptr<KeysFakeState> state;
+};
+
+// A processor whose assistant talks to a fake transport, and its editor.
+struct EditorRig
+{
+    std::shared_ptr<KeysFakeState> state = std::make_shared<KeysFakeState>();
+    std::unique_ptr<iaq8::Iaq8AudioProcessor> p;
+    std::unique_ptr<Iaq8Editor> editor;
+
+    EditorRig()
+    {
+        prefs::setStorageFolderForTesting (juce::File());
+        Iaq8Editor::setScreenAreaForTesting (largeScreen);
+        p = std::make_unique<iaq8::Iaq8AudioProcessor> (std::make_unique<iaq8::assist::AssistClient> (
+            std::make_unique<KeysFakeTransport> (state),
+            [] { return juce::URL ("https://assist.example.test"); },
+            [] { return juce::String ("dummy-code-7Q2"); }));
+        p->setRateAndBufferSizeDetails (kKeysFs, kKeysBlock);
+        p->prepareToPlay (kKeysFs, kKeysBlock);
+        editor = std::make_unique<Iaq8Editor> (*p);
+    }
+
+    ~EditorRig()
+    {
+        editor.reset();
+        p.reset();
+    }
+
+    iaq8::assist::Session& s() { return p->getSession(); }
+
+    // Answers request `i` on a background thread, like a real transport.
+    void reply (int i, int status, juce::String body)
+    {
+        std::function<void (int, juce::String)> done;
+        {
+            std::lock_guard<std::mutex> lock (state->mutex);
+            done = state->pending.at ((size_t) i);
+        }
+        std::thread ([done, status, body] { done (status, body); }).join();
+    }
+
+    // A click as the user makes it (asynchronous; a disabled key ignores it).
+    void click (juce::Button& key)
+    {
+        key.triggerClick();
+        pump (20);
+    }
+};
+
+void fillKeysCapture (iaq8::Iaq8AudioProcessor& p, double seconds)
+{
+    juce::Random random (7);
+    std::vector<float> l ((size_t) kKeysBlock), r ((size_t) kKeysBlock);
+    const float* channels[2] { l.data(), r.data() };
+    for (int b = 0; b < (int) std::ceil (seconds * kKeysFs / kKeysBlock); ++b)
+    {
+        for (int i = 0; i < kKeysBlock; ++i)
+        {
+            l[(size_t) i] = 0.3f * (random.nextFloat() * 2.0f - 1.0f);
+            r[(size_t) i] = 0.3f * (random.nextFloat() * 2.0f - 1.0f);
+        }
+        p.getCapture().write (channels, 2, kKeysBlock);
+    }
+}
+
+// Source "Voz" chosen with the first key, 12.5 s listened, analysed: askGoal.
+void reachGoal (labq8::test::Context& ctx, EditorRig& rig)
+{
+    rig.click (rig.editor->getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::listening, "listening after the source key");
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    rig.editor->refreshFromSession();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "analysed: askGoal");
+    rig.editor->refreshFromSession();
+}
+
+// ... then the first goal key and the server's proposal 1.
+void reachKeysProposal (labq8::test::Context& ctx, EditorRig& rig)
+{
+    reachGoal (ctx, rig);
+    rig.click (rig.editor->getQuickKey (0)); // "Que se entienda"
+    LQ_CHECK (rig.state->posts() == 1, "the goal key sent a request");
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal stage");
+    rig.editor->refreshFromSession();
+}
+
+std::vector<RackKey*> allKeys (Iaq8Editor& editor)
+{
+    std::vector<RackKey*> keys;
+    for (int i = 0; i < 8; ++i)
+        keys.push_back (&editor.getQuickKey (i));
+    for (auto k : { PanelKey::listen, PanelKey::send, PanelKey::undo, PanelKey::apply })
+        keys.push_back (&editor.getPanelKey (k));
+    return keys;
+}
+
+bool screenMatchesSession (EditorRig& rig)
+{
+    const auto& messages = rig.s().getMessages();
+    const auto& rows = rig.editor->getScreen().getAllRows();
+    if (rows.empty())
+        return messages.empty();
+    return rows.back().message == (int) messages.size() - 1;
+}
+} // namespace
+
+LQ_TEST ("ui keys: quick replies follow the session and send their text")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+
+    // The seven sources on the first seven keys, in capitals, in two lines.
+    const char* sources[] = { "VOZ", "GUITARRA\nAC\xc3\x9aSTICA", "GUITARRA\nEL\xc3\x89" "CTRICA", "BAJO",
+                              "BATER\xc3\x8d" "A", "MEZCLA\nCOMPLETA", "OTRO" };
+    for (int i = 0; i < 7; ++i)
+    {
+        auto& key = editor.getQuickKey (i);
+        LQ_CHECK (key.getButtonText() == utf8 (sources[i]), str ("key ", i, ": ", key.getButtonText()));
+        LQ_CHECK (key.isEnabled() && key.getStyle() == RackKey::Style::slot, str ("key ", i, " enabled slot"));
+        LQ_CHECK (near (key.getCapBounds().toFloat(), geo::quickKeys[(size_t) i], 0.5f), str ("key ", i, " over its slot"));
+    }
+    auto& detail = editor.getQuickKey (7);
+    LQ_CHECK (detail.getButtonText() == "VER\nDETALLE" && ! detail.isEnabled(), "VER DETALLE, off without a proposal");
+    LQ_CHECK (Iaq8Editor::keyLabel (utf8 ("\xc2\xbfPor qu\xc3\xa9?")) == utf8 ("\xc2\xbfPOR\nQU\xc3\x89?"), "two balanced lines");
+    LQ_CHECK (Iaq8Editor::keyLabel ("Que se entienda") == "QUE SE\nENTIENDA", "balanced on the longer line");
+    LQ_CHECK (screenMatchesSession (rig) && editor.getScreen().getAllRows().size() >= 1, "the screen shows the conversation");
+
+    // A source key says its text: listening, and no replies on the keys.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.s().getSource() == iaq8::assist::Source::voice && rig.s().getMessages()[1].text == "Voz", "said \"Voz\"");
+    for (int i = 0; i < 7; ++i)
+        LQ_CHECK (editor.getQuickKey (i).getButtonText().isEmpty() && ! editor.getQuickKey (i).isEnabled(),
+                  str ("key ", i, " empty and off while listening"));
+    LQ_CHECK (editor.getPanelKey (PanelKey::listen).isLedOn(), "ESCUCHAR lit while listening");
+    LQ_CHECK (screenMatchesSession (rig), "screen follows");
+
+    // A key without text does nothing.
+    const auto messagesBefore = rig.s().getMessages().size();
+    rig.click (editor.getQuickKey (3));
+    LQ_CHECK (rig.s().getMessages().size() == messagesBefore, "an empty key says nothing");
+
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    editor.refreshFromSession();
+    LQ_CHECK (! editor.getPanelKey (PanelKey::listen).isLedOn(), "ESCUCHAR off after listening");
+    const char* goals[] = { "QUE SE\nENTIENDA", "MENOS\nAPAGADA", "MENOS\nCHILLONA", "MENOS\nCAJA" };
+    for (int i = 0; i < 7; ++i)
+    {
+        auto& key = editor.getQuickKey (i);
+        LQ_CHECK (key.getButtonText() == (i < 4 ? juce::String (goals[i]) : juce::String()) && key.isEnabled() == (i < 4),
+                  str ("goal key ", i, ": ", key.getButtonText()));
+    }
+    rig.click (editor.getQuickKey (6));
+    LQ_CHECK (rig.state->posts() == 0, "the empty seventh key sends nothing");
+
+    // A goal key sends its own text (not the capitals).
+    rig.click (editor.getQuickKey (2));
+    LQ_CHECK (rig.state->posts() == 1 && rig.s().getMessages().back().text == "Menos chillona", "sent \"Menos chillona\"");
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getQuickKey (0).getButtonText() == "MENOS\nAGUDOS"
+                  && editor.getQuickKey (1).getButtonText() == utf8 ("M\xc3\x81S\nSUAVE") && ! editor.getQuickKey (2).isEnabled(),
+              "the server's replies");
+    LQ_CHECK (screenMatchesSession (rig), "screen shows the explanation");
+
+    // VER DETALLE toggles the detail view while there is a proposal.
+    LQ_CHECK (detail.isEnabled() && ! detail.isLedOn(), "VER DETALLE on with a proposal");
+    rig.click (detail);
+    LQ_CHECK (editor.getScreen().isDetailVisible() && detail.isLedOn(), "detail shown");
+    rig.click (detail);
+    LQ_CHECK (! editor.getScreen().isDetailVisible() && ! detail.isLedOn(), "detail hidden");
+}
+
+LQ_TEST ("ui keys: apply and undo enabled only when allowed")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& apply = editor.getPanelKey (PanelKey::apply);
+    auto& undo = editor.getPanelKey (PanelKey::undo);
+
+    // APLICAR is the only orange key; the panel keys sit on the mockup's rects.
+    for (auto* key : allKeys (editor))
+        LQ_CHECK ((key->getStyle() == RackKey::Style::apply) == (key == &apply), str ("style of ", key->getName()));
+    LQ_CHECK (apply.getButtonText() == "APLICAR" && undo.getButtonText() == "DESHACER"
+                  && editor.getPanelKey (PanelKey::listen).getButtonText() == "ESCUCHAR"
+                  && editor.getPanelKey (PanelKey::send).getButtonText() == "ENVIAR",
+              "panel key names");
+    LQ_CHECK (near (apply.getCapBounds().toFloat(), geo::keyApply, 0.5f) && near (undo.getCapBounds().toFloat(), geo::keyUndo, 0.5f)
+                  && near (editor.getPanelKey (PanelKey::listen).getCapBounds().toFloat(), geo::keyListen, 0.5f)
+                  && near (editor.getPanelKey (PanelKey::send).getCapBounds().toFloat(), geo::keySend, 0.5f),
+              "panel keys on their rects");
+
+    LQ_CHECK (! apply.isEnabled() && ! undo.isEnabled(), "nothing to apply or undo at first");
+    LQ_CHECK (! editor.getPanelKey (PanelKey::listen).isEnabled(), "ESCUCHAR off before a source");
+    rig.click (apply);
+    rig.click (undo);
+    LQ_CHECK (rig.p->getUndoDepth() == 0 && rig.s().getStage() == Stage::askSource, "disabled keys do nothing");
+
+    reachKeysProposal (ctx, rig);
+    LQ_CHECK (apply.isEnabled() && ! undo.isEnabled(), "proposal: APLICAR on, DESHACER off");
+
+    rig.click (apply);
+    LQ_CHECK (rig.s().getStage() == Stage::applied && rig.p->getUndoDepth() == 1, "APLICAR applied");
+    LQ_CHECK (! apply.isEnabled() && undo.isEnabled(), "applied: APLICAR off, DESHACER on");
+    LQ_CHECK (editor.getQuickKey (7).isEnabled(), "VER DETALLE on with something applied");
+
+    rig.click (apply);
+    LQ_CHECK (rig.p->getUndoDepth() == 1, "a second APLICAR does nothing");
+
+    rig.click (undo);
+    LQ_CHECK (rig.p->getUndoDepth() == 0 && ! undo.isEnabled() && ! apply.isEnabled(), "DESHACER undid; both off");
+    LQ_CHECK (! editor.getQuickKey (7).isEnabled(), "VER DETALLE off: nothing applied, no proposal");
+
+    // ESCUCHAR listens again (LED on).
+    auto& listen = editor.getPanelKey (PanelKey::listen);
+    LQ_CHECK (listen.isEnabled(), "ESCUCHAR on once there is a source");
+    rig.click (listen);
+    LQ_CHECK (rig.s().getStage() == Stage::listening && listen.isLedOn(), "ESCUCHAR listens again");
+
+    // Session notices go to the screen as system lines.
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "analysed again");
+    editor.refreshFromSession();
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.state->posts() == 2, "second request");
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    editor.refreshFromSession();
+    const auto& rows = editor.getScreen().getAllRows();
+    LQ_CHECK (! rows.empty() && rows.back().prefix.isEmpty()
+                  && rows.back().text.contains (utf8 ("SIN CONEXI\xc3\x93N")),
+              str ("notice as a system line: ", rows.empty() ? std::string() : rows.back().text.toStdString()));
+    const auto rowCount = rows.size();
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getScreen().getAllRows().size() == rowCount, "the same notice is shown once");
+}
+
+LQ_TEST ("ui input: enter sends and clears; 4000-char cap")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& line = editor.getCommandLine();
+    // Enter as typed: the TextEditor posts it, the editor sends on delivery.
+    const auto enter = [&]
+    {
+        line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+        pump (20);
+    };
+
+    LQ_CHECK (line.getParentComponent() != nullptr && (bool) line.getProperties()[Iaq8Editor::ownsPopupMenuProperty],
+              "the command line keeps its own right-click menu");
+    LQ_CHECK (! line.isMultiLine() && line.findColour (juce::TextEditor::textColourId) == iaq8::ui::colours::phosphor,
+              "single line, phosphor green");
+    LQ_CHECK (std::abs (line.getFont().getHeight() - iaq8::ui::Iaq8LookAndFeel::screenFont (29.0f).getHeight()) < 0.01f, "VT323 29 px");
+
+    // Enter with nothing (or only spaces) sends nothing.
+    const auto before = rig.s().getMessages().size();
+    enter();
+    line.insertTextAtCaret ("   ");
+    enter();
+    LQ_CHECK (rig.s().getMessages().size() == before, "empty: nothing sent");
+
+    // Enter sends the text and clears the line.
+    line.clear(); // (setText would also post a Value update that lands later)
+    line.insertTextAtCaret ("Voz");
+    enter();
+    LQ_CHECK (rig.s().getSource() == iaq8::assist::Source::voice && rig.s().getMessages()[1].text == "Voz", "Enter sent \"Voz\"");
+    LQ_CHECK (line.isEmpty(), "and cleared the line");
+    LQ_CHECK (screenMatchesSession (rig) && editor.getPanelKey (PanelKey::listen).isLedOn(), "editor refreshed");
+
+    // At most 4000 characters, typed or pasted.
+    line.insertTextAtCaret (juce::String::repeatedString ("a", 5000));
+    LQ_CHECK (line.getTotalNumChars() == 4000, str ("capped: ", line.getTotalNumChars()));
+    line.insertTextAtCaret ("b");
+    LQ_CHECK (line.getTotalNumChars() == 4000 && ! line.getText().containsChar ('b'), "nothing past the cap");
+    line.clear();
+
+    // ENVIAR sends the line too.
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    editor.refreshFromSession();
+    line.insertTextAtCaret (utf8 ("M\xc3\xa1s calidez, pero sin perder claridad"));
+    rig.click (editor.getPanelKey (PanelKey::send));
+    LQ_CHECK (rig.state->posts() == 1 && rig.s().getMessages().back().text == "Más calidez, pero sin perder claridad",
+              "ENVIAR sent the line (accents kept)");
+    LQ_CHECK (line.isEmpty() && rig.s().getStage() == Stage::waiting, "cleared; waiting");
+
+    // While a request is in flight nothing is sent and the text stays.
+    LQ_CHECK (! editor.getPanelKey (PanelKey::send).isEnabled(), "ENVIAR off while waiting");
+    line.insertTextAtCaret ("otra cosa");
+    enter();
+    LQ_CHECK (rig.state->posts() == 1 && line.getText() == "otra cosa", "kept for later");
+}
+
+LQ_TEST ("ui values: boxes show source, seconds, changes and compensation")
+{
+    LQ_CHECK (Iaq8Editor::formatLevelMatch (-1.23) == utf8 ("\xe2\x88\x92" "1.2 dB"), "minus sign");
+    LQ_CHECK (Iaq8Editor::formatLevelMatch (0.84) == "+0.8 dB", "plus sign");
+    LQ_CHECK (Iaq8Editor::formatLevelMatch (0.02) == "0.0 dB" && Iaq8Editor::formatLevelMatch (-0.04) == "0.0 dB", "zero");
+
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    const auto dash = utf8 ("\xe2\x80\x94");
+    LQ_CHECK (editor.getValueText (0) == dash && editor.getValueText (1) == dash, "no source, nothing listened yet");
+    LQ_CHECK (editor.getValueText (2) == "0 BANDAS" && editor.getValueText (3) == "0.0 dB", "no changes, no compensation");
+
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (editor.getValueText (0) == "VOZ", str ("source: ", editor.getValueText (0)));
+    LQ_CHECK (editor.getValueText (1) == "0 s", str ("listened: ", editor.getValueText (1)));
+
+    fillKeysCapture (*rig.p, 6.0);
+    rig.s().poll();
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getValueText (1) == "6 s", str ("listened 6 s: ", editor.getValueText (1)));
+
+    fillKeysCapture (*rig.p, 6.5);
+    rig.s().poll();
+    editor.refreshFromSession();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getValueText (1) == "12 s", str ("the whole listening stays: ", editor.getValueText (1)));
+
+    rig.click (editor.getQuickKey (0));
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getValueText (2) == "2 BANDAS", str ("proposal's bands: ", editor.getValueText (2)));
+
+    // The preview plays: the level match follows the processor.
+    juce::AudioBuffer<float> buffer (2, kKeysBlock);
+    juce::MidiBuffer midi;
+    juce::Random random (3);
+    for (int b = 0; b < 200; ++b)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kKeysBlock; ++i)
+                buffer.setSample (ch, i, 0.3f * (random.nextFloat() * 2.0f - 1.0f));
+        rig.p->processBlock (buffer, midi);
+    }
+    editor.refreshFromSession();
+    const auto compensation = rig.p->getCompensationDb();
+    LQ_CHECK (std::abs (compensation) >= 0.05, str ("some compensation: ", compensation));
+    LQ_CHECK (editor.getValueText (3) == Iaq8Editor::formatLevelMatch (compensation),
+              str ("level match: ", editor.getValueText (3), " for ", compensation));
+
+    // Applied: the applied set's bands; a new proposal: its own.
+    rig.click (editor.getPanelKey (PanelKey::apply));
+    LQ_CHECK (editor.getValueText (2) == "2 BANDAS", "applied bands");
+    rig.click (editor.getQuickKey (0));
+    rig.reply (1, 200, kKeysProposal2);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "second proposal");
+    editor.refreshFromSession();
+    LQ_CHECK (editor.getValueText (2) == "1 BANDA", str ("one band: ", editor.getValueText (2)));
 }

@@ -28,22 +28,10 @@ juce::Font screenFont (float px, float letterSpacingPx)
     return letterSpacingPx > 0.0f ? font.withExtraKerningFactor (letterSpacingPx / font.getHeight()) : font;
 }
 
-// Capitals, as on the mockup, including the accented Latin-1 letters
-// (String::toUpperCase follows the C locale and leaves them).
+// Capitals, as on the mockup (accented letters included).
 juce::String upper (const juce::String& text)
 {
-    juce::String result;
-    result.preallocateBytes (text.getNumBytesAsUTF8());
-    for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
-    {
-        auto c = *p;
-        if (c >= 0xe0 && c <= 0xfe && c != 0xf7)
-            c -= 0x20;
-        else
-            c = juce::CharacterFunctions::toUpperCase (c);
-        result += c;
-    }
-    return result;
+    return Iaq8LookAndFeel::toCapitals (text);
 }
 
 juce::Font chatFont() { return screenFont (PhosphorScreen::chatFontPx, 0.5f); }
@@ -322,6 +310,11 @@ PhosphorScreen::PhosphorScreen()
 PhosphorScreen::~PhosphorScreen()
 {
     stopTimer();
+}
+
+bool PhosphorScreen::isActiveBand (const BandSettings& b) noexcept
+{
+    return isActive (b);
 }
 
 float PhosphorScreen::xForHz (double hz) noexcept

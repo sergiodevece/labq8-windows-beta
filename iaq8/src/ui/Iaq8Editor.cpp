@@ -1,10 +1,13 @@
 #include "ui/Iaq8Editor.h"
 
 #include "LabQ8Assets.h"
+#include "analysis/CaptureBuffer.h"
+#include "assist/Session.h"
 #include "assist/Settings.h"
 #include "plugin/Iaq8Processor.h"
 #include "ui/Iaq8Geometry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -22,6 +25,62 @@ namespace
 juce::String utf8 (const char* text)
 {
     return juce::String (juce::CharPointer_UTF8 (text));
+}
+
+// The ASSISTANT head (.head: flex, centred, gap 14): the 17 px orange lamp,
+// then the title, whose 22 px line box is the taller of the two.
+constexpr float headLampSize = 17.0f, headGap = 14.0f;
+
+juce::Rectangle<float> assistantTitleArea()
+{
+    return g::assistantHead.withTrimmedLeft (headLampSize + headGap).withHeight (22.0f * 1.2f);
+}
+
+juce::Rectangle<float> assistantLampArea()
+{
+    const auto lineBox = 22.0f * 1.2f;
+    return { g::assistantHead.getX(), g::assistantHead.getY() + (lineBox - headLampSize) * 0.5f, headLampSize, headLampSize };
+}
+
+// A static picture rendered once per device scale (and size), then copied.
+struct CachedLayer
+{
+    juce::Image image;
+    float scale = 0.0f;
+    juce::Rectangle<float> area;
+
+    template <typename Draw>
+    void draw (juce::Graphics& gr, juce::Rectangle<float> where, Draw&& drawAt)
+    {
+        const auto s = juce::jmax (0.1f, gr.getInternalContext().getPhysicalPixelScaleFactor());
+        if (image.isNull() || std::abs (s - scale) > 0.001f || where != area)
+        {
+            image = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (where.getWidth() * s)),
+                                 juce::jmax (1, juce::roundToInt (where.getHeight() * s)), true, juce::SoftwareImageType());
+            juce::Graphics ig (image);
+            ig.addTransform (juce::AffineTransform::translation (-where.getX(), -where.getY()).scaled (s));
+            drawAt (ig);
+            scale = s;
+            area = where;
+        }
+        gr.drawImage (image, where);
+    }
+};
+
+// The orange lamp of the head (.lamp.o): radial gradient at 40 % / 35 % and
+// two glows (10 px #ff8a2a, 22 px at 35 %).
+void drawOrangeLamp (juce::Graphics& gr, juce::Rectangle<float> lamp)
+{
+    juce::Path dot;
+    dot.addEllipse (lamp);
+    juce::DropShadow (juce::Colour (0xffff8c28).withAlpha (0.35f), 22, {}).drawForPath (gr, dot);
+    juce::DropShadow (colours::lampOrangeGlow, 10, {}).drawForPath (gr, dot);
+    const auto centre = lamp.getRelativePoint (0.4f, 0.35f);
+    juce::ColourGradient fill (juce::Colour (0xfffff0dc), centre, juce::Colour (0xffb9520f),
+                               centre + juce::Point<float> (lamp.getWidth() * 0.6f, lamp.getHeight() * 0.65f), true);
+    fill.addColour (0.4, colours::lampOrange);
+    gr.setGradientFill (fill);
+    gr.fillPath (dot);
 }
 
 // The worn silkscreen printed by the editor (the rest of the chassis print
@@ -42,6 +101,19 @@ std::vector<SilkText> silkscreen()
     const char* captions[] = { "ONLINE", "LISTEN", "PROPOSAL" };
     for (size_t i = 0; i < g::lampCaps.size(); ++i)
         items.push_back ({ captions[i], g::lampCaps[i], caption, 1.4f, 0.0f, juce::Justification::horizontallyCentred });
+
+    // Lower panel (.head .t, the note after it, .hint and .vlab; the hint
+    // and the box labels are plain print in the mockup, not worn).
+    items.push_back ({ "ASSISTANT", assistantTitleArea(), Iaq8LookAndFeel::labelFont (22.0f, true), 2.4f, 0.0f,
+                       juce::Justification::left, colours::assistantTitle });
+    items.push_back ({ utf8 ("P\xc3\xad" "delo con tus palabras"), g::assistantNote, Iaq8LookAndFeel::labelFont (16.0f, false), 0.0f, 0.0f,
+                       juce::Justification::left, colours::assistantNote });
+    items.push_back ({ utf8 ("El audio nunca sale de tu ordenador \xc2\xb7 solo se env\xc3\xad" "a un resumen del an\xc3\xa1lisis"),
+                       g::hint, Iaq8LookAndFeel::labelFont (13.0f, false), 0.4f, 0.0f, juce::Justification::left, colours::hint, false });
+    const char* boxLabels[] = { "SOURCE", "LISTENED", "CHANGES", "LEVEL MATCH" };
+    for (size_t i = 0; i < g::valueLabels.size(); ++i)
+        items.push_back ({ boxLabels[i], g::valueLabels[i], Iaq8LookAndFeel::labelFont (13.0f, false), 1.2f, 0.0f,
+                           juce::Justification::horizontallyCentred, colours::valueLabel, false });
     return items;
 }
 
@@ -71,9 +143,16 @@ public:
 
         for (const auto& w : worn)
             gr.drawImage (w.image, w.area);
+
+        // The ASSISTANT head's lamp (with its glow) and rule.
+        const auto lamp = assistantLampArea();
+        lampLayer.draw (gr, lamp.expanded (24.0f), [lamp] (juce::Graphics& ig) { drawOrangeLamp (ig, lamp); });
+        gr.setColour (colours::rule);
+        gr.fillRect (g::assistantRule);
     }
 
 private:
+    CachedLayer lampLayer;
     std::vector<SilkText> items;
     std::vector<Iaq8LookAndFeel::WornText> worn;
     float cachedScale = 0.0f;
@@ -114,6 +193,204 @@ public:
 
 private:
     Iaq8Editor& editor;
+};
+
+//==============================================================================
+// The command line (.inbox): a recessed phosphor field, "> " before the text
+// and "[ENTER]" at the right, VT323 29 px. The text is a borderless
+// TextEditor on a cached background; scan lines and the reflection are a
+// cached overlay above it that takes no clicks. The TextEditor keeps its own
+// right-click menu (copy, paste).
+class Iaq8Editor::CommandLine final : public juce::Component
+{
+public:
+    static constexpr float padding = 22.0f, fontPx = 29.0f, enterFontPx = 20.0f;
+
+    CommandLine()
+    {
+
+        field.setMultiLine (false);
+        field.setReturnKeyStartsNewLine (false);
+        field.setScrollbarsShown (false);
+        field.setInputRestrictions (assist::Session::maxTextChars);
+        field.setBorder ({});
+        field.setIndents (0, 0);
+        field.setJustification (juce::Justification::centredLeft);
+        field.setFont (font());
+        field.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+        field.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+        field.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+        field.setColour (juce::TextEditor::textColourId, colours::phosphor);
+        field.setColour (juce::CaretComponent::caretColourId, colours::cursor);
+        field.getProperties().set (ownsPopupMenuProperty, true);
+        field.setTitle ("Mensaje al asistente");
+        addAndMakeVisible (field);
+
+        overlay.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (overlay);
+    }
+
+    static juce::Font font() { return Iaq8LookAndFeel::screenFont (fontPx); }
+    static juce::Font enterFont()
+    {
+        const auto f = Iaq8LookAndFeel::screenFont (enterFontPx);
+        return f.withExtraKerningFactor (1.0f / f.getHeight());
+    }
+
+    // The box itself (the component is 1 px taller for the light under it).
+    juce::Rectangle<float> box() const { return getLocalBounds().toFloat().withTrimmedBottom (1.0f); }
+
+    void resized() override
+    {
+        const auto b = box();
+        const auto prefix = juce::GlyphArrangement::getStringWidth (font(), "> ");
+        const auto enter = juce::GlyphArrangement::getStringWidth (enterFont(), "[ENTER]");
+        field.setBounds (b.withTrimmedLeft (padding + prefix).withTrimmedRight (padding + enter + 16.0f).toNearestInt());
+        overlay.setBounds (getLocalBounds());
+    }
+
+    void paint (juce::Graphics& gr) override
+    {
+        background.draw (gr, getLocalBounds().toFloat(), [this] (juce::Graphics& ig) { drawBackground (ig); });
+    }
+
+    // A click anywhere in the box (the "> " included) puts the cursor in the line.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu())
+            field.grabKeyboardFocus();
+    }
+
+    juce::TextEditor field;
+
+private:
+    void drawBackground (juce::Graphics& gr) const
+    {
+        const auto b = box();
+        const auto radius = 8.0f;
+        // 0 1px 0 rgba(255,255,255,.08) under the box.
+        gr.setColour (juce::Colours::white.withAlpha (0.08f));
+        gr.fillRoundedRectangle (b.translated (0.0f, 1.0f), radius);
+
+        juce::Path shape;
+        shape.addRoundedRectangle (b, radius);
+        juce::ColourGradient glass (juce::Colour (0xff0b1f0e), b.getCentre(), juce::Colour (0xff020703),
+                                    b.getCentre() + juce::Point<float> (b.getWidth() * 0.5f * 0.8f * 1.41f, 0.0f), true);
+        gr.setGradientFill (glass);
+        gr.fillPath (shape);
+
+        // Inset shadows: 1 px black ring (.9) and 0 3px 9px (.95), mostly at the top.
+        gr.saveState();
+        gr.reduceClipRegion (shape);
+        juce::Path outside;
+        outside.addRectangle (b.expanded (20.0f));
+        outside.addRoundedRectangle (b.translated (0.0f, 3.0f), radius);
+        outside.setUsingNonZeroWinding (false);
+        juce::DropShadow (juce::Colours::black.withAlpha (0.95f), 9, {}).drawForPath (gr, outside);
+        gr.restoreState();
+        gr.setColour (juce::Colours::black.withAlpha (0.9f));
+        gr.drawRoundedRectangle (b.reduced (0.5f), radius, 1.0f);
+
+        // "> " and "[ENTER]".
+        const auto f = font();
+        gr.setColour (colours::phosphor);
+        juce::GlyphArrangement prefix;
+        prefix.addLineOfText (f, "> ", b.getX() + padding, b.getCentreY() - f.getHeight() * 0.5f + f.getAscent());
+        prefix.draw (gr);
+        const auto ef = enterFont();
+        const auto enterWidth = juce::GlyphArrangement::getStringWidth (ef, "[ENTER]");
+        gr.setColour (colours::phosphorPlaceholder);
+        juce::GlyphArrangement enter;
+        enter.addLineOfText (ef, "[ENTER]", b.getRight() - padding - enterWidth, b.getCentreY() - ef.getHeight() * 0.5f + ef.getAscent());
+        enter.draw (gr);
+    }
+
+    // Scan lines (1 px black .35 of every 3) and the 172deg reflection.
+    class Overlay final : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& gr) override
+        {
+            layer.draw (gr, getLocalBounds().toFloat(), [this] (juce::Graphics& ig)
+            {
+                const auto b = getLocalBounds().toFloat().withTrimmedBottom (1.0f);
+                juce::Path shape;
+                shape.addRoundedRectangle (b, 8.0f);
+                ig.reduceClipRegion (shape);
+                ig.setColour (juce::Colours::black.withAlpha (0.35f));
+                for (auto y = b.getY(); y < b.getBottom(); y += 3.0f)
+                    ig.fillRect (b.withY (y).withHeight (1.0f));
+                ig.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.06f), b.getX(), b.getY(),
+                                                          juce::Colours::transparentWhite, b.getX() + b.getWidth() * 0.4f * 0.14f,
+                                                          b.getY() + b.getHeight() * 0.4f, false));
+                ig.fillRect (b);
+            });
+        }
+
+    private:
+        CachedLayer layer;
+    };
+
+    CachedLayer background;
+    Overlay overlay;
+};
+
+//==============================================================================
+// A value box of the lower panel (.vbox): recessed, 17 px Barlow SemiBold in
+// green with a soft glow. Repaints only when its text changes.
+class Iaq8Editor::ValueBox final : public juce::Component
+{
+public:
+    ValueBox() { setInterceptsMouseClicks (false, false); }
+
+    void setText (const juce::String& newText)
+    {
+        if (newText == text)
+            return;
+        text = newText;
+        repaint();
+    }
+
+    const juce::String& getText() const noexcept { return text; }
+
+    void paint (juce::Graphics& gr) override
+    {
+        const auto b = getLocalBounds().toFloat().withTrimmedBottom (1.0f);
+        background.draw (gr, getLocalBounds().toFloat(), [b] (juce::Graphics& ig)
+        {
+            ig.setColour (juce::Colours::white.withAlpha (0.07f)); // 0 1px 0 below
+            ig.fillRoundedRectangle (b.translated (0.0f, 1.0f), 5.0f);
+            ig.setColour (colours::valueBox);
+            ig.fillRoundedRectangle (b, 5.0f);
+            juce::Path shape, outside;
+            shape.addRoundedRectangle (b, 5.0f);
+            ig.reduceClipRegion (shape);
+            outside.addRectangle (b.expanded (12.0f));
+            outside.addRoundedRectangle (b.translated (0.0f, 2.0f), 5.0f);
+            outside.setUsingNonZeroWinding (false);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.95f), 5, {}).drawForPath (ig, outside);
+        });
+
+        if (text.isEmpty())
+            return;
+        auto font = Iaq8LookAndFeel::labelFont (17.0f, true);
+        font = font.withExtraKerningFactor (0.8f / font.getHeight());
+        const auto width = juce::GlyphArrangement::getStringWidth (font, text);
+        if (width > b.getWidth() - 12.0f)
+            font = font.withHeight (font.getHeight() * (b.getWidth() - 12.0f) / width);
+        juce::GlyphArrangement glyphs;
+        glyphs.addLineOfText (font, text, b.getCentreX() - juce::GlyphArrangement::getStringWidth (font, text) * 0.5f,
+                              b.getCentreY() - font.getHeight() * 0.5f + font.getAscent());
+        juce::Path path;
+        glyphs.createPath (path);
+        juce::DropShadow (juce::Colour (0xff78ff64).withAlpha (0.35f), 6, {}).drawForPath (gr, path);
+        gr.setColour (colours::valueText);
+        gr.fillPath (path);
+    }
+
+private:
+    juce::String text;
+    CachedLayer background;
 };
 
 juce::MouseListener& Iaq8Editor::getPopupMenuListener() noexcept
@@ -162,6 +439,8 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
     meters = std::make_unique<labq8::ui::LevelMeterView> (iaq8Processor.getInputMeter(), iaq8Processor.getOutputMeter());
     content->addAndMakeVisible (*meters);
 
+    createAssistantControls();
+
     // No resize corner and no resizing by the host: the size only changes
     // through the zoom menu. Opens at the stored zoom, or at the largest
     // smaller choice that fits this screen (the preference is kept).
@@ -170,6 +449,8 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
     for (auto i = (size_t) juce::jmax (0, preferences::zoomChoiceIndex (zoom)); i > 0 && ! zoomFits (zoom, getAvailableScreenArea()); --i)
         zoom = zoomChoices[i - 1];
     setSize ((int) std::lround ((float) g::referenceWidth * zoom), (int) std::lround ((float) g::referenceHeight * zoom));
+
+    refreshFromSession();
 }
 
 Iaq8Editor::~Iaq8Editor()
@@ -369,5 +650,237 @@ void Iaq8Editor::showAboutDialog()
                                                        this);
     window->addButton ("OK", 0, juce::KeyPress (juce::KeyPress::returnKey), juce::KeyPress (juce::KeyPress::escapeKey));
     openDialog (std::move (window), {});
+}
+//==============================================================================
+// Assistant: keys, command line and values (Task 5).
+void Iaq8Editor::createAssistantControls()
+{
+    // The eight keys under the screen: seven quick replies, then VER DETALLE.
+    for (size_t i = 0; i < quickKeys.size(); ++i)
+    {
+        auto key = std::make_unique<RackKey> ("Respuesta " + juce::String ((int) i + 1), RackKey::Style::slot);
+        key->setCapBounds (g::quickKeys[i].toNearestInt());
+        content->addAndMakeVisible (*key);
+        quickKeys[i] = std::move (key);
+    }
+    for (size_t i = 0; i < quickReplies.size(); ++i)
+        quickKeys[i]->onClick = [this, i]
+        {
+            if (quickReplies[i].isEmpty())
+                return;
+            iaq8Processor.getSession().say (quickReplies[i].toStdString());
+            refreshFromSession();
+        };
+    auto& detail = *quickKeys.back();
+    detail.setName ("Ver detalle");
+    detail.setButtonText ("VER\nDETALLE");
+    detail.onClick = [this]
+    {
+        screen->setDetailVisible (! screen->isDetailVisible());
+        refreshFromSession();
+    };
+
+    // The lower panel's keys; APLICAR is the only orange one.
+    const struct
+    {
+        PanelKey which;
+        const char* text;
+        g::Rect area;
+    } keys[] = { { PanelKey::listen, "ESCUCHAR", g::keyListen },
+                 { PanelKey::send, "ENVIAR", g::keySend },
+                 { PanelKey::undo, "DESHACER", g::keyUndo },
+                 { PanelKey::apply, "APLICAR", g::keyApply } };
+    for (const auto& k : keys)
+    {
+        auto key = std::make_unique<RackKey> (k.text, k.which == PanelKey::apply ? RackKey::Style::apply : RackKey::Style::dark);
+        key->setButtonText (k.text);
+        key->setCapBounds (k.area.toNearestInt());
+        content->addAndMakeVisible (*key);
+        panelKeys[(size_t) k.which] = std::move (key);
+    }
+    getPanelKey (PanelKey::listen).onClick = [this]
+    {
+        iaq8Processor.getSession().listenAgain();
+        refreshFromSession();
+    };
+    getPanelKey (PanelKey::send).onClick = [this] { sendCommandLine(); };
+    getPanelKey (PanelKey::undo).onClick = [this]
+    {
+        iaq8Processor.getSession().undo();
+        refreshFromSession();
+    };
+    getPanelKey (PanelKey::apply).onClick = [this]
+    {
+        iaq8Processor.getSession().apply();
+        refreshFromSession();
+    };
+
+    // The command line: Enter sends.
+    commandLine = std::make_unique<CommandLine>();
+    commandLine->setBounds (g::inbox.withHeight (g::inbox.getHeight() + 1.0f).toNearestInt());
+    commandLine->field.onReturnKey = [this] { sendCommandLine(); };
+    content->addAndMakeVisible (*commandLine);
+
+    for (size_t i = 0; i < valueBoxes.size(); ++i)
+    {
+        valueBoxes[i] = std::make_unique<ValueBox>();
+        valueBoxes[i]->setBounds (g::valueBoxes[i].withHeight (g::valueBoxes[i].getHeight() + 1.0f).toNearestInt());
+        content->addAndMakeVisible (*valueBoxes[i]);
+    }
+}
+
+RackKey& Iaq8Editor::getQuickKey (int index)
+{
+    return *quickKeys[(size_t) juce::jlimit (0, (int) quickKeys.size() - 1, index)];
+}
+
+RackKey& Iaq8Editor::getPanelKey (PanelKey which)
+{
+    return *panelKeys[(size_t) which];
+}
+
+juce::TextEditor& Iaq8Editor::getCommandLine() noexcept
+{
+    return commandLine->field;
+}
+
+juce::String Iaq8Editor::getValueText (int box) const
+{
+    return valueBoxes[(size_t) juce::jlimit (0, (int) valueBoxes.size() - 1, box)]->getText();
+}
+
+juce::String Iaq8Editor::keyLabel (const juce::String& reply)
+{
+    const auto words = juce::StringArray::fromTokens (Iaq8LookAndFeel::toCapitals (reply).trim(), " ", {});
+    if (words.size() < 2)
+        return words.joinIntoString (" ");
+
+    // The split whose longer line is the shortest (the first such split).
+    int best = 1, bestLength = std::numeric_limits<int>::max();
+    for (int split = 1; split < words.size(); ++split)
+    {
+        const auto first = words.joinIntoString (" ", 0, split).length();
+        const auto second = words.joinIntoString (" ", split).length();
+        if (juce::jmax (first, second) < bestLength)
+        {
+            bestLength = juce::jmax (first, second);
+            best = split;
+        }
+    }
+    return words.joinIntoString (" ", 0, best) + "\n" + words.joinIntoString (" ", best);
+}
+
+juce::String Iaq8Editor::formatLevelMatch (double db)
+{
+    const auto tenths = std::round (db * 10.0) / 10.0;
+    if (std::abs (tenths) < 0.05)
+        return "0.0 dB";
+    return (tenths > 0.0 ? juce::String ("+") : utf8 ("\xe2\x88\x92")) + juce::String (std::abs (tenths), 1) + " dB";
+}
+
+void Iaq8Editor::sendCommandLine()
+{
+    auto& field = commandLine->field;
+    const auto text = field.getText().trim();
+    if (text.isEmpty())
+        return;
+
+    if (commandTextTarget != nullptr)
+    {
+        commandTextTarget (text);
+    }
+    else
+    {
+        auto& session = iaq8Processor.getSession();
+        if (session.getStage() == assist::Session::Stage::waiting)
+            return; // one request at a time: the text waits in the line
+        session.say (text.toStdString());
+    }
+    field.clear();
+    refreshFromSession();
+}
+
+void Iaq8Editor::refreshFromSession()
+{
+    auto& session = iaq8Processor.getSession();
+    const auto stage = session.getStage();
+
+    // Quick replies: the first seven, each on its key; no text, no key.
+    const auto replies = session.getQuickReplies();
+    for (size_t i = 0; i < quickReplies.size(); ++i)
+    {
+        quickReplies[i] = i < replies.size() ? utf8 (replies[i].c_str()) : juce::String();
+        auto& key = *quickKeys[i];
+        key.setButtonText (keyLabel (quickReplies[i]));
+        key.setEnabled (quickReplies[i].isNotEmpty());
+        key.setTooltip (quickReplies[i]);
+    }
+
+    // VER DETALLE: with a proposal or something applied.
+    const auto proposal = iaq8Processor.getProposal();
+    const auto countActive = [] (const dsp::BandSet& set)
+    {
+        return (int) std::count_if (set.begin(), set.end(), [] (const auto& b) { return PhosphorScreen::isActiveBand (b); });
+    };
+    const auto appliedBands = countActive (iaq8Processor.getAppliedBands());
+    const auto detailAvailable = proposal.has_value() || appliedBands > 0;
+    if (! detailAvailable)
+        screen->setDetailVisible (false);
+    auto& detail = *quickKeys.back();
+    detail.setEnabled (detailAvailable);
+    detail.setLed (screen->isDetailVisible());
+
+    // Panel keys.
+    auto& listen = getPanelKey (PanelKey::listen);
+    listen.setEnabled (session.getSource().has_value());
+    listen.setLed (stage == assist::Session::Stage::listening);
+    getPanelKey (PanelKey::send).setEnabled (commandTextTarget != nullptr || stage != assist::Session::Stage::waiting);
+    getPanelKey (PanelKey::undo).setEnabled (session.canUndo());
+    getPanelKey (PanelKey::apply).setEnabled (session.canApply());
+
+    // Values.
+    const auto dash = utf8 ("\xe2\x80\x94");
+    const auto source = session.getSource();
+    valueBoxes[0]->setText (source.has_value() ? Iaq8LookAndFeel::toCapitals (utf8 (assist::Session::sourceLabel (*source))) : dash);
+    if (stage == assist::Session::Stage::listening)
+        listenedSeconds = session.getListenProgress() * analysis::CaptureBuffer::targetSeconds;
+    valueBoxes[1]->setText (listenedSeconds.has_value() ? juce::String (juce::roundToInt (*listenedSeconds)) + " s" : dash);
+    const auto changes = proposal.has_value() ? countActive (*proposal) : appliedBands;
+    valueBoxes[2]->setText (juce::String (changes) + (changes == 1 ? " BANDA" : " BANDAS"));
+    valueBoxes[3]->setText (formatLevelMatch (iaq8Processor.getCompensationDb()));
+
+    updateScreenLines();
+}
+
+void Iaq8Editor::updateScreenLines()
+{
+    auto& session = iaq8Processor.getSession();
+    const auto& messages = session.getMessages();
+
+    if (messages.size() < messagesSeen) // the conversation was reloaded or started over
+        shownNotices.clear();
+    messagesSeen = messages.size();
+
+    const auto notice = utf8 (session.getNotice().c_str());
+    if (notice != lastNotice)
+    {
+        if (notice.isNotEmpty())
+            shownNotices.push_back ({ messages.size(), notice });
+        lastNotice = notice;
+    }
+
+    using Who = PhosphorScreen::Line::Who;
+    std::vector<PhosphorScreen::Line> lines;
+    lines.reserve (messages.size() + shownNotices.size());
+    auto next = shownNotices.begin();
+    for (size_t i = 0; i <= messages.size(); ++i)
+    {
+        for (; next != shownNotices.end() && next->afterMessages <= i; ++next)
+            lines.push_back ({ Who::system, next->text });
+        if (i < messages.size())
+            lines.push_back ({ messages[i].role == assist::Message::Role::user ? Who::user : Who::assistant,
+                               utf8 (messages[i].text.c_str()) });
+    }
+    screen->setLines (std::move (lines));
 }
 } // namespace iaq8::ui

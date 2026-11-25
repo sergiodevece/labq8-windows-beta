@@ -87,12 +87,21 @@ struct SilkText
     float lineHeight = 0.0f;      // CSS line-height, px; 0: normal (one font height)
     juce::Justification justification = juce::Justification::left;
     juce::Colour colour = colours::silk;
+    bool worn = true;             // false: plain print (no wear mask, no shadow)
 };
 
 class Iaq8LookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
     Iaq8LookAndFeel();
+
+    // Text fields get a block cursor (12 x 20 px, colours::cursor) that
+    // blinks at 2 Hz while the field has the keyboard focus.
+    juce::CaretComponent* createCaretComponent (juce::Component* keyFocusOwner) override;
+
+    // Capitals, including the accented Latin-1 letters (String::toUpperCase
+    // follows the C locale and leaves them): the screen and the key captions.
+    static juce::String toCapitals (const juce::String& text);
 
     // The embedded typefaces are loaded once and shared by every editor.
     static juce::Font screenFont (float px);                 // VT323

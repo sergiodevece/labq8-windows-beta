@@ -123,6 +123,10 @@ public:
 
     // Curve box mapping: 20 Hz..20 kHz (log) across 920 px, +/-12 dB.
     static float xForHz (double hz) noexcept;
+
+    // A band that changes the sound (drawn, marked, listed): not bypassed and
+    // not a 0 dB bell or shelf. The editor counts CHANGES with the same rule.
+    static bool isActiveBand (const labq8::dsp::BandSettings&) noexcept;
     static float yForDb (double db) noexcept;
 
 private:

@@ -8,8 +8,6 @@
 #include "TestHarness.h"
 
 #include "assist/Session.h"
-#include "assist/Settings.h"
-#include "plugin/DebugEditor.h"
 #include "plugin/Iaq8Processor.h"
 
 #include <juce_events/juce_events.h>
@@ -521,60 +519,6 @@ LQ_TEST ("session: destroying the plugin while analysing or waiting is safe")
     LQ_CHECK (true, "no crash");
 }
 
-LQ_TEST ("session: the debug editor follows the session and saves the access code only in Settings")
-{
-    // Never the real user settings: a temporary file for this test.
-    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("iaq8-editor-test", "", false);
-    juce::PropertiesFile::Options o;
-    o.applicationName = "IAQ8";
-    o.filenameSuffix = "settings";
-    o.osxLibrarySubFolder = "Application Support";
-    o.folderName = dir.getFullPathName();
-    assist::Settings::setFileOptionsForTesting (o);
-
-    Rig rig;
-    // DebugEditor is no longer what createEditor gives (Plan 3); built directly until Task 8.
-    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (*rig.p);
-    const auto find = [&] (const char* id) { return editor->findChildWithID (id); };
-
-    auto* quick0 = dynamic_cast<juce::TextButton*> (find ("quick0"));
-    auto* quick7 = dynamic_cast<juce::TextButton*> (find ("quick7"));
-    LQ_CHECK (quick0 != nullptr && quick0->isVisible() && quick0->getButtonText() == "Voz", "first source on key 1");
-    LQ_CHECK (quick7 != nullptr && ! quick7->isVisible(), "7 sources: key 8 hidden");
-    auto* log = dynamic_cast<juce::TextEditor*> (find ("log"));
-    LQ_CHECK (log != nullptr && log->getText().contains (juce::String (juce::CharPointer_UTF8 ("\xc2\xbfQu\xc3\xa9 tienes en esta pista?"))),
-              "conversation in the log");
-
-    if (quick0 != nullptr)
-        quick0->triggerClick();
-    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::listening; }, 1000), "a quick reply key answers");
-
-    auto* code = dynamic_cast<juce::TextEditor*> (find ("accessCode"));
-    auto* save = dynamic_cast<juce::TextButton*> (find ("saveCode"));
-    LQ_CHECK (code != nullptr && save != nullptr, "access code field");
-    if (code != nullptr && save != nullptr)
-    {
-        code->setText ("dummy-code-9X4");
-        save->triggerClick();
-        pumpUntil ([&] { return assist::Settings::accessCode().isNotEmpty(); }, 1000);
-        LQ_CHECK (assist::Settings::accessCode() == "dummy-code-9X4", "saved through Settings"); // value never printed
-        LQ_CHECK (code->getText().isEmpty(), "field cleared");
-        juce::MemoryBlock state;
-        rig.p->getStateInformation (state);
-        const std::string bytes (static_cast<const char*> (state.getData()), state.getSize());
-        LQ_CHECK (state.getSize() > 0 && bytes.find ("dummy-code-9X4") == std::string::npos, "never in the DAW state");
-    }
-
-    rig.s().startOver();
-    pump (100);
-    editor.reset();
-    rig.s().say ("Bajo"); // the editor is no longer a listener
-    LQ_CHECK (rig.s().getStage() == Stage::listening, "session keeps working without the editor");
-
-    assist::Settings::setFileOptionsForTesting (std::nullopt);
-    dir.deleteRecursively();
-}
-
 LQ_TEST ("session: a load whose counter another call consumed still drops the stale proposal")
 {
     Rig rig;
@@ -852,19 +796,6 @@ LQ_TEST ("session: the source note and the user text are capped at 4000 characte
     LQ_CHECK (note.containsOnly (juce::String (juce::CharPointer_UTF8 ("\xc3\xbc"))), "whole characters");
     const auto& m = rig.s().getMessages();
     LQ_CHECK (m.size() >= 2 && juce::String::fromUTF8 (m[1].text.c_str()).length() <= Session::maxTextChars + 6, "message: label + capped note");
-}
-
-LQ_TEST ("session: the debug editor input field takes at most 4000 characters")
-{
-    Rig rig;
-    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (*rig.p);
-    auto* input = dynamic_cast<juce::TextEditor*> (editor->findChildWithID ("input"));
-    LQ_CHECK (input != nullptr, "input field");
-    if (input != nullptr)
-    {
-        input->insertTextAtCaret (juce::String::repeatedString ("a", 5000));
-        LQ_CHECK (input->getText().length() == 4000, str ("capped: ", input->getText().length()));
-    }
 }
 
 LQ_TEST ("session: listened seconds follow the listening and stay with its analysis")

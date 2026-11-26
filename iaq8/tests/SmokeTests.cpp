@@ -1,7 +1,5 @@
 #include "TestHarness.h"
 
-#include "assist/Settings.h"
-#include "plugin/DebugEditor.h"
 #include "plugin/Iaq8Processor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -9,6 +7,35 @@
 #include <random>
 
 using namespace iaq8;
+
+namespace
+{
+// The network probe of Plan 1's spike (docs/NETWORK_SPIKE.md), kept for the
+// test below: a blocking HTTPS GET with no body and no credentials.
+// statusCode is the HTTP status that arrived (any status proves the HTTPS
+// path works); 0 means no HTTP response (see error).
+struct HttpProbeResult
+{
+    int statusCode = 0;
+    std::string error;
+};
+
+HttpProbeResult probeHttpStatus (const juce::String& url, int timeoutMs)
+{
+    HttpProbeResult result;
+    int status = 0;
+    auto stream = juce::URL (url).createInputStream (
+        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+            .withConnectionTimeoutMs (timeoutMs)
+            .withStatusCode (&status));
+
+    // A 4xx/5xx still yields a stream (or none) plus the status code.
+    result.statusCode = status;
+    if (status == 0)
+        result.error = stream == nullptr ? "no response (network blocked or offline)" : "no HTTP status";
+    return result;
+}
+} // namespace
 
 LQ_TEST ("iaq8 smoke: processor passes audio through")
 {
@@ -35,7 +62,7 @@ LQ_TEST ("iaq8 smoke: processor passes audio through")
                                   && ! (buffer.getSample (ch, i) > original.getSample (ch, i));
 
     LQ_CHECK (identical, "output must equal input sample by sample");
-    LQ_CHECK (processor.hasEditor(), "debug editor available");
+    LQ_CHECK (processor.hasEditor(), "editor available");
 }
 
 LQ_TEST ("iaq8 smoke: buses are mono->mono and stereo->stereo only")
@@ -62,7 +89,7 @@ LQ_TEST ("iaq8 smoke: buses are mono->mono and stereo->stereo only")
               "5.1 rejected");
 }
 
-// Network spike, headless half: the same GET the debug editor's button does.
+// Network spike, headless half: the GET the debug editor's button did (Plan 1).
 // Without an API key api.anthropic.com answers 401; any HTTP status proves the
 // HTTPS path works. Only with IAQ8_NETWORK_TESTS=1 (the suite never touches
 // the network otherwise); no connectivity -> skipped (never a false PASS).
@@ -77,51 +104,10 @@ LQ_TEST ("iaq8 smoke: HTTPS probe reaches api.anthropic.com (401 without key)")
 
     if (result.statusCode == 0)
     {
-        ctx.skip ("no network or HTTPS failed: " + result.error.toStdString());
+        ctx.skip ("no network or HTTPS failed: " + result.error);
         return;
     }
 
     ctx.note ("HTTP status: " + std::to_string (result.statusCode));
     LQ_CHECK (result.statusCode == 401, "expected 401 without key, got " + std::to_string (result.statusCode));
-}
-
-LQ_TEST ("iaq8 smoke: debug editor constructs, shows UTF-8 text and closes promptly")
-{
-    // The editor reads the access code through Settings: never the real user
-    // settings, a temporary folder for this test.
-    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("iaq8-smoke-editor", "", false);
-    juce::PropertiesFile::Options o;
-    o.applicationName = "IAQ8";
-    o.filenameSuffix = "settings";
-    o.osxLibrarySubFolder = "Application Support";
-    o.folderName = dir.getFullPathName();
-    assist::Settings::setFileOptionsForTesting (o);
-    const struct Restore
-    {
-        juce::File folder;
-        ~Restore()
-        {
-            assist::Settings::setFileOptionsForTesting (std::nullopt);
-            folder.deleteRecursively();
-        }
-    } restore { dir };
-
-    Iaq8AudioProcessor processor;
-    std::unique_ptr<juce::AudioProcessorEditor> editor = std::make_unique<DebugEditor> (processor); // not createEditor's since Plan 3
-    LQ_CHECK (editor != nullptr, "editor created");
-
-    if (editor == nullptr)
-        return;
-
-    const auto expected = juce::String (juce::CharPointer_UTF8 ("Probar conexi\xc3\xb3n"));
-    juce::String found;
-    for (auto* child : editor->getChildren())
-        if (auto* button = dynamic_cast<juce::TextButton*> (child))
-            found = button->getButtonText();
-
-    LQ_CHECK (found == expected, "button text is 'Probar conexión' (UTF-8)");
-
-    const auto start = juce::Time::getMillisecondCounter();
-    editor.reset();
-    LQ_CHECK (juce::Time::getMillisecondCounter() - start < 1000, "closing the editor does not wait");
 }

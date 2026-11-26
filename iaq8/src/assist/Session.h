@@ -120,7 +120,8 @@ public:
     // keeps things anchored to the messages (notices, a scroll position)
     // starts afresh when it changes. Not saved.
     std::uint64_t getConversationNumber() const { return conversationNumber; }
-    // Lines of the last sanitize() report (Spanish), for the debug editor.
+    // Lines of the last sanitize() report (Spanish). No view shows them since
+    // the debug editor went (Plan 3); kept for a future detail line.
     const std::vector<std::string>& getLimitAdjustments() const { return adjustments; }
 
     void chooseSource (Source, const std::string& note = {});

@@ -115,11 +115,8 @@ juce_add_plugin(IAQ8
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE)
 
-# DebugEditor (Plan 1) is no longer used by createEditor; it stays built until
-# Plan 3 Task 8 removes it.
 set(IAQ8_PLUGIN_SOURCES
     src/plugin/Iaq8Processor.cpp
-    src/plugin/DebugEditor.cpp
     src/assist/Session.cpp
     ${IAQ8_UI_SOURCES}
     # LABQ8's meter view, compiled unchanged (uses the iaq8_ui_assets sprites).
@@ -176,6 +173,31 @@ target_link_libraries(iaq8_render
     PRIVATE
         iaq8_core
         juce::juce_audio_formats
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+#==============================================================================
+# iaq8_ui_snapshot <dir>: PNGs of the editor's states, rendered offscreen with
+# a fake assistant server (docs/UI.md). It pumps the message loop while it
+# waits for the analysis and the fake replies, as the tests do.
+juce_add_console_app(iaq8_ui_snapshot
+    PRODUCT_NAME "iaq8_ui_snapshot"
+    NEEDS_WEB_BROWSER FALSE
+    NEEDS_CURL FALSE)
+
+target_sources(iaq8_ui_snapshot PRIVATE tools/Iaq8SnapshotMain.cpp ${IAQ8_PLUGIN_SOURCES})
+target_compile_definitions(iaq8_ui_snapshot PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(iaq8_ui_snapshot
+    PRIVATE
+        iaq8_core
+        juce::juce_audio_processors
+        juce::juce_gui_basics
+        juce::juce_dsp
+        iaq8_ui_assets
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

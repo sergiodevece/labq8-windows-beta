@@ -132,6 +132,8 @@ public:
                        int buttonH, juce::ComboBox&) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+    // "Elige la fuente…" in the label's place (JUCE draws it at the box's left edge).
+    void drawComboBoxTextWhenNothingSelected (juce::Graphics&, juce::ComboBox&, juce::Label&) override;
 
     // A status lamp (the mockup's .lamp): off, a dark recessed dot; on, a
     // green (.lamp.g) or orange (.lamp.o) dot with two glows that spill

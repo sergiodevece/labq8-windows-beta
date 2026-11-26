@@ -1182,6 +1182,24 @@ LQ_TEST ("ui top: source combo drives the session")
                   && combo.getItemText (6) == "Otro",
               "Spanish names with accents");
     LQ_CHECK (combo.getSelectedId() == 0, "no source yet: nothing selected");
+    {
+        // "Elige la fuente…" keeps the same 16 px padding as a chosen source (Task 8 snapshots).
+        juce::Image image (juce::Image::ARGB, combo.getWidth(), combo.getHeight(), true, juce::SoftwareImageType());
+        {
+            juce::Graphics g (image);
+            combo.paintEntireComponent (g, false);
+        }
+        int firstText = combo.getWidth();
+        for (int x = 3; x < combo.getWidth() / 2 && firstText == combo.getWidth(); ++x)
+            for (int y = 4; y < combo.getHeight() - 4; ++y)
+                if (image.getPixelAt (x, y).getRed() > 90)
+                {
+                    firstText = x;
+                    break;
+                }
+        LQ_CHECK (firstText >= (int) iaq8::ui::Iaq8LookAndFeel::comboPadding - 1 && firstText < 30,
+                  str ("placeholder text starts at x = ", firstText));
+    }
 
     // Choosing a source tells the session (once).
     combo.setSelectedId (TopRow::comboIdFor (Source::voice), juce::sendNotificationSync);

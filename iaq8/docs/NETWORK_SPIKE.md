@@ -9,7 +9,7 @@ Logic (AU, proceso aislado) y desde un host VST3.
 |---|---|
 | Build Debug (`cmake -S iaq8 -B build/iaq8-debug`), AU + VST3 | OK (`IAQ8.component`, `IAQ8.vst3` generados) |
 | `ctest` (`iaq8_tests`) | 3 tests, 3 PASS |
-| GET HTTPS sin clave a `https://api.anthropic.com/v1/models` (funcion `probeHttpStatus`, la misma que usa el boton) desde `iaq8_tests`, macOS 26.5 | **HTTP 401** (esperado) |
+| GET HTTPS sin clave a `https://api.anthropic.com/v1/models` (funcion `probeHttpStatus`, la misma que usaba el boton del editor provisional; desde Plan 3 vive solo en `tests/SmokeTests.cpp`) desde `iaq8_tests`, macOS 26.5 | **HTTP 401** (esperado) |
 | `auval -v aufx Iaq8 Vtpl` | **No ejecutable**: `FATAL ERROR: didn't find the component`. auval solo ve componentes instalados en `~/Library/Audio/Plug-Ins/Components`; no se instalo nada. Pendiente del autor. |
 
 Esto demuestra que el codigo HTTPS (JUCE `URL`, `JUCE_USE_CURL=0`, NSURLSession)

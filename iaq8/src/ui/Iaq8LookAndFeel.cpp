@@ -387,6 +387,18 @@ void Iaq8LookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& la
     label.setFont (getComboBoxFont (box));
 }
 
+void Iaq8LookAndFeel::drawComboBoxTextWhenNothingSelected (juce::Graphics& g, juce::ComboBox& box, juce::Label& label)
+{
+    // As LookAndFeel_V2, but in the label's bounds: ComboBox::paint draws in
+    // the box's coordinates, where the label's local bounds start at 0.
+    g.setColour (findColour (juce::ComboBox::textColourId).withMultipliedAlpha (0.5f));
+    const auto font = getComboBoxFont (box);
+    g.setFont (font);
+    const auto area = label.getBorderSize().subtractedFrom (label.getBounds());
+    g.drawFittedText (box.getTextWhenNothingSelected(), area, label.getJustificationType(),
+                      juce::jmax (1, (int) ((float) area.getHeight() / font.getHeight())), label.getMinimumHorizontalScale());
+}
+
 void Iaq8LookAndFeel::drawLamp (juce::Graphics& g, juce::Rectangle<float> lamp, bool on, LampColour colour)
 {
     juce::Path dot;

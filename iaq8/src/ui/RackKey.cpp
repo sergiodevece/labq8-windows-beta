@@ -84,6 +84,18 @@ bool RackKey::hitTest (int x, int y)
     return capArea().contains ((float) x, (float) y);
 }
 
+void RackKey::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+        juce::Button::mouseDown (e);
+}
+
+void RackKey::mouseUp (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+        juce::Button::mouseUp (e);
+}
+
 void RackKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
 {
     const auto cap = capArea();

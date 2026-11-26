@@ -1446,6 +1446,8 @@ LQ_TEST ("ui top: the Otro note mode ends with any other action, Escape or a new
     LQ_CHECK (rig.s().getSource() == Source::voice && rig.s().getStage() == Stage::listening
                   && rig.s().getMessages().size() == listeningMessages,
               "said while listening: no source change, no new listening");
+    LQ_CHECK (line.getText() == "Hola", "the text said while listening stays in the line");
+    line.clear();
 
     // Escape cancels: nothing chosen, nothing restarted, the text stays.
     LQ_CHECK (pickOtro(), "Otro once more");
@@ -1678,14 +1680,17 @@ LQ_TEST ("ui session: timer stops at rest")
     LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
     LQ_CHECK (! editor.isRefreshTimerRunning(), "askGoal: stopped");
 
-    // Waiting: running, but nothing visible moves.
+    // Waiting: running; only the PENSANDO dots move (a step every
+    // thinkingTicksPerDot ticks), nothing else rebuilds.
     rig.click (editor.getQuickKey (0));
     LQ_CHECK (rig.s().getStage() == Stage::waiting && editor.isRefreshTimerRunning(), "waiting: running");
     builds = contentBuilds();
     for (int i = 0; i < 30; ++i)
         editor.refreshTick();
-    pump (300); // the real timer too
-    LQ_CHECK (contentBuilds() == builds, str ("waiting: ", contentBuilds() - builds, " rebuilds"));
+    pump (300); // the real timer too (about 5 more ticks)
+    const auto waitingRebuilds = contentBuilds() - builds;
+    LQ_CHECK (waitingRebuilds >= 1 && waitingRebuilds <= 35 / Iaq8Editor::thinkingTicksPerDot,
+              str ("waiting: ", waitingRebuilds, " rebuilds, only for the dots"));
 
     LQ_CHECK (rig.state->posts() > 0, "request 1 sent");
     if (rig.state->posts() <= 0)
@@ -1805,4 +1810,319 @@ LQ_TEST ("ui session: a replaced conversation resets notices and scroll, whateve
     LQ_CHECK (screenHasText (*rig.editor, notice), "a new notice");
     rig.s().startOver();
     LQ_CHECK (! screenHasText (*rig.editor, notice) && screen.getScrollRows() == 0, "start over: no notice, at the end");
+}
+
+//==============================================================================
+// Plan 3, final review fixes.
+
+#include "parameters/ParameterIDs.h"
+
+namespace
+{
+// A right-click as the mouse delivers it to a component inside the content:
+// the component itself and the content's listener (the settings menu).
+juce::MouseEvent rightClickOn (Iaq8Editor& editor, juce::Component& target)
+{
+    // JUCE's order: the component's own mouseDown, then its mouse listeners.
+    const auto e = mouseEventOn (target, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+    target.mouseDown (e);
+    editor.getPopupMenuListener().mouseDown (e);
+    target.mouseUp (e);
+    pump (20);
+    juce::PopupMenu::dismissAllActiveMenus();
+    return e;
+}
+
+bool isThinkingRow (const PhosphorScreen::Row& row)
+{
+    return row.text.startsWith ("IAQ8> PENSANDO");
+}
+
+int thinkingRows (Iaq8Editor& editor)
+{
+    const auto& rows = editor.getScreen().getAllRows();
+    return (int) std::count_if (rows.begin(), rows.end(), isThinkingRow);
+}
+
+juce::String visibleText (PhosphorScreen& screen)
+{
+    juce::String all;
+    for (const auto& row : screen.getVisibleRows())
+        all << row.prefix << row.text << "\n";
+    return all;
+}
+
+juce::RangedAudioParameter* bandParameter (iaq8::Iaq8AudioProcessor& p, const char* id)
+{
+    for (auto* parameter : p.getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter); ranged != nullptr && ranged->getParameterID() == id)
+            return ranged;
+    return nullptr;
+}
+} // namespace
+
+LQ_TEST ("ui final: a right-click on a rack key never runs it and opens the menu at the pointer")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    reachKeysProposal (ctx, rig);
+    LQ_CHECK (editor.getQuickKey (0).isEnabled() && editor.getPanelKey (PanelKey::apply).isEnabled(), "keys on with a proposal");
+
+    const auto posts = rig.state->posts();
+    const auto messages = rig.s().getMessages().size();
+    auto requests = editor.getSettingsMenuRequests();
+    for (auto* key : { &editor.getPanelKey (PanelKey::apply), &editor.getQuickKey (0), &editor.getPanelKey (PanelKey::listen),
+                       &editor.getPanelKey (PanelKey::undo), &editor.getPanelKey (PanelKey::send), &editor.getQuickKey (7) })
+    {
+        const auto e = rightClickOn (editor, *key);
+        LQ_CHECK (editor.getSettingsMenuRequests() == ++requests, str ("right-click on ", key->getName(), ": the settings menu"));
+        // At the pointer, not aligned to the whole chassis.
+        const juce::Rectangle<int> atPointer (e.getScreenPosition().x, e.getScreenPosition().y, 1, 1);
+        LQ_CHECK (editor.getLastSettingsMenuArea() == atPointer,
+                  str ("menu area ", editor.getLastSettingsMenuArea().toString(), " at the pointer ", atPointer.toString()));
+    }
+    LQ_CHECK (rig.s().getStage() == Stage::proposal && rig.p->getUndoDepth() == 0, "APLICAR / ESCUCHAR did not act");
+    LQ_CHECK (rig.state->posts() == posts && rig.s().getMessages().size() == messages, "no quick reply sent");
+    LQ_CHECK (! editor.getScreen().isDetailVisible(), "VER DETALLE did not toggle");
+
+    // A left click still works.
+    const auto left = mouseEventOn (editor.getQuickKey (7), juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier));
+    static_cast<juce::Component&> (editor.getQuickKey (7)).mouseDown (left);
+    static_cast<juce::Component&> (editor.getQuickKey (7)).mouseUp (left);
+    pump (20);
+    LQ_CHECK (editor.getScreen().isDetailVisible(), "a left click on VER DETALLE toggles it");
+
+    // The screw and the logo keep the menu on themselves.
+    auto& screw = editor.getSettingsHotSpot (0);
+    static_cast<juce::Button&> (screw).triggerClick();
+    pump (20);
+    juce::PopupMenu::dismissAllActiveMenus();
+    LQ_CHECK (editor.getLastSettingsMenuArea() == screw.getScreenBounds(), "the screw: the menu on the screw");
+    pump (20);
+}
+
+LQ_TEST ("ui final: PENSANDO while a request is in flight")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    const auto contentBuilds = [&]
+    {
+        renderScreen (screen, 1.0f);
+        return screen.getLayerBuilds().content;
+    };
+    reachKeysProposal (ctx, rig);
+    LQ_CHECK (thinkingRows (editor) == 0, "no PENSANDO at rest");
+
+    rig.click (editor.getQuickKey (0)); // "Menos agudos"
+    LQ_CHECK (rig.s().getStage() == Stage::waiting, "waiting");
+    const auto& rows = screen.getAllRows();
+    LQ_CHECK (! rows.empty() && isThinkingRow (rows.back()) && rows.back().prefix.isEmpty(),
+              str ("the last line is PENSANDO: ", rows.empty() ? std::string() : rows.back().text.toStdString()));
+    LQ_CHECK (thinkingRows (editor) == 1, "one PENSANDO line");
+    for (const auto& m : rig.s().getMessages())
+        LQ_CHECK (juce::String (m.text).containsIgnoreCase ("PENSANDO") == false, "not stored in the conversation");
+
+    // The dots step (1..3) with the timer, a content rebuild only per step.
+    juce::StringArray seen;
+    auto builds = contentBuilds();
+    int steps = 0;
+    juce::String last = rows.back().text;
+    seen.add (last);
+    for (int i = 0; i < 45; ++i)
+    {
+        editor.refreshTick();
+        const auto now = screen.getAllRows().back().text;
+        if (now != last)
+            ++steps;
+        last = now;
+        seen.addIfNotAlreadyThere (now);
+        contentBuilds();
+    }
+    LQ_CHECK (seen.size() == 3 && seen.contains ("IAQ8> PENSANDO.") && seen.contains ("IAQ8> PENSANDO..")
+                  && seen.contains ("IAQ8> PENSANDO..."),
+              str ("dots 1..3: ", seen.joinIntoString (" | ")));
+    LQ_CHECK (steps >= 6 && steps <= 10, str ("about 3 steps a second at 15 Hz: ", steps, " in 45 ticks"));
+    LQ_CHECK (contentBuilds() - builds <= steps, str ("rebuilds ", contentBuilds() - builds, " <= dot steps ", steps));
+
+    // Scrolled back, the dots and the reply do not move the view.
+    wheel (screen, 1.0f);
+    LQ_CHECK (screen.getScrollRows() > 0, str ("scrolled back: ", screen.getScrollRows()));
+    const auto view = visibleText (screen);
+    for (int i = 0; i < 10; ++i)
+        editor.refreshTick();
+    LQ_CHECK (visibleText (screen) == view, "the dots do not move a scrolled-back view");
+
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 200, kKeysProposal2);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "the reply");
+    LQ_CHECK (thinkingRows (editor) == 0, "PENSANDO is gone after the reply");
+    LQ_CHECK (visibleText (screen) == view, "the reply does not move a scrolled-back view");
+    LQ_CHECK (screenMatchesSession (rig), "the screen ends with the reply");
+
+    // A failed request removes it too.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (thinkingRows (editor) == 1 && screen.getScrollRows() == 0, "PENSANDO again, at the end (the key scrolled)");
+    if (rig.state->posts() < 3)
+        return;
+    rig.reply (2, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    LQ_CHECK (thinkingRows (editor) == 0, "PENSANDO is gone after a failure");
+}
+
+LQ_TEST ("ui final: text typed while listening stays in the line")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& line = editor.getCommandLine();
+    rig.click (editor.getQuickKey (0)); // Voz
+    LQ_CHECK (rig.s().getStage() == Stage::listening, "listening");
+
+    // Too little listened: the notice asks for more, the text stays.
+    fillKeysCapture (*rig.p, 0.5);
+    const auto messages = rig.s().getMessages().size();
+    line.insertTextAtCaret (utf8 ("M\xc3\xa1s brillo"));
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    LQ_CHECK (line.getText() == utf8 ("M\xc3\xa1s brillo"), str ("kept: '", line.getText(), "'"));
+    LQ_CHECK (rig.s().getMessages().size() == messages && rig.s().getStage() == Stage::listening, "nothing said");
+
+    // ENVIAR does the same.
+    rig.click (editor.getPanelKey (PanelKey::send));
+    LQ_CHECK (line.getText() == utf8 ("M\xc3\xa1s brillo"), "ENVIAR kept it too");
+
+    // Once analysed, Enter sends it as the goal.
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    LQ_CHECK (line.getText() == utf8 ("M\xc3\xa1s brillo"), "still in the line after the analysis");
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    LQ_CHECK (rig.state->posts() == 1 && juce::String (juce::CharPointer_UTF8 (rig.s().getMessages().back().text.c_str())) == utf8 ("M\xc3\xa1s brillo"),
+              "sent as the goal");
+    LQ_CHECK (line.isEmpty(), "and cleared");
+}
+
+LQ_TEST ("ui final: host-side band changes update the curve and CHANGES")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    LQ_CHECK (! anyNonZero (screen.getAppliedCurve()) && editor.getValueText (2) == "0 BANDAS", "flat at first");
+
+    auto* gain = bandParameter (*rig.p, labq8::params::bandIDs[0].gain);
+    auto* bypass = bandParameter (*rig.p, labq8::params::bandIDs[0].bypass);
+    LQ_CHECK (gain != nullptr && bypass != nullptr, "band 1 parameters");
+    if (gain == nullptr || bypass == nullptr)
+        return;
+
+    // As automation or the host's undo: from another thread, nothing pumped yet.
+    std::thread ([&]
+                 {
+                     bypass->setValueNotifyingHost (bypass->convertTo0to1 (0.0f));
+                     gain->setValueNotifyingHost (gain->convertTo0to1 (6.0f));
+                 }).join();
+    LQ_CHECK (pumpUntil ([&] { return anyNonZero (screen.getAppliedCurve()); }, 1000), "the curve follows");
+    LQ_CHECK (editor.getValueText (2) == "1 BANDA", str ("CHANGES: ", editor.getValueText (2)));
+    LQ_CHECK (screen.getStatus()[3] == "EQ APLICADA", str ("status: ", screen.getStatus()[3]));
+    LQ_CHECK (editor.getQuickKey (7).isEnabled(), "VER DETALLE available");
+
+    // Back to flat (on the message thread too).
+    gain->setValueNotifyingHost (gain->convertTo0to1 (0.0f));
+    LQ_CHECK (pumpUntil ([&] { return ! anyNonZero (screen.getAppliedCurve()); }, 1000), "flat again");
+    LQ_CHECK (editor.getValueText (2) == "0 BANDAS" && screen.getStatus()[3].isEmpty() && ! editor.getQuickKey (7).isEnabled(),
+              "CHANGES, status and VER DETALLE follow");
+
+    // Many changes coalesce; an editor closed with one pending is safe.
+    for (int i = 0; i < 50; ++i)
+        gain->setValueNotifyingHost (gain->convertTo0to1 ((float) (i % 7)));
+    rig.editor.reset();
+    pump (50);
+    gain->setValueNotifyingHost (gain->convertTo0to1 (0.0f));
+    pump (20);
+    LQ_CHECK (true, "no listener left after the editor");
+}
+
+LQ_TEST ("ui final: sending scrolls to the end")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    reachKeysProposal (ctx, rig);
+
+    wheel (screen, 1.0f);
+    LQ_CHECK (screen.getScrollRows() > 0, str ("scrolled back: ", screen.getScrollRows()));
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::waiting && screen.getScrollRows() == 0, "a quick key scrolls to the end");
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 200, kKeysProposal2);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal 2");
+
+    wheel (screen, 1.0f);
+    LQ_CHECK (screen.getScrollRows() > 0, "scrolled back again");
+    editor.getCommandLine().insertTextAtCaret ("Vale");
+    editor.sendCommandLine();
+    LQ_CHECK (rig.state->posts() == 3 && screen.getScrollRows() == 0, "sent text scrolls to the end");
+}
+
+LQ_TEST ("ui final: a listening drops the command line's keyboard focus")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& line = editor.getCommandLine();
+    editor.addToDesktop (0);
+    editor.setVisible (true);
+    line.grabKeyboardFocus();
+    pump (50);
+    if (! line.hasKeyboardFocus (false))
+    {
+        // No window focus in this session (e.g. a headless runner): nothing to check.
+        editor.removeFromDesktop();
+        LQ_CHECK (true, "focus not available here");
+        return;
+    }
+
+    // "Voz" + Enter starts a listening: the spacebar must reach the host.
+    // (On screen the posted Enter can take longer than 20 ms to arrive.)
+    line.insertTextAtCaret ("Voz");
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pumpUntil ([&] { return rig.s().getStage() == Stage::listening; }, 2000);
+    LQ_CHECK (rig.s().getStage() == Stage::listening, "listening");
+    LQ_CHECK (! line.hasKeyboardFocus (false), "the line let go of the keyboard");
+
+    // A click back into the line: typing and Enter work (and keep the focus).
+    pump (200); // the clear's own update lands first
+    line.grabKeyboardFocus();
+    line.insertTextAtCaret ("hola");
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (200);
+    LQ_CHECK (line.hasKeyboardFocus (false) && line.getText() == "hola", str ("typing during the listening keeps the focus: ", line.hasKeyboardFocus (false), " '", line.getText(), "'"));
+    line.clear();
+
+    // ESCUCHAR from askGoal.
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    line.grabKeyboardFocus();
+    LQ_CHECK (line.hasKeyboardFocus (false), "focused again");
+    rig.click (editor.getPanelKey (PanelKey::listen));
+    pumpUntil ([&] { return rig.s().getStage() == Stage::listening; }, 2000);
+    LQ_CHECK (rig.s().getStage() == Stage::listening && ! line.hasKeyboardFocus (false), "ESCUCHAR drops the focus");
+    editor.removeFromDesktop();
+}
+
+LQ_TEST ("ui final: a font that fails to load falls back to a system font")
+{
+    const char junk[] = "not a font";
+    const auto screenFace = iaq8::ui::Iaq8LookAndFeel::loadTypeface (junk, sizeof (junk), "Menlo", false);
+    const auto labelFace = iaq8::ui::Iaq8LookAndFeel::loadTypeface (junk, sizeof (junk), "Helvetica Neue", true);
+    LQ_CHECK (screenFace != nullptr && screenFace->getName().containsIgnoreCase ("Menlo"),
+              str ("screen fallback: ", screenFace != nullptr ? screenFace->getName() : juce::String ("null")));
+    LQ_CHECK (labelFace != nullptr && labelFace->getName().containsIgnoreCase ("Helvetica"),
+              str ("label fallback: ", labelFace != nullptr ? labelFace->getName() : juce::String ("null")));
+    const auto vt = iaq8::ui::Iaq8LookAndFeel::loadTypeface (LabQ8Assets::VT323Regular_ttf, (size_t) LabQ8Assets::VT323Regular_ttfSize,
+                                                             "Menlo", false);
+    LQ_CHECK (vt != nullptr && vt->getName().containsIgnoreCase ("VT323"), "the embedded font when it loads");
 }

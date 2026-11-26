@@ -17,8 +17,9 @@ namespace iaq8::ui
 //
 // The button's text is the caption, with '\n' between lines; text that does
 // not fit the cap is drawn smaller. A disabled key is dimmed and takes no
-// clicks. The component is the cap plus a margin for the ring, shadow and
-// glow (setCapBounds places it); only the cap takes the mouse.
+// clicks; a right-click never presses a key. The component is the cap plus
+// a margin for the ring, shadow and glow (setCapBounds places it); only the
+// cap takes the mouse.
 class RackKey final : public juce::Button
 {
 public:
@@ -36,6 +37,10 @@ public:
     juce::Rectangle<int> getCapBounds() const;
 
     bool hitTest (int x, int y) override;
+    // A right-click (or Ctrl-click) never presses the key: it only opens the
+    // editor's settings menu (juce::Button would click on any button).
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
 
 private:

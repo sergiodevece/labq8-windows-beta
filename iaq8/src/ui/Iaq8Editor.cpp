@@ -147,7 +147,7 @@ public:
         for (auto* c = e.eventComponent; c != nullptr && c != editor.content.get(); c = c->getParentComponent())
             if (c->getProperties()[ownsPopupMenuProperty])
                 return;
-        editor.showSettingsMenu (*editor.content);
+        editor.showSettingsMenu (*editor.content, e.getScreenPosition()); // at the pointer
     }
 
 private:
@@ -412,12 +412,17 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
     // the end of a listening, a state load) as it happens.
     iaq8Processor.getSession().addListener (this);
     refreshFromSession();
+
+    // The host can change the applied EQ (its parameters) behind the
+    // Session's back: undo, automation, generic controls.
+    parameterWatcher = std::make_unique<ParameterWatcher> (iaq8Processor, [this] { refreshFromSession(); });
 }
 
 Iaq8Editor::~Iaq8Editor()
 {
     // First, while every member is alive: no more calls from the Session or
-    // the timer.
+    // the timer or the parameters.
+    parameterWatcher.reset();
     iaq8Processor.getSession().removeListener (this);
     stopTimer();
     content->removeMouseListener (popupForwarder.get());
@@ -535,11 +540,15 @@ void Iaq8Editor::handleSettingsMenuResult (int itemId)
         showAboutDialog();
 }
 
-void Iaq8Editor::showSettingsMenu (juce::Component& target)
+void Iaq8Editor::showSettingsMenu (juce::Component& target, std::optional<juce::Point<int>> screenPoint)
 {
     ++settingsMenuRequests;
     juce::Component::SafePointer<Iaq8Editor> self (this);
-    createSettingsMenu().showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
+    auto options = juce::PopupMenu::Options().withTargetComponent (&target);
+    if (screenPoint.has_value())
+        options = options.withTargetScreenArea ({ screenPoint->x, screenPoint->y, 1, 1 });
+    lastSettingsMenuArea = options.getTargetScreenArea();
+    createSettingsMenu().showMenuAsync (options,
                                         [self] (int result)
                                         {
                                             if (self != nullptr)
@@ -635,6 +644,7 @@ void Iaq8Editor::createAssistantControls()
                 return;
             endSourceNote();
             iaq8Processor.getSession().say (quickReplies[i].toStdString());
+            screen->scrollToEnd(); // the user's line and the reply in view
             refreshFromSession();
         };
     auto& detail = *quickKeys.back();
@@ -773,11 +783,21 @@ void Iaq8Editor::sendCommandLine()
     else
     {
         auto& session = iaq8Processor.getSession();
-        if (session.getStage() == assist::Session::Stage::waiting)
+        const auto stage = session.getStage();
+        if (stage == assist::Session::Stage::waiting)
             return; // one request at a time: the text waits in the line
+        if (stage == assist::Session::Stage::listening)
+        {
+            // Say may start the analysis early (or ask for more listening),
+            // but records nothing: the text waits in the line for the goal.
+            session.say (text.toStdString());
+            refreshFromSession();
+            return;
+        }
         session.say (text.toStdString());
     }
     field.clear();
+    screen->scrollToEnd(); // the user's line and the reply in view
     refreshFromSession();
 }
 
@@ -844,13 +864,36 @@ void Iaq8Editor::refreshFromSession()
     top.proposal = proposal.has_value();
     topRow->setState (top);
 
+    // A listening started (ESCUCHAR, a source, a reopened editor): the
+    // spacebar must reach the host's transport, not the command line.
+    if (stage == assist::Session::Stage::listening && stageSeen != stage)
+        releaseCommandLineFocus();
+    stageSeen = stage;
+
     updateScreenLines();
     refreshMoving();
     updateRefreshTimer();
 }
 
+void Iaq8Editor::releaseCommandLineFocus()
+{
+    if (commandLine->field.hasKeyboardFocus (true))
+        commandLine->field.giveAwayKeyboardFocus();
+}
+
 void Iaq8Editor::refreshTick()
 {
+    // PENSANDO: the dots step every thinkingTicksPerDot ticks; the lines are
+    // rebuilt only when their number changes.
+    if (thinkingDots > 0 && iaq8Processor.getSession().getStage() == assist::Session::Stage::waiting)
+    {
+        const auto dots = 1 + (++waitingTicks / thinkingTicksPerDot) % 3;
+        if (dots != thinkingDots)
+        {
+            thinkingDots = dots;
+            updateScreenLines();
+        }
+    }
     refreshMoving();
     updateRefreshTimer();
 }
@@ -975,6 +1018,15 @@ void Iaq8Editor::updateScreenLines()
     messagesSeen = messages.size();
     conversationSeen = conversation;
 
+    // PENSANDO starts with one dot when a request leaves; refreshTick steps it.
+    if (session.getStage() != assist::Session::Stage::waiting)
+        thinkingDots = 0;
+    else if (thinkingDots == 0)
+    {
+        thinkingDots = 1;
+        waitingTicks = 0;
+    }
+
     const auto notice = utf8 (session.getNotice().c_str());
     if (notice != lastNotice)
     {
@@ -985,7 +1037,7 @@ void Iaq8Editor::updateScreenLines()
 
     using Who = PhosphorScreen::Line::Who;
     std::vector<PhosphorScreen::Line> lines;
-    lines.reserve (messages.size() + shownNotices.size());
+    lines.reserve (messages.size() + shownNotices.size() + 1);
     auto next = shownNotices.begin();
     for (size_t i = 0; i <= messages.size(); ++i)
     {
@@ -995,6 +1047,10 @@ void Iaq8Editor::updateScreenLines()
             lines.push_back ({ messages[i].role == assist::Message::Role::user ? Who::user : Who::assistant,
                                utf8 (messages[i].text.c_str()) });
     }
+    // The last line, so it comes and goes without moving a scrolled-back view
+    // (PhosphorScreen::setLines keeps the rows above in place).
+    if (thinkingDots > 0)
+        lines.push_back ({ Who::system, "IAQ8> PENSANDO" + juce::String::repeatedString (".", thinkingDots) });
     screen->setLines (std::move (lines));
 }
 } // namespace iaq8::ui

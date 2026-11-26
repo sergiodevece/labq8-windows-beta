@@ -30,6 +30,7 @@ Tarda unos 7 segundos. Escribe en `<carpeta>`, que se crea si no existe:
 | `5_sin_conexion.png` | la siguiente petición encuentra el servidor caído: aviso «Sin conexión…» y tecla REINTENTAR | 1672 × 941 |
 | `6_zoom_040.png` | la propuesta al 40 % | 669 × 376 |
 | `7_zoom_140.png` | la propuesta al 140 % | 2341 × 1317 |
+| `8_pensando.png` | la petición de la línea de comando, aún sin respuesta: la última línea dice «IAQ8> PENSANDO...» | 1672 × 941 |
 
 Cada píxel de la imagen es un píxel del editor, como en una pantalla normal
 (1x). En una pantalla Retina, Logic dibuja el doble de píxeles. Por eso el
@@ -106,10 +107,28 @@ servidor (`Abrir IAQ8 local.command`) y comprueba esta lista:
       volver se ve la propuesta (o el aviso).
 - [ ] Clic derecho sobre la pantalla verde: sale el menú de ajustes (zoom,
       código de acceso, Acerca de IAQ8).
+- [ ] El menú de ajustes sale **donde está el puntero**, no en una esquina
+      de la ventana.
+- [ ] Clic derecho sobre una tecla (APLICAR, ESCUCHAR, ENVIAR, una
+      respuesta rápida): la tecla **no hace nada**, solo sale el menú. No se
+      aplica la EQ, no se envía nada y no vuelve a escuchar.
+- [ ] Escribir «Voz» y pulsar Enter (o pulsar ESCUCHAR). Cuando la pantalla
+      dice «Dale al play…», la barra espaciadora arranca la reproducción de
+      Logic. Después, un clic en la línea de comando y Enter siguen enviando.
+- [ ] Mientras espera respuesta, la última línea de la pantalla dice
+      «IAQ8> PENSANDO» y los puntos avanzan (uno, dos, tres). Desaparece al
+      llegar la respuesta o el aviso.
+- [ ] Con una EQ aplicada: Cmd-Z de Logic, la automatización en modo Read y
+      la vista «Controles» de Logic cambian la curva, CHANGES y «EQ APLICADA»
+      al momento.
 - [ ] El desplegable SOURCE: la lista se abre justo debajo de la caja, también
       al 40 % y al 140 %.
 - [ ] Los rótulos gastados (SOURCE, COMPARE, STATUS y los textos bajo el logo)
       se ven nítidos, no borrosos, a 0,6, 0,8 y 1,2.
+- [ ] Con el plugin compilado en **Release**, al **140 %** en una pantalla
+      **Retina**: medir cuánto tarda en rehacerse la pantalla verde una vez
+      (por ejemplo, al llegar una respuesta) y cuánta memoria usa el plugin
+      (Monitor de Actividad o Instruments). Apuntar las dos cifras aquí.
 
 Resultado: _sin probar todavía._
 

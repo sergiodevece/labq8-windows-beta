@@ -4,6 +4,7 @@
 #include "ui/Iaq8LookAndFeel.h"
 #include "ui/Iaq8Preferences.h"
 #include "ui/LevelMeterView.h"
+#include "ui/ParameterWatcher.h"
 #include "ui/PhosphorScreen.h"
 #include "ui/RackKey.h"
 #include "ui/TopRow.h"
@@ -55,8 +56,18 @@ namespace iaq8::ui
 // listening bar. A 15 Hz timer runs only while listening or while a request
 // is in flight, for the progress; it stops at rest. It only feeds values that
 // change what is shown (whole seconds, the bar's blocks), so a tick with
-// nothing new rebuilds nothing. The command line's caret blinks on its own
-// 500 ms callback.
+// nothing new rebuilds nothing. While a request is in flight the last line
+// of the screen is "IAQ8> PENSANDO" with one to three dots that step about
+// three times a second (a system line of the editor, never stored in the
+// Session). The command line's caret blinks on its own 500 ms callback.
+//
+// The applied EQ is host parameters: when the host changes them (its undo,
+// automation, its generic controls) a ParameterWatcher refreshes the curve,
+// CHANGES and the status bar on the message thread.
+//
+// Keyboard: when a listening starts the command line lets go of the
+// keyboard, so the spacebar reaches the host's transport ("Dale al play");
+// a click in the line takes it back.
 //
 // Top row (Task 6, ui/TopRow): the SOURCE drop-down (Session::chooseSource;
 // "Otro" first asks for a note on the command line, "Describe la fuente…",
@@ -64,7 +75,7 @@ namespace iaq8::ui
 // (Session::setListen) and the ONLINE, LISTEN and PROPOSAL lamps.
 //
 // Settings: a click on the panel's top-left screw or on the logo (or a
-// right-click anywhere on the chassis) opens the settings menu: zoom, the
+// right-click anywhere on the chassis, at the pointer) opens the settings menu: zoom, the
 // assistant's access code (an asynchronous AlertWindow with a masked field,
 // saved only through assist::Settings, never in the DAW state and never
 // shown back or logged) and "Acerca de IAQ8".
@@ -112,7 +123,9 @@ public:
 
     juce::PopupMenu createSettingsMenu() const;
     void handleSettingsMenuResult (int itemId);
-    void showSettingsMenu (juce::Component& target);
+    // Placed against `target` (the screw, the logo), or at `screenPoint`
+    // (a right-click) with `target` as the parent for its scale.
+    void showSettingsMenu (juce::Component& target, std::optional<juce::Point<int>> screenPoint = {});
 
     // Whether the editor at `zoom`, plus the host window allowance, fits in
     // `available` (a display's area without menu bar and Dock).
@@ -127,13 +140,17 @@ public:
     // panel's values from the Session and the processor. The setters it
     // calls compare, so repeating it with nothing new repaints nothing.
     void refreshFromSession();
-    // Sends the command line's text (Enter, ENVIAR) and clears it. Empty
-    // text sends nothing; while a request is in flight the text stays.
+    // Sends the command line's text (Enter, ENVIAR), clears it and scrolls
+    // the screen to the end. Empty text sends nothing. While a request is in
+    // flight, or while listening (where Session::say may only start the
+    // analysis early), the text stays in the line for later.
     void sendCommandLine();
 
     // The 15 Hz timer: runs only while listening or while a request is in
     // flight (Session stages listening and waiting), stops at rest.
     static constexpr int refreshTimerHz = 15;
+    // The PENSANDO dots step every this many ticks: three steps a second.
+    static constexpr int thinkingTicksPerDot = refreshTimerHz / 3;
     bool isRefreshTimerRunning() const noexcept { return isTimerRunning(); }
     // What a tick of that timer does (public for tests): the listening bar,
     // the seconds listened and the status bar, each only if it changed.
@@ -162,6 +179,8 @@ public:
     // times the menu was asked for.
     juce::MouseListener& getPopupMenuListener() noexcept;
     int getSettingsMenuRequests() const noexcept { return settingsMenuRequests; }
+    // The screen area the last settings menu was placed against.
+    juce::Rectangle<int> getLastSettingsMenuArea() const noexcept { return lastSettingsMenuArea; }
 
 private:
     using DialogHandler = std::function<void (int result, juce::AlertWindow&)>;
@@ -183,6 +202,7 @@ private:
     void updateScreenLines();
     void refreshMoving();      // the parts the 15 Hz timer moves
     void updateRefreshTimer(); // runs only while listening or waiting
+    void releaseCommandLineFocus();
 
     void sessionChanged() override { refreshFromSession(); }
     void timerCallback() override { refreshTick(); }
@@ -225,11 +245,16 @@ private:
     size_t messagesSeen = 0;
     std::optional<std::uint64_t> conversationSeen; // Session::getConversationNumber() last shown
     std::unique_ptr<juce::MouseListener> popupForwarder;
+    // PENSANDO: dots shown (0: no line) and ticks since the request left.
+    int thinkingDots = 0, waitingTicks = 0;
+    std::optional<assist::Session::Stage> stageSeen; // the stage at the last refresh
     int settingsMenuRequests = 0;
+    juce::Rectangle<int> lastSettingsMenuArea;
     std::unique_ptr<juce::AlertWindow> dialog;
     DialogHandler onDialogClosed;
     juce::TooltipWindow tooltips { this, 600 };
     juce::Image scaledBackground;
+    std::unique_ptr<ParameterWatcher> parameterWatcher; // last: goes first
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Iaq8Editor)
 };

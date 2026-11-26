@@ -10,7 +10,8 @@
 //   5_sin_conexion.png the next request finds the server unavailable
 //   6_zoom_040.png     the proposal at 40 % (669 x 376)
 //   7_zoom_140.png     the proposal at 140 % (2341 x 1317)
-// 1 to 5 are at 100 % (1672 x 941). Everything is rendered at one image
+//   8_pensando.png     that next request in flight: "IAQ8> PENSANDO..."
+// 1 to 5 and 8 are at 100 % (1672 x 941). Everything is rendered at one image
 // pixel per editor pixel (a 1x display).
 //
 // The Session talks to a fake transport that answers with fixed replies: no
@@ -163,8 +164,14 @@ public:
             return false;
         click (editor->getQuickKey (7));
 
-        // 5: the command line's request finds the server unavailable.
+        // 8: the command line's request in flight: PENSANDO, three dots.
         editor->sendCommandLine();
+        for (int tick = 0; tick < 2 * Iaq8Editor::thinkingTicksPerDot; ++tick)
+            editor->refreshTick();
+        if (! expect (session().getStage() == Stage::waiting, "waiting") || ! save ("8_pensando"))
+            return false;
+
+        // 5: that request finds the server unavailable.
         if (! answer (503, {}, Stage::offline, "offline"))
             return false;
         return save ("5_sin_conexion");

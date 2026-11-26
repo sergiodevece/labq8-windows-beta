@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace iaq8::ui
@@ -18,9 +19,11 @@ struct Typefaces
     juce::Typeface::Ptr vt323, barlowMedium, barlowSemiBold, barlowSemiCondensed;
 };
 
-juce::Typeface::Ptr load (const char* data, int size)
+// If an embedded font cannot be loaded, the system fonts the plan names:
+// Menlo for the screen, Helvetica Neue for the labels and keys.
+juce::Typeface::Ptr load (const char* data, int size, const char* fallback, bool bold)
 {
-    auto typeface = juce::Typeface::createSystemTypefaceFor (data, (size_t) size);
+    auto typeface = Iaq8LookAndFeel::loadTypeface (data, (size_t) size, fallback, bold);
     jassert (typeface != nullptr);
     return typeface;
 }
@@ -28,10 +31,10 @@ juce::Typeface::Ptr load (const char* data, int size)
 const Typefaces& typefaces()
 {
     static const Typefaces t {
-        load (LabQ8Assets::VT323Regular_ttf, LabQ8Assets::VT323Regular_ttfSize),
-        load (LabQ8Assets::BarlowMedium_ttf, LabQ8Assets::BarlowMedium_ttfSize),
-        load (LabQ8Assets::BarlowSemiBold_ttf, LabQ8Assets::BarlowSemiBold_ttfSize),
-        load (LabQ8Assets::BarlowSemiCondensedSemiBold_ttf, LabQ8Assets::BarlowSemiCondensedSemiBold_ttfSize),
+        load (LabQ8Assets::VT323Regular_ttf, LabQ8Assets::VT323Regular_ttfSize, "Menlo", false),
+        load (LabQ8Assets::BarlowMedium_ttf, LabQ8Assets::BarlowMedium_ttfSize, "Helvetica Neue", false),
+        load (LabQ8Assets::BarlowSemiBold_ttf, LabQ8Assets::BarlowSemiBold_ttfSize, "Helvetica Neue", true),
+        load (LabQ8Assets::BarlowSemiCondensedSemiBold_ttf, LabQ8Assets::BarlowSemiCondensedSemiBold_ttfSize, "Helvetica Neue", true),
     };
     return t;
 }
@@ -292,6 +295,29 @@ juce::Font Iaq8LookAndFeel::labelFont (float px, bool semiBold)
 juce::Font Iaq8LookAndFeel::keyFont (float px)
 {
     return fontOf (typefaces().barlowSemiCondensed, px);
+}
+
+juce::Typeface::Ptr Iaq8LookAndFeel::loadTypeface (const void* data, size_t size, const juce::String& fallbackFamily, bool bold)
+{
+    // JUCE 9 does not return null for data it cannot read (it dereferences
+    // the failed face), so only data that starts as a font file is handed
+    // to it: TrueType (00 01 00 00, "true"), OpenType ("OTTO") or a
+    // collection ("ttcf").
+    const auto looksLikeFont = [&]
+    {
+        if (data == nullptr || size < 12)
+            return false;
+        for (const auto* tag : { "\x00\x01\x00\x00", "true", "OTTO", "ttcf" })
+            if (std::memcmp (data, tag, 4) == 0)
+                return true;
+        return false;
+    };
+    if (looksLikeFont())
+        if (auto typeface = juce::Typeface::createSystemTypefaceFor (data, size))
+            return typeface;
+    // Debug builds hear about it; Release still draws, in a system font.
+    DBG ("IAQ8: an embedded font did not load; using " << fallbackFamily);
+    return juce::Font (juce::FontOptions (fallbackFamily, 16.0f, bold ? juce::Font::bold : juce::Font::plain)).getTypefacePtr();
 }
 
 float Iaq8LookAndFeel::wearAt (juce::Point<float> reference)

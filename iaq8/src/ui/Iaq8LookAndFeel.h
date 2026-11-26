@@ -153,6 +153,8 @@ public:
     static juce::Font screenFont (float px);                 // VT323
     static juce::Font labelFont (float px, bool semiBold);   // Barlow Medium / SemiBold
     static juce::Font keyFont (float px);                    // Barlow Semi Condensed SemiBold
+    // An embedded font; if it cannot be loaded, the system font `fallbackFamily`.
+    static juce::Typeface::Ptr loadTypeface (const void* data, size_t size, const juce::String& fallbackFamily, bool bold);
 
     // Worn silkscreen. The text (with its 1 px shadow) is rendered into an
     // image at `pixelScale` device pixels per reference pixel, and its alpha

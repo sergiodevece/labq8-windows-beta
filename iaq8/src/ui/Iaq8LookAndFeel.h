@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cmath>
+
 // IAQ8's fonts, colours and drawing helpers, after the approved mockup
 // (docs/superpowers/specs/iaq8-mockup-v2/index.html).
 //
@@ -90,10 +92,52 @@ struct SilkText
     bool worn = true;             // false: plain print (no wear mask, no shadow)
 };
 
+// A static picture rendered once per device scale (and area), then copied.
+// `drawAt` draws in the coordinates of `where`.
+struct CachedLayer
+{
+    juce::Image image;
+    float scale = 0.0f;
+    juce::Rectangle<float> area;
+
+    template <typename Draw>
+    void draw (juce::Graphics& gr, juce::Rectangle<float> where, Draw&& drawAt)
+    {
+        const auto s = juce::jmax (0.1f, gr.getInternalContext().getPhysicalPixelScaleFactor());
+        if (image.isNull() || std::abs (s - scale) > 0.001f || where != area)
+        {
+            image = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (where.getWidth() * s)),
+                                 juce::jmax (1, juce::roundToInt (where.getHeight() * s)), true, juce::SoftwareImageType());
+            juce::Graphics ig (image);
+            ig.addTransform (juce::AffineTransform::translation (-where.getX(), -where.getY()).scaled (s));
+            drawAt (ig);
+            scale = s;
+            area = where;
+        }
+        gr.drawImage (image, where);
+    }
+};
+
 class Iaq8LookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
     Iaq8LookAndFeel();
+
+    // The SOURCE drop-down (the mockup's .drop, LABQ8's style): rounded 4 px,
+    // gradient #232421 -> #171816, 1 px #3b3d38 border, a faint top light,
+    // 18 px Barlow Medium #eceadf after 16 px of padding and a 14 x 8
+    // triangle 16 px from the right.
+    static constexpr float comboPadding = 16.0f, comboArrowWidth = 14.0f, comboArrowHeight = 8.0f;
+    void drawComboBox (juce::Graphics&, int width, int height, bool isButtonDown, int buttonX, int buttonY, int buttonW,
+                       int buttonH, juce::ComboBox&) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override;
+    void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
+
+    // A status lamp (the mockup's .lamp): off, a dark recessed dot; on, a
+    // green (.lamp.g) or orange (.lamp.o) dot with two glows that spill
+    // 22 px around `lamp`.
+    enum class LampColour { green, orange };
+    static void drawLamp (juce::Graphics&, juce::Rectangle<float> lamp, bool on, LampColour);
 
     // Text fields get a block cursor (12 x 20 px, colours::cursor) that
     // blinks at 2 Hz while the field has the keyboard focus.

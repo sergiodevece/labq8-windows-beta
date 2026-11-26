@@ -309,6 +309,7 @@ void Session::loadFromProcessor()
     analysis.reset();
     analysisDelivered = false;
     inFlightCarriesAnalysis = false;
+    requestAnswered = false;
     currentProposal.reset();
     analysing = false;
     armed = false;
@@ -652,6 +653,7 @@ void Session::handleReply (std::uint64_t forGeneration, Reply reply)
 
     if (const auto* error = std::get_if<Error> (&reply))
     {
+        requestAnswered = false;
         notice = error->userMessage;
         if (error->kind == ErrorKind::unavailable)
         {
@@ -672,6 +674,7 @@ void Session::handleReply (std::uint64_t forGeneration, Reply reply)
 
     if (inFlightCarriesAnalysis)
         analysisDelivered = true; // the server has it: later requests go without
+    requestAnswered = true;
     notice.clear();
 
     if (const auto* question = std::get_if<Question> (&reply))
@@ -776,6 +779,7 @@ void Session::startOver()
     analysis.reset();
     analysisDelivered = false;
     inFlightCarriesAnalysis = false;
+    requestAnswered = false;
     currentProposal.reset();
     notice.clear();
     adjustments.clear();

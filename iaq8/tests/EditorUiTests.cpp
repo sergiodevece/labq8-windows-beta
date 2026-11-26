@@ -1133,3 +1133,229 @@ LQ_TEST ("ui values: boxes show source, seconds, changes and compensation")
     editor.refreshFromSession();
     LQ_CHECK (editor.getValueText (2) == "1 BANDA", str ("one band: ", editor.getValueText (2)));
 }
+
+//==============================================================================
+// Plan 3, Task 6: the top row (SOURCE, COMPARE and STATUS).
+
+#include "ui/TopRow.h"
+
+namespace
+{
+using iaq8::ui::TopRow;
+using iaq8::assist::Source;
+using iaq8::dsp::Listen;
+
+juce::MouseEvent mouseEventOn (juce::Component& target, juce::ModifierKeys mods)
+{
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    const juce::Point<float> at { 10.0f, 10.0f };
+    return juce::MouseEvent (source, at, mods, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &target, &target, now, at, now, 1, false);
+}
+
+// In the top row's parent (the content): reference coordinates.
+juce::Rectangle<float> inContent (juce::Component& c, Iaq8Editor& editor)
+{
+    return editor.getContent().getLocalArea (c.getParentComponent(), c.getBounds()).toFloat();
+}
+} // namespace
+
+LQ_TEST ("ui top: source combo drives the session")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& top = editor.getTopRow();
+    auto& combo = top.getSourceCombo();
+
+    // The seven sources, in the session's words, over the mockup's drop-down.
+    LQ_CHECK (near (inContent (combo, editor), geo::sourceDrop, 0.5f), text (inContent (combo, editor)));
+    const Source order[] = { Source::voice, Source::acousticGuitar, Source::electricGuitar, Source::bass,
+                             Source::drums, Source::mix, Source::other };
+    LQ_CHECK (combo.getNumItems() == 7, str ("items: ", combo.getNumItems()));
+    for (int i = 0; i < 7; ++i)
+    {
+        LQ_CHECK (combo.getItemText (i) == utf8 (iaq8::assist::Session::sourceLabel (order[i])), str ("item ", i, ": ", combo.getItemText (i)));
+        LQ_CHECK (combo.getItemId (i) == TopRow::comboIdFor (order[i]) && TopRow::sourceForComboId (combo.getItemId (i)) == order[i],
+                  str ("item ", i, " id"));
+    }
+    LQ_CHECK (combo.getItemText (0) == "Voz" && combo.getItemText (1) == utf8 ("Guitarra ac\xc3\xbastica")
+                  && combo.getItemText (6) == "Otro",
+              "Spanish names with accents");
+    LQ_CHECK (combo.getSelectedId() == 0, "no source yet: nothing selected");
+
+    // Choosing a source tells the session (once).
+    combo.setSelectedId (TopRow::comboIdFor (Source::voice), juce::sendNotificationSync);
+    pump (20);
+    LQ_CHECK (rig.s().getSource() == Source::voice && rig.s().getStage() == Stage::listening, "Voz chosen: listening");
+    const auto messages = rig.s().getMessages().size();
+    LQ_CHECK (rig.s().getMessages().back().role == iaq8::assist::Message::Role::assistant
+                  && rig.s().getMessages()[messages - 2].text == "Voz",
+              "the user's choice is in the conversation");
+    editor.refreshFromSession();
+    pump (20);
+    LQ_CHECK (rig.s().getMessages().size() == messages && combo.getSelectedId() == TopRow::comboIdFor (Source::voice),
+              "a refresh shows it without choosing again");
+
+    // The combo follows the session (a quick key, a restore) without telling it back.
+    rig.s().chooseSource (Source::bass);
+    const auto afterBass = rig.s().getMessages().size();
+    editor.refreshFromSession();
+    pump (20);
+    LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::bass) && rig.s().getMessages().size() == afterBass,
+              "follows the session silently");
+
+    // "Otro" asks for a note on the command line; the source waits for it.
+    combo.setSelectedId (TopRow::comboIdFor (Source::other), juce::sendNotificationSync);
+    pump (20);
+    auto& line = editor.getCommandLine();
+    LQ_CHECK (editor.isAwaitingSourceNote() && rig.s().getSource() == Source::bass, "Otro: waiting for the note");
+    LQ_CHECK (line.getTextToShowWhenEmpty() == utf8 ("Describe la fuente\xe2\x80\xa6"), str ("placeholder: ", line.getTextToShowWhenEmpty()));
+    editor.refreshFromSession();
+    LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::other), "the combo keeps Otro while the note is pending");
+    LQ_CHECK (editor.getPanelKey (PanelKey::send).isEnabled(), "ENVIAR sends the note");
+
+    // Enter with nothing keeps waiting; the note chooses Source::other.
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    LQ_CHECK (editor.isAwaitingSourceNote() && rig.s().getSource() == Source::bass, "no note yet");
+    line.insertTextAtCaret (utf8 ("Sintetizador anal\xc3\xb3gico"));
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    LQ_CHECK (rig.s().getSource() == Source::other && rig.s().getStage() == Stage::listening, "Otro chosen with the note");
+    const auto& all = rig.s().getMessages();
+    LQ_CHECK (all.size() >= 2 && all[all.size() - 2].text == "Otro: Sintetizador anal\xc3\xb3gico", "the note is in the conversation");
+    LQ_CHECK (! editor.isAwaitingSourceNote() && line.isEmpty() && line.getTextToShowWhenEmpty().isEmpty(), "back to normal mode");
+    LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::other), "combo: Otro");
+
+    // Back to normal: the next Enter talks to the session.
+    const auto beforeSay = rig.s().getMessages().size();
+    line.insertTextAtCaret ("Bajo");
+    line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    LQ_CHECK (rig.s().getSource() == Source::other && rig.s().getMessages().size() == beforeSay, "said, not chosen (listening ignores it)");
+
+    // Otro, then another source: the note is no longer awaited.
+    combo.setSelectedId (TopRow::comboIdFor (Source::drums), juce::sendNotificationSync);
+    pump (20);
+    combo.setSelectedId (TopRow::comboIdFor (Source::other), juce::sendNotificationSync);
+    pump (20);
+    LQ_CHECK (editor.isAwaitingSourceNote(), "Otro again");
+    combo.setSelectedId (TopRow::comboIdFor (Source::mix), juce::sendNotificationSync);
+    pump (20);
+    LQ_CHECK (! editor.isAwaitingSourceNote() && rig.s().getSource() == Source::mix
+                  && line.getTextToShowWhenEmpty().isEmpty(),
+              "another source cancels the note");
+
+    // A right-click on the combo opens the settings menu, not its list.
+    const auto requests = editor.getSettingsMenuRequests();
+    const auto right = mouseEventOn (combo, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+    combo.mouseDown (right);
+    editor.getPopupMenuListener().mouseDown (right);
+    combo.mouseUp (right);
+    LQ_CHECK (! combo.isPopupActive() && editor.getSettingsMenuRequests() == requests + 1, "one menu: the settings");
+    juce::PopupMenu::dismissAllActiveMenus();
+    pump (20);
+}
+
+LQ_TEST ("ui top: compare faces follow and set listen; after disabled without proposal")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& top = editor.getTopRow();
+    auto& antes = top.getFace (Listen::applied);
+    auto& despues = top.getFace (Listen::preview);
+
+    LQ_CHECK (near (inContent (antes, editor), geo::faceAntes, 0.5f) && near (inContent (despues, editor), geo::faceDespues, 0.5f),
+              str ("faces: ", text (inContent (antes, editor)), " ", text (inContent (despues, editor))));
+    LQ_CHECK (antes.getButtonText() == "ANTES" && despues.getButtonText() == utf8 ("DESPU\xc3\x89S"), "ANTES / DESPUÉS");
+
+    // No proposal: ANTES lit (what plays), DESPUÉS off and deaf to clicks.
+    LQ_CHECK (top.isFaceLit (Listen::applied) && ! top.isFaceLit (Listen::preview), "ANTES lit");
+    LQ_CHECK (antes.isEnabled() && ! despues.isEnabled(), "DESPUÉS off without a proposal");
+    rig.click (despues);
+    LQ_CHECK (rig.s().getListen() == Listen::applied && top.isFaceLit (Listen::applied), "a click on it does nothing");
+
+    // A proposal plays the preview: DESPUÉS lit and on.
+    reachKeysProposal (ctx, rig);
+    LQ_CHECK (despues.isEnabled() && top.isFaceLit (Listen::preview) && ! top.isFaceLit (Listen::applied),
+              "proposal: DESPUÉS lit");
+
+    // The faces set what plays.
+    rig.click (antes);
+    LQ_CHECK (rig.s().getListen() == Listen::applied && rig.p->getListenRequest() == Listen::applied, "ANTES: the applied EQ plays");
+    LQ_CHECK (top.isFaceLit (Listen::applied) && ! top.isFaceLit (Listen::preview), "ANTES lit");
+    rig.click (despues);
+    LQ_CHECK (rig.s().getListen() == Listen::preview && top.isFaceLit (Listen::preview), "DESPUÉS: the preview plays");
+
+    // A right-click on a face changes nothing (it opens the settings menu).
+    const auto right = mouseEventOn (antes, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier));
+    auto& antesComponent = static_cast<juce::Component&> (antes); // as the mouse reaches it
+    antesComponent.mouseDown (right);
+    antesComponent.mouseUp (right);
+    pump (20);
+    LQ_CHECK (rig.s().getListen() == Listen::preview, "right-click: no switch");
+
+    // And follow the session when something else changes it.
+    rig.s().setListen (Listen::applied);
+    editor.refreshFromSession();
+    LQ_CHECK (top.isFaceLit (Listen::applied), "follows the session");
+
+    // Applied: no proposal any more, DESPUÉS off again.
+    rig.click (editor.getPanelKey (PanelKey::apply));
+    LQ_CHECK (! despues.isEnabled() && top.isFaceLit (Listen::applied) && ! top.isFaceLit (Listen::preview),
+              "after APLICAR: ANTES lit, DESPUÉS off");
+}
+
+LQ_TEST ("ui top: lamps follow stage, listening and proposal")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& top = editor.getTopRow();
+    const auto lamps = [&] { return str (top.isLampOn (TopRow::Lamp::online), top.isLampOn (TopRow::Lamp::listen),
+                                         top.isLampOn (TopRow::Lamp::proposal)); };
+
+    LQ_CHECK (lamps() == "000", "all off at the start: " + lamps());
+    LQ_CHECK (! rig.s().lastRequestAnswered(), "nothing answered yet");
+
+    rig.click (editor.getQuickKey (0)); // Voz
+    LQ_CHECK (lamps() == "010", "LISTEN while listening: " + lamps());
+
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    editor.refreshFromSession();
+    LQ_CHECK (lamps() == "000", "analysed: LISTEN off, no request yet: " + lamps());
+
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::waiting && lamps() == "000", "waiting: " + lamps());
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");
+    editor.refreshFromSession();
+    LQ_CHECK (rig.s().lastRequestAnswered() && lamps() == "101", "answered, proposal: " + lamps());
+
+    rig.click (editor.getPanelKey (PanelKey::apply));
+    LQ_CHECK (lamps() == "100", "applied: PROPOSAL off, still online: " + lamps());
+
+    // In flight the last answer still counts; a 503 takes it offline.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.state->posts() == 2 && lamps() == "100", "in flight: " + lamps());
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    editor.refreshFromSession();
+    LQ_CHECK (! rig.s().lastRequestAnswered() && lamps() == "000", "offline: ONLINE off: " + lamps());
+
+    // Retry answered with a question: online again; start over: off.
+    rig.click (editor.getQuickKey (0)); // "Reintentar"
+    LQ_CHECK (rig.state->posts() == 3, "retried");
+    if (rig.state->posts() < 3)
+        return;
+    rig.reply (2, 200, "{\"kind\":\"question\",\"text\":\"\\u00bfM\\u00e1s?\",\"quick_replies\":[\"S\\u00ed\"]}");
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "question");
+    editor.refreshFromSession();
+    LQ_CHECK (lamps() == "100", "answered again: " + lamps());
+    rig.s().startOver();
+    editor.refreshFromSession();
+    LQ_CHECK (! rig.s().lastRequestAnswered() && lamps() == "000", "start over: " + lamps());
+}

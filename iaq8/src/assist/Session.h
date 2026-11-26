@@ -105,6 +105,11 @@ public:
     dsp::Listen getListen() const { return listen; }
     bool canApply() const;
     bool canUndo() const;
+    // Whether the last finished request got an answer (a question
+    // or a proposal): the ONLINE lamp. False at the start, after an error
+    // (offline included), after startOver and after a restore. Kept while a
+    // new request is in flight. Not saved.
+    bool lastRequestAnswered() const { return requestAnswered; }
     // Lines of the last sanitize() report (Spanish), for the debug editor.
     const std::vector<std::string>& getLimitAdjustments() const { return adjustments; }
 
@@ -173,6 +178,7 @@ private:
     std::optional<analysis::AnalysisSummary> analysis; // of the last listening
     bool analysisDelivered = false;                    // answered by the server
     bool inFlightCarriesAnalysis = false;
+    bool requestAnswered = false; // lastRequestAnswered()
     std::optional<std::vector<ProposedBand>> currentProposal; // as previewed (sanitised)
 
     // Listening.

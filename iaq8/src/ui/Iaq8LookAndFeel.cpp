@@ -254,6 +254,8 @@ Iaq8LookAndFeel::Iaq8LookAndFeel()
     setColour (juce::AlertWindow::backgroundColourId, colours::trayBottom);
     setColour (juce::AlertWindow::textColourId, colours::silk);
     setColour (juce::AlertWindow::outlineColourId, colours::dropBorder);
+    setColour (juce::ComboBox::textColourId, colours::dropText);
+    setColour (juce::ComboBox::arrowColourId, colours::dropArrow);
 }
 
 juce::CaretComponent* Iaq8LookAndFeel::createCaretComponent (juce::Component* keyFocusOwner)
@@ -339,5 +341,86 @@ void Iaq8LookAndFeel::drawWornText (juce::Graphics& g, const SilkText& item)
     const auto scale = juce::jmax (0.1f, g.getInternalContext().getPhysicalPixelScaleFactor());
     const auto worn = renderWornText (item, scale);
     g.drawImage (worn.image, worn.area);
+}
+
+//==============================================================================
+void Iaq8LookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown, int, int, int, int,
+                                    juce::ComboBox& box)
+{
+    const auto b = juce::Rectangle<float> ((float) width, (float) height);
+    const auto radius = 4.0f;
+    const auto dim = box.isEnabled() ? 1.0f : 0.5f;
+
+    g.setGradientFill (juce::ColourGradient (colours::dropTop.withMultipliedAlpha (dim), 0.0f, b.getY(),
+                                             colours::dropBottom.withMultipliedAlpha (dim), 0.0f, b.getBottom(), false));
+    g.fillRoundedRectangle (b, radius);
+    if (isButtonDown)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.15f));
+        g.fillRoundedRectangle (b, radius);
+    }
+    // inset 0 1px 0 rgba(255,255,255,.06), then the 1 px border.
+    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    g.fillRect (b.reduced (radius, 0.0f).withY (1.0f).withHeight (1.0f));
+    g.setColour (colours::dropBorder.withMultipliedAlpha (dim));
+    g.drawRoundedRectangle (b.reduced (0.5f), radius, 1.0f);
+
+    // The triangle (border-top 8 px, 7 px each side).
+    const auto right = b.getRight() - comboPadding, top = b.getCentreY() - comboArrowHeight * 0.5f;
+    juce::Path arrow;
+    arrow.addTriangle (right - comboArrowWidth, top, right, top, right - comboArrowWidth * 0.5f, top + comboArrowHeight);
+    g.setColour (colours::dropArrow.withMultipliedAlpha (dim));
+    g.fillPath (arrow);
+}
+
+juce::Font Iaq8LookAndFeel::getComboBoxFont (juce::ComboBox&)
+{
+    return labelFont (18.0f, false);
+}
+
+void Iaq8LookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
+{
+    const auto left = (int) comboPadding;
+    const auto right = (int) (comboPadding + comboArrowWidth + 8.0f); // the arrow and a gap
+    label.setBounds (left, 0, juce::jmax (0, box.getWidth() - left - right), box.getHeight());
+    label.setBorderSize ({});
+    label.setFont (getComboBoxFont (box));
+}
+
+void Iaq8LookAndFeel::drawLamp (juce::Graphics& g, juce::Rectangle<float> lamp, bool on, LampColour colour)
+{
+    juce::Path dot;
+    dot.addEllipse (lamp);
+    // CSS "circle at 40% 35%": the gradient reaches the farthest corner.
+    const auto centre = lamp.getRelativePoint (0.4f, 0.35f);
+    const auto edge = centre + juce::Point<float> (lamp.getWidth() * 0.6f, lamp.getHeight() * 0.65f);
+
+    if (! on)
+    {
+        // box-shadow: inset 0 1px 3px #000, 0 1px 0 rgba(255,255,255,.12).
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.fillEllipse (lamp.translated (0.0f, 1.0f));
+        g.setGradientFill (juce::ColourGradient (colours::lampOffCentre, centre, colours::lampOffEdge, edge, true));
+        g.fillPath (dot);
+        g.saveState();
+        g.reduceClipRegion (dot);
+        juce::Path outside;
+        outside.addRectangle (lamp.expanded (6.0f));
+        outside.addEllipse (lamp.translated (0.0f, 1.0f));
+        outside.setUsingNonZeroWinding (false);
+        juce::DropShadow (juce::Colours::black, 3, {}).drawForPath (g, outside);
+        g.restoreState();
+        return;
+    }
+
+    const auto green = colour == LampColour::green;
+    // box-shadow: 0 0 10px (glow), 0 0 22px (35 %).
+    juce::DropShadow ((green ? juce::Colour (0xff50ff3c) : juce::Colour (0xffff8c28)).withAlpha (0.35f), 22, {}).drawForPath (g, dot);
+    juce::DropShadow (green ? colours::lampGreenGlow : colours::lampOrangeGlow, 10, {}).drawForPath (g, dot);
+    juce::ColourGradient fill (green ? juce::Colour (0xffe6ffd9) : juce::Colour (0xfffff0dc), centre,
+                               green ? juce::Colour (0xff2c9a1f) : juce::Colour (0xffb9520f), edge, true);
+    fill.addColour (0.4, green ? colours::lampGreen : colours::lampOrange);
+    g.setGradientFill (fill);
+    g.fillPath (dot);
 }
 } // namespace iaq8::ui

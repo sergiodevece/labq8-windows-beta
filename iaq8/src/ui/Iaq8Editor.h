@@ -5,12 +5,14 @@
 #include "ui/LevelMeterView.h"
 #include "ui/PhosphorScreen.h"
 #include "ui/RackKey.h"
+#include "ui/TopRow.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace iaq8
@@ -41,6 +43,11 @@ namespace iaq8::ui
 // LEVEL MATCH boxes and the ESCUCHAR, ENVIAR, DESHACER and APLICAR keys.
 // refreshFromSession() pulls everything they show from the Session and the
 // processor; it runs at construction and after every key or Enter.
+//
+// Top row (Task 6, ui/TopRow): the SOURCE drop-down (Session::chooseSource;
+// "Otro" first asks for a note on the command line, "Describe la fuente…",
+// and the next Enter with text chooses it), the ANTES / DESPUÉS faces
+// (Session::setListen) and the ONLINE, LISTEN and PROPOSAL lamps.
 //
 // Settings: a click on the panel's top-left screw or on the logo (or a
 // right-click anywhere on the chassis) opens the settings menu: zoom, the
@@ -118,6 +125,9 @@ public:
     RackKey& getPanelKey (PanelKey);
     juce::TextEditor& getCommandLine() noexcept;
     juce::String getValueText (int box) const; // 0 SOURCE, 1 LISTENED, 2 CHANGES, 3 LEVEL MATCH
+    TopRow& getTopRow() noexcept { return *topRow; }
+    // "Otro" was chosen in SOURCE: the command line's next text is its note.
+    bool isAwaitingSourceNote() const noexcept { return awaitingSourceNote; }
     juce::Component& getContent() noexcept { return *content; }
     juce::Component& getSettingsHotSpot (int index); // 0: top-left screw, 1: logo
     juce::AlertWindow* getOpenDialog() const noexcept { return dialog.get(); }
@@ -142,6 +152,10 @@ private:
     class ValueBox;
 
     void createAssistantControls();
+    void createTopRow();
+    void sourceChosen (assist::Source);
+    void beginSourceNote();
+    void endSourceNote();
     void updateScreenLines();
 
     Iaq8AudioProcessor& iaq8Processor;
@@ -156,10 +170,15 @@ private:
     std::array<std::unique_ptr<RackKey>, 4> panelKeys;          // PanelKey order
     std::unique_ptr<CommandLine> commandLine;
     std::array<std::unique_ptr<ValueBox>, 4> valueBoxes;
+    std::unique_ptr<TopRow> topRow;
 
     // Where the command line's text goes; empty: Session::say. A mode such
     // as the source note of "Otro" (Task 6) sets it for the next Enter.
     std::function<void (const juce::String&)> commandTextTarget;
+    // The source note mode of "Otro": on until a note is sent, another source
+    // is picked, or the session's source changes by other means.
+    bool awaitingSourceNote = false;
+    std::optional<assist::Source> sourceWhenNoteBegan;
 
     // Session notices shown on the screen as system lines, each after the
     // messages there were when it appeared (so the lines only grow).

@@ -41,47 +41,6 @@ juce::Rectangle<float> assistantLampArea()
     return { g::assistantHead.getX(), g::assistantHead.getY() + (lineBox - headLampSize) * 0.5f, headLampSize, headLampSize };
 }
 
-// A static picture rendered once per device scale (and size), then copied.
-struct CachedLayer
-{
-    juce::Image image;
-    float scale = 0.0f;
-    juce::Rectangle<float> area;
-
-    template <typename Draw>
-    void draw (juce::Graphics& gr, juce::Rectangle<float> where, Draw&& drawAt)
-    {
-        const auto s = juce::jmax (0.1f, gr.getInternalContext().getPhysicalPixelScaleFactor());
-        if (image.isNull() || std::abs (s - scale) > 0.001f || where != area)
-        {
-            image = juce::Image (juce::Image::ARGB, juce::jmax (1, juce::roundToInt (where.getWidth() * s)),
-                                 juce::jmax (1, juce::roundToInt (where.getHeight() * s)), true, juce::SoftwareImageType());
-            juce::Graphics ig (image);
-            ig.addTransform (juce::AffineTransform::translation (-where.getX(), -where.getY()).scaled (s));
-            drawAt (ig);
-            scale = s;
-            area = where;
-        }
-        gr.drawImage (image, where);
-    }
-};
-
-// The orange lamp of the head (.lamp.o): radial gradient at 40 % / 35 % and
-// two glows (10 px #ff8a2a, 22 px at 35 %).
-void drawOrangeLamp (juce::Graphics& gr, juce::Rectangle<float> lamp)
-{
-    juce::Path dot;
-    dot.addEllipse (lamp);
-    juce::DropShadow (juce::Colour (0xffff8c28).withAlpha (0.35f), 22, {}).drawForPath (gr, dot);
-    juce::DropShadow (colours::lampOrangeGlow, 10, {}).drawForPath (gr, dot);
-    const auto centre = lamp.getRelativePoint (0.4f, 0.35f);
-    juce::ColourGradient fill (juce::Colour (0xfffff0dc), centre, juce::Colour (0xffb9520f),
-                               centre + juce::Point<float> (lamp.getWidth() * 0.6f, lamp.getHeight() * 0.65f), true);
-    fill.addColour (0.4, colours::lampOrange);
-    gr.setGradientFill (fill);
-    gr.fillPath (dot);
-}
-
 // The worn silkscreen printed by the editor (the rest of the chassis print
 // is in iaq8_chassis.png). Sizes, weights and letter spacing from the
 // mockup's .lbl, .lampcap and .desc1-3 styles.
@@ -145,7 +104,8 @@ public:
 
         // The ASSISTANT head's lamp (with its glow) and rule.
         const auto lamp = assistantLampArea();
-        lampLayer.draw (gr, lamp.expanded (24.0f), [lamp] (juce::Graphics& ig) { drawOrangeLamp (ig, lamp); });
+        lampLayer.draw (gr, lamp.expanded (24.0f), [lamp] (juce::Graphics& ig)
+                        { Iaq8LookAndFeel::drawLamp (ig, lamp, true, Iaq8LookAndFeel::LampColour::orange); });
         gr.setColour (colours::rule);
         gr.fillRect (g::assistantRule);
     }
@@ -439,6 +399,7 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
     content->addAndMakeVisible (*meters);
 
     createAssistantControls();
+    createTopRow();
 
     // No resize corner and no resizing by the host: the size only changes
     // through the zoom menu. Opens at the stored zoom, or at the largest
@@ -786,7 +747,8 @@ void Iaq8Editor::sendCommandLine()
 
     if (commandTextTarget != nullptr)
     {
-        commandTextTarget (text);
+        const auto target = commandTextTarget; // the target may replace itself
+        target (text);
     }
     else
     {
@@ -847,7 +809,73 @@ void Iaq8Editor::refreshFromSession()
     valueBoxes[2]->setText (juce::String (changes) + (changes == 1 ? " BANDA" : " BANDAS"));
     valueBoxes[3]->setText (formatLevelMatch (iaq8Processor.getCompensationDb()));
 
+    // Top row. A pending "Otro" note ends if the source changed elsewhere
+    // (a quick key, a restore); until then the combo keeps showing Otro.
+    if (awaitingSourceNote && source != sourceWhenNoteBegan)
+        endSourceNote();
+    TopRow::State top;
+    top.source = awaitingSourceNote ? std::optional<assist::Source> (assist::Source::other) : source;
+    top.listen = session.getListen();
+    top.canPreview = proposal.has_value();
+    top.online = session.lastRequestAnswered() && stage != assist::Session::Stage::offline;
+    top.listening = stage == assist::Session::Stage::listening;
+    top.proposal = proposal.has_value();
+    topRow->setState (top);
+
     updateScreenLines();
+}
+
+//==============================================================================
+// Top row (Task 6).
+void Iaq8Editor::createTopRow()
+{
+    topRow = std::make_unique<TopRow>();
+    topRow->onSourceChosen = [this] (assist::Source s) { sourceChosen (s); };
+    topRow->onListenChosen = [this] (dsp::Listen listen)
+    {
+        iaq8Processor.getSession().setListen (listen);
+        refreshFromSession();
+    };
+    content->addAndMakeVisible (*topRow);
+}
+
+void Iaq8Editor::sourceChosen (assist::Source s)
+{
+    if (s == assist::Source::other)
+    {
+        beginSourceNote();
+    }
+    else
+    {
+        endSourceNote();
+        iaq8Processor.getSession().chooseSource (s);
+    }
+    refreshFromSession();
+}
+
+void Iaq8Editor::beginSourceNote()
+{
+    awaitingSourceNote = true;
+    sourceWhenNoteBegan = iaq8Processor.getSession().getSource();
+    commandTextTarget = [this] (const juce::String& note)
+    {
+        endSourceNote();
+        iaq8Processor.getSession().chooseSource (assist::Source::other, note.toStdString());
+    };
+    auto& field = commandLine->field;
+    field.setTextToShowWhenEmpty (utf8 ("Describe la fuente\xe2\x80\xa6"), colours::phosphorPlaceholder);
+    if (field.isShowing())
+        field.grabKeyboardFocus();
+}
+
+void Iaq8Editor::endSourceNote()
+{
+    if (! awaitingSourceNote)
+        return;
+    awaitingSourceNote = false;
+    sourceWhenNoteBegan.reset();
+    commandTextTarget = nullptr;
+    commandLine->field.setTextToShowWhenEmpty ({}, colours::phosphorPlaceholder);
 }
 
 void Iaq8Editor::updateScreenLines()

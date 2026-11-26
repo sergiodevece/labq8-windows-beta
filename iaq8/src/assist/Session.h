@@ -111,6 +111,10 @@ public:
     // startOver and after a restore. Kept while a new request is in flight.
     // Not saved.
     bool lastRequestAnswered() const { return requestAnswered; }
+    // Proposals received in this conversation (the status bar's "PROPUESTA
+    // n"): 0 before the first. Back to 0 after startOver and a restore (which
+    // never bring back a proposal). Not saved.
+    int getProposalNumber() const { return proposalNumber; }
     // Lines of the last sanitize() report (Spanish), for the debug editor.
     const std::vector<std::string>& getLimitAdjustments() const { return adjustments; }
 
@@ -180,6 +184,7 @@ private:
     bool analysisDelivered = false;                    // answered by the server
     bool inFlightCarriesAnalysis = false;
     bool requestAnswered = false; // lastRequestAnswered()
+    int proposalNumber = 0;       // getProposalNumber()
     std::optional<std::vector<ProposedBand>> currentProposal; // as previewed (sanitised)
 
     // Listening.

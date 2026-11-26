@@ -647,11 +647,11 @@ LQ_TEST ("screen: renders the phosphor look and sits over the CRT")
     auto& editorScreen = editor.getScreen();
     LQ_CHECK (editorScreen.getBounds().toFloat() == geo::crt && editorScreen.isVisible(), text (editorScreen.getBounds().toFloat()));
     LQ_CHECK (editorScreen.getParentComponent() == &editor.getContent(), "child of the reference-space content");
-    // Placeholder status; since Task 5 the conversation comes from the session
+    // The status bar (Task 7); since Task 5 the conversation comes from the session
     // (a fresh one opens with its first question).
-    LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 1.0" && ! editorScreen.getAllRows().empty()
+    LQ_CHECK (editorScreen.getStatus()[0] == "IAQ8 OS 1.0" && ! editorScreen.getAllRows().empty()
                   && editorScreen.getAllRows().front().prefix == "IAQ8>",
-              "placeholder status, the session's first question");
+              "the status bar (R11: IAQ8 OS 1.0), the session's first question");
 }
 
 LQ_TEST ("editor: right-click on the screen (or any child of the chassis) opens the settings menu")
@@ -1440,4 +1440,289 @@ LQ_TEST ("ui top: the Otro note mode ends with any other action, Escape or a new
               "Escape chose nothing and did not restart listening");
     LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::voice), "the combo shows Voz again");
     LQ_CHECK (line.getText() == "abc", "the typed text stays");
+}
+
+//==============================================================================
+// Plan 3, Task 7: the editor listens to the Session; a 15 Hz timer runs only
+// while listening or waiting.
+
+namespace
+{
+std::string lampString (TopRow& top)
+{
+    return str (top.isLampOn (TopRow::Lamp::online), top.isLampOn (TopRow::Lamp::listen), top.isLampOn (TopRow::Lamp::proposal));
+}
+
+bool screenHasText (Iaq8Editor& editor, const juce::String& needle)
+{
+    for (const auto& row : editor.getScreen().getAllRows())
+        if (row.text.contains (needle))
+            return true;
+    return false;
+}
+
+bool anyNonZero (const std::vector<PhosphorScreen::CurvePoint>& curve)
+{
+    return std::any_of (curve.begin(), curve.end(), [] (const auto& p) { return std::abs (p.db) > 0.1; });
+}
+} // namespace
+
+LQ_TEST ("ui session: full flow updates screen, keys and lamps")
+{
+    // No refreshFromSession() here: everything reaches the editor through
+    // the Session's listener and the editor's own timer.
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    auto& top = editor.getTopRow();
+    const auto dash = utf8 ("\xe2\x80\x94");
+    const auto status = [&] (int i) { return screen.getStatus()[(size_t) i]; };
+
+    LQ_CHECK (status (0) == "IAQ8 OS 1.0", "version (R11): " + status (0).toStdString());
+    LQ_CHECK (status (1) == "FUENTE: " + dash && status (2) == "ESCUCHADO: " + dash && status (3).isEmpty(),
+              "nothing chosen or listened yet: " + (status (1) + " | " + status (2) + " | " + status (3)).toStdString());
+    LQ_CHECK (screen.getListening() < 0.0 && ! editor.isRefreshTimerRunning(), "no bar, no timer at the start");
+
+    // Source from the combo.
+    top.getSourceCombo().setSelectedId (TopRow::comboIdFor (Source::voice), juce::sendNotificationSync);
+    pump (20);
+    LQ_CHECK (rig.s().getStage() == Stage::listening, "listening");
+    LQ_CHECK (status (1) == "FUENTE: VOZ" && status (2) == "ESCUCHADO: 0 S",
+              "source and seconds in the bar: " + (status (1) + " | " + status (2)).toStdString());
+    LQ_CHECK (screen.getListening() >= 0.0 && screen.getListening() < 0.05, str ("the bar is shown, empty: ", screen.getListening()));
+    LQ_CHECK (editor.isRefreshTimerRunning(), "the timer runs while listening");
+    LQ_CHECK (lampString (top) == "010" && editor.getPanelKey (PanelKey::listen).isLedOn(), "LISTEN lamp and ESCUCHAR LED");
+
+    // The timer alone moves the progress (the capture grows; no poll, no refresh).
+    fillKeysCapture (*rig.p, 4.0);
+    editor.refreshTick();
+    LQ_CHECK (status (2) == "ESCUCHADO: 4 S" && editor.getValueText (1) == "4 s",
+              "seconds follow: " + status (2).toStdString() + " / " + editor.getValueText (1).toStdString());
+    LQ_CHECK (std::abs (screen.getListening() - 4.0 / 12.0) < 0.02, str ("bar follows: ", screen.getListening()));
+
+    // The listening ends: the goal question and its replies.
+    fillKeysCapture (*rig.p, 8.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    LQ_CHECK (screen.getListening() < 0.0, "the bar is gone");
+    LQ_CHECK (status (2) == "ESCUCHADO: 12 S" && editor.getValueText (1) == "12 s", "the listening stays: " + status (2).toStdString());
+    LQ_CHECK (screenMatchesSession (rig) && screenHasText (editor, utf8 ("\xc2\xbfQU\xc3\x89 TE GUSTAR\xc3\x8d" "A MEJORAR?")),
+              "the goal question is on the screen");
+    LQ_CHECK (editor.getQuickKey (0).isEnabled() && editor.getQuickKey (0).getButtonText().isNotEmpty(), "goal replies on the keys");
+    LQ_CHECK (! editor.isRefreshTimerRunning() && lampString (top) == "000", "timer stopped, lamps " + lampString (top));
+
+    // A goal: waiting.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::waiting && editor.isRefreshTimerRunning(), "waiting: the timer runs");
+    LQ_CHECK (! editor.getPanelKey (PanelKey::send).isEnabled(), "ENVIAR off in flight");
+
+    // The proposal arrives (on the message thread, through the listener).
+    LQ_CHECK (rig.state->posts() > 0, "request 1 sent");
+    if (rig.state->posts() <= 0)
+        return;
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");
+    LQ_CHECK (screenMatchesSession (rig) && screenHasText (editor, "BAJO UN POCO"), "the explanation is on the screen");
+    LQ_CHECK (status (3) == utf8 ("PROPUESTA 1 \xc2\xb7 DESPU\xc3\x89S"), "proposal in the bar: " + status (3).toStdString());
+    LQ_CHECK (anyNonZero (screen.getPreviewCurve()) && ! screen.getMarkers().empty(), "the proposal's curve and markers");
+    LQ_CHECK (editor.getPanelKey (PanelKey::apply).isEnabled() && editor.getQuickKey (7).isEnabled(), "APLICAR and VER DETALLE on");
+    LQ_CHECK (editor.getQuickKey (0).getButtonText() == "MENOS\nAGUDOS", "the proposal's replies: " + editor.getQuickKey (0).getButtonText().toStdString());
+    LQ_CHECK (lampString (top) == "101" && ! editor.isRefreshTimerRunning(), "lamps " + lampString (top) + ", timer stopped");
+    LQ_CHECK (editor.getValueText (2) == "2 BANDAS", "CHANGES: " + editor.getValueText (2).toStdString());
+
+    // Compare: ANTES from the face, DESPUÉS from the session itself.
+    rig.click (top.getFace (Listen::applied));
+    LQ_CHECK (rig.s().getListen() == Listen::applied && status (3) == utf8 ("PROPUESTA 1 \xc2\xb7 ANTES"),
+              "ANTES: " + status (3).toStdString());
+    rig.s().setListen (Listen::preview);
+    LQ_CHECK (top.isFaceLit (Listen::preview) && status (3) == utf8 ("PROPUESTA 1 \xc2\xb7 DESPU\xc3\x89S"),
+              "an outside setListen is shown: " + status (3).toStdString());
+
+    // Apply.
+    rig.click (editor.getPanelKey (PanelKey::apply));
+    LQ_CHECK (rig.s().getStage() == Stage::applied, "applied");
+    LQ_CHECK (! editor.getPanelKey (PanelKey::apply).isEnabled() && editor.getPanelKey (PanelKey::undo).isEnabled(), "APLICAR off, DESHACER on");
+    LQ_CHECK (status (3) == "EQ APLICADA", "applied in the bar: " + status (3).toStdString());
+    LQ_CHECK (screen.getPreviewCurve().empty() && anyNonZero (screen.getAppliedCurve()), "the applied curve, no preview");
+    LQ_CHECK (lampString (top) == "100" && ! editor.isRefreshTimerRunning(), "lamps " + lampString (top));
+
+    // A second proposal is number 2.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.state->posts() > 1, "request 2 sent");
+    if (rig.state->posts() <= 1)
+        return;
+    rig.reply (1, 200, kKeysProposal2);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "second proposal");
+    LQ_CHECK (status (3) == utf8 ("PROPUESTA 2 \xc2\xb7 DESPU\xc3\x89S"), "numbered: " + status (3).toStdString());
+}
+
+LQ_TEST ("ui session: editor destroyed mid-request and reopened recovers state")
+{
+    EditorRig rig;
+    reachGoal (ctx, rig);
+    rig.click (rig.editor->getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::waiting, "waiting");
+
+    // The window closes while the request is in flight; the reply arrives
+    // with no editor.
+    rig.editor.reset();
+    LQ_CHECK (rig.state->posts() > 0, "request 1 sent");
+    if (rig.state->posts() <= 0)
+        return;
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal without an editor");
+
+    rig.editor = std::make_unique<Iaq8Editor> (*rig.p);
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    LQ_CHECK (screenMatchesSession (rig) && screenHasText (editor, "BAJO UN POCO"), "the reopened editor shows the proposal");
+    LQ_CHECK (screen.getStatus()[3] == utf8 ("PROPUESTA 1 \xc2\xb7 DESPU\xc3\x89S") && screen.getStatus()[1] == "FUENTE: VOZ",
+              "status: " + screen.getStatus()[1].toStdString() + " | " + screen.getStatus()[3].toStdString());
+    LQ_CHECK (anyNonZero (screen.getPreviewCurve()), "the proposal's curve");
+    LQ_CHECK (editor.getPanelKey (PanelKey::apply).isEnabled() && lampString (editor.getTopRow()) == "101", "APLICAR, lamps 101");
+    LQ_CHECK (editor.getValueText (1) == "12 s" && editor.getValueText (2) == "2 BANDAS", "values recovered");
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "at rest: no timer");
+
+    // The new editor is the Session's listener: the next change reaches it.
+    rig.click (editor.getPanelKey (PanelKey::apply));
+    LQ_CHECK (screen.getStatus()[3] == "EQ APLICADA", "applied in the reopened editor");
+}
+
+LQ_TEST ("ui session: editor destroyed mid-listening and reopened recovers state")
+{
+    EditorRig rig;
+    rig.click (rig.editor->getQuickKey (0)); // Voz
+    fillKeysCapture (*rig.p, 3.0);
+    rig.s().poll();
+    rig.editor.reset(); // closed while listening: the session keeps listening
+
+    pump (60); // the session's own timer goes on without an editor
+    LQ_CHECK (rig.s().getStage() == Stage::listening, "still listening");
+    fillKeysCapture (*rig.p, 2.0);
+
+    // Reopened mid-listening: the bar, the seconds and the timer come back.
+    rig.editor = std::make_unique<Iaq8Editor> (*rig.p);
+    LQ_CHECK (std::abs (rig.editor->getScreen().getListening() - 5.0 / 12.0) < 0.02,
+              str ("bar at 5 s: ", rig.editor->getScreen().getListening()));
+    LQ_CHECK (rig.editor->getScreen().getStatus()[2] == "ESCUCHADO: 5 S", "seconds: " + rig.editor->getScreen().getStatus()[2].toStdString());
+    LQ_CHECK (rig.editor->isRefreshTimerRunning() && lampString (rig.editor->getTopRow()) == "010", "timer and LISTEN lamp");
+
+    // Closed again; the listening ends with no editor.
+    rig.editor.reset();
+    fillKeysCapture (*rig.p, 7.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "analysed without an editor");
+
+    rig.editor = std::make_unique<Iaq8Editor> (*rig.p);
+    LQ_CHECK (rig.editor->getScreen().getListening() < 0.0 && ! rig.editor->isRefreshTimerRunning(), "no bar, no timer");
+    LQ_CHECK (screenMatchesSession (rig) && rig.editor->getValueText (1) == "12 s"
+                  && rig.editor->getScreen().getStatus()[2] == "ESCUCHADO: 12 S",
+              "the goal question and the seconds listened");
+    LQ_CHECK (rig.editor->getQuickKey (0).isEnabled(), "goal replies on the keys");
+}
+
+LQ_TEST ("ui session: timer stops at rest")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& screen = editor.getScreen();
+    const auto contentBuilds = [&]
+    {
+        renderScreen (screen, 1.0f);
+        return screen.getLayerBuilds().content;
+    };
+
+    // At rest: no timer, and ticks rebuild nothing.
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "no timer at the start");
+    auto builds = contentBuilds();
+    for (int i = 0; i < 30; ++i)
+        editor.refreshTick();
+    LQ_CHECK (contentBuilds() == builds, str ("30 ticks at rest: ", contentBuilds() - builds, " rebuilds"));
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "a tick at rest does not start it");
+
+    // Listening: running; ticks with nothing new rebuild nothing.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (editor.isRefreshTimerRunning(), "listening: running");
+    fillKeysCapture (*rig.p, 2.2);
+    editor.refreshTick();
+    builds = contentBuilds();
+    for (int i = 0; i < 30; ++i)
+        editor.refreshTick();
+    LQ_CHECK (contentBuilds() == builds, str ("30 ticks while the capture stands still: ", contentBuilds() - builds, " rebuilds"));
+    // A small growth inside the same second and the same block: nothing either.
+    fillKeysCapture (*rig.p, 0.1);
+    editor.refreshTick();
+    LQ_CHECK (contentBuilds() == builds, "0.1 s more (same second, same block): no rebuild");
+
+    // Analysed: askGoal, at rest.
+    fillKeysCapture (*rig.p, 10.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "askGoal: stopped");
+
+    // Waiting: running, but nothing visible moves.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (rig.s().getStage() == Stage::waiting && editor.isRefreshTimerRunning(), "waiting: running");
+    builds = contentBuilds();
+    for (int i = 0; i < 30; ++i)
+        editor.refreshTick();
+    pump (300); // the real timer too
+    LQ_CHECK (contentBuilds() == builds, str ("waiting: ", contentBuilds() - builds, " rebuilds"));
+
+    LQ_CHECK (rig.state->posts() > 0, "request 1 sent");
+    if (rig.state->posts() <= 0)
+        return;
+    rig.reply (0, 200, kKeysProposal1);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::proposal; }, 2000), "proposal");
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "proposal: stopped");
+    builds = contentBuilds();
+    pump (300);
+    for (int i = 0; i < 30; ++i)
+        editor.refreshTick();
+    LQ_CHECK (contentBuilds() == builds, "at rest with a proposal: no rebuilds");
+
+    // An offline reply is also rest.
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (editor.isRefreshTimerRunning(), "in flight again");
+    LQ_CHECK (rig.state->posts() > 1, "request 2 sent");
+    if (rig.state->posts() <= 1)
+        return;
+    rig.reply (1, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    LQ_CHECK (! editor.isRefreshTimerRunning(), "offline: stopped");
+}
+
+LQ_TEST ("ui session: notices, restarts and level match")
+{
+    EditorRig rig;
+    reachGoal (ctx, rig);
+    rig.click (rig.editor->getQuickKey (0));
+    LQ_CHECK (rig.state->posts() > 0, "request 1 sent");
+    if (rig.state->posts() <= 0)
+        return;
+    rig.reply (0, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    const auto notice = iaq8::ui::Iaq8LookAndFeel::toCapitals (utf8 (rig.s().getNotice().c_str()));
+    LQ_CHECK (notice.isNotEmpty() && screenHasText (*rig.editor, notice.substring (0, 12)), "the notice is on the screen");
+
+    // A reopened editor shows the current notice too.
+    rig.editor = std::make_unique<Iaq8Editor> (*rig.p);
+    LQ_CHECK (screenHasText (*rig.editor, notice.substring (0, 12)), "reopened: the notice again");
+
+    // Starting over clears the notices; the same notice later shows again.
+    rig.s().startOver();
+    LQ_CHECK (! screenHasText (*rig.editor, notice.substring (0, 12)), "start over: no notice");
+    LQ_CHECK (screenMatchesSession (rig), "the fresh conversation");
+    reachGoal (ctx, rig);
+    rig.click (rig.editor->getQuickKey (0));
+    LQ_CHECK (rig.state->posts() > 1, "request 2 sent");
+    if (rig.state->posts() <= 1)
+        return;
+    rig.reply (1, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline again");
+    LQ_CHECK (screenHasText (*rig.editor, notice.substring (0, 12)), "the same notice after a restart is shown");
+
+    // A blank level match prints no "nan".
+    LQ_CHECK (Iaq8Editor::formatLevelMatch (std::numeric_limits<double>::quiet_NaN()) == utf8 ("\xe2\x80\x94"), "NaN: a dash");
+    LQ_CHECK (Iaq8Editor::formatLevelMatch (std::numeric_limits<double>::infinity()) == utf8 ("\xe2\x80\x94"), "inf: a dash");
 }

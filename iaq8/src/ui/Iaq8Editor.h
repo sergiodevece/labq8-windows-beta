@@ -43,7 +43,20 @@ namespace iaq8::ui
 // line (Enter sends), the privacy hint, the SOURCE / LISTENED / CHANGES /
 // LEVEL MATCH boxes and the ESCUCHAR, ENVIAR, DESHACER and APLICAR keys.
 // refreshFromSession() pulls everything they show from the Session and the
-// processor; it runs at construction and after every key or Enter.
+// processor; it runs at construction, after every key or Enter and (Task 7)
+// whenever the Session says it changed: the editor is its listener from
+// construction to destruction, so an editor opened at any moment (in the
+// middle of a request or a listening) shows the Session's state, and one
+// closed in the middle loses nothing.
+//
+// Screen (Task 7): the status bar ("IAQ8 OS 1.0", "FUENTE: …", "ESCUCHADO:
+// N S", "PROPUESTA n · DESPUÉS / ANTES" or "EQ APLICADA"), the applied curve
+// and the proposal's, the conversation with the Session's notices, and the
+// listening bar. A 15 Hz timer runs only while listening or while a request
+// is in flight, for the progress; it stops at rest. It only feeds values that
+// change what is shown (whole seconds, the bar's blocks), so a tick with
+// nothing new rebuilds nothing. The command line's caret blinks on its own
+// 500 ms callback.
 //
 // Top row (Task 6, ui/TopRow): the SOURCE drop-down (Session::chooseSource;
 // "Otro" first asks for a note on the command line, "Describe la fuente…",
@@ -61,7 +74,9 @@ namespace iaq8::ui
 // no resize corner: the host follows the editor.
 //
 // Message thread only. The editor never blocks and never touches the network.
-class Iaq8Editor final : public juce::AudioProcessorEditor
+class Iaq8Editor final : public juce::AudioProcessorEditor,
+                         private assist::Session::Listener,
+                         private juce::Timer
 {
 public:
     static constexpr auto zoomChoices = preferences::zoomChoices;
@@ -116,6 +131,14 @@ public:
     // text sends nothing; while a request is in flight the text stays.
     void sendCommandLine();
 
+    // The 15 Hz timer: runs only while listening or while a request is in
+    // flight (Session stages listening and waiting), stops at rest.
+    static constexpr int refreshTimerHz = 15;
+    bool isRefreshTimerRunning() const noexcept { return isTimerRunning(); }
+    // What a tick of that timer does (public for tests): the listening bar,
+    // the seconds listened and the status bar, each only if it changed.
+    void refreshTick();
+
     // A reply as a key shows it: capitals, in two lines balanced by length.
     static juce::String keyLabel (const juce::String& reply);
     // LEVEL MATCH, one decimal with its sign: "+0.8 dB", "-1.2 dB" (with a true minus, U+2212), "0.0 dB".
@@ -158,6 +181,11 @@ private:
     void beginSourceNote();
     void endSourceNote();
     void updateScreenLines();
+    void refreshMoving();      // the parts the 15 Hz timer moves
+    void updateRefreshTimer(); // runs only while listening or waiting
+
+    void sessionChanged() override { refreshFromSession(); }
+    void timerCallback() override { refreshTick(); }
 
     Iaq8AudioProcessor& iaq8Processor;
     Iaq8LookAndFeel lookAndFeel;

@@ -310,6 +310,7 @@ void Session::loadFromProcessor()
     analysisDelivered = false;
     inFlightCarriesAnalysis = false;
     requestAnswered = false;
+    proposalNumber = 0;
     currentProposal.reset();
     analysing = false;
     armed = false;
@@ -703,6 +704,7 @@ void Session::handleReply (std::uint64_t forGeneration, Reply reply)
             previewed.push_back (std::move (band));
         }
         currentProposal = std::move (previewed);
+        ++proposalNumber;
 
         processor.setProposal (bands);
         listen = dsp::Listen::preview;
@@ -780,6 +782,7 @@ void Session::startOver()
     analysisDelivered = false;
     inFlightCarriesAnalysis = false;
     requestAnswered = false;
+    proposalNumber = 0;
     currentProposal.reset();
     notice.clear();
     adjustments.clear();

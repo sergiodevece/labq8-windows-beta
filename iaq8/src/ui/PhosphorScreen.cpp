@@ -348,9 +348,9 @@ void PhosphorScreen::timerCallback()
     repaint();
 }
 
-void PhosphorScreen::setStatus (juce::String left, juce::String middle, juce::String right)
+void PhosphorScreen::setStatus (juce::String first, juce::String second, juce::String third, juce::String fourth)
 {
-    const std::array<juce::String, 3> next { upper (left), upper (middle), upper (right) };
+    const std::array<juce::String, 4> next { upper (first), upper (second), upper (third), upper (fourth) };
     if (next == status)
         return;
     status = next;
@@ -586,9 +586,23 @@ void PhosphorScreen::drawStatus (juce::Graphics& g) const
     const auto font = statusFont();
     const auto baseline = padTop + font.getAscent();
     g.setColour (colours::phosphorDim);
-    drawText (g, font, status[0], padLeft, baseline);
-    drawText (g, font, status[1], padLeft + (textWidth - widthOf (font, status[1])) * 0.5f, baseline);
-    drawText (g, font, status[2], padLeft + textWidth - widthOf (font, status[2]), baseline);
+    // As the mockup's flex bar (justify-content: space-between): the first
+    // item at the left, the last at the right, equal gaps between them.
+    std::vector<std::pair<const juce::String*, float>> items;
+    auto total = 0.0f;
+    for (const auto& item : status)
+        if (item.isNotEmpty())
+        {
+            items.emplace_back (&item, widthOf (font, item));
+            total += items.back().second;
+        }
+    const auto gap = items.size() > 1 ? (textWidth - total) / (float) (items.size() - 1) : 0.0f;
+    auto left = padLeft;
+    for (const auto& [item, width] : items)
+    {
+        drawText (g, font, *item, left, baseline);
+        left += width + gap;
+    }
 
     // Dashed rule under the bar (CSS 1 px dashed: 3 px dashes, 3 px gaps).
     const auto ruleY = padTop + font.getHeight() + 3.0f;

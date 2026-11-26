@@ -386,11 +386,9 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
         hotSpots[i] = std::move (spot);
     }
 
-    // The phosphor screen covers the CRT. Bound to the session in Task 7;
-    // until then it shows only the system name.
+    // The phosphor screen covers the CRT; refreshFromSession fills it.
     screen = std::make_unique<PhosphorScreen>();
     screen->setBounds (g::crt.toNearestInt());
-    screen->setStatus ("IAQ8 1.0", {}, {});
     content->addAndMakeVisible (*screen);
 
     // The IN / OUT meters show the processor's real sample peaks; the view
@@ -410,11 +408,18 @@ Iaq8Editor::Iaq8Editor (Iaq8AudioProcessor& p)
         zoom = zoomChoices[i - 1];
     setSize ((int) std::lround ((float) g::referenceWidth * zoom), (int) std::lround ((float) g::referenceHeight * zoom));
 
+    // From here on the Session tells the editor about every change (a reply,
+    // the end of a listening, a state load) as it happens.
+    iaq8Processor.getSession().addListener (this);
     refreshFromSession();
 }
 
 Iaq8Editor::~Iaq8Editor()
 {
+    // First, while every member is alive: no more calls from the Session or
+    // the timer.
+    iaq8Processor.getSession().removeListener (this);
+    stopTimer();
     content->removeMouseListener (popupForwarder.get());
     // An open dialog closes with the editor (its callback then finds no
     // editor and saves nothing).
@@ -745,6 +750,8 @@ juce::String Iaq8Editor::keyLabel (const juce::String& reply)
 
 juce::String Iaq8Editor::formatLevelMatch (double db)
 {
+    if (! std::isfinite (db))
+        return utf8 ("\xe2\x80\x94"); // nothing to show: a dash, never "nan dB"
     const auto tenths = std::round (db * 10.0) / 10.0;
     if (std::abs (tenths) < 0.05)
         return "0.0 dB";
@@ -783,7 +790,8 @@ void Iaq8Editor::refreshFromSession()
     const auto replies = session.getQuickReplies();
     for (size_t i = 0; i < quickReplies.size(); ++i)
     {
-        quickReplies[i] = i < replies.size() ? utf8 (replies[i].c_str()) : juce::String();
+        const auto reply = i < replies.size() ? utf8 (replies[i].c_str()) : juce::String();
+        quickReplies[i] = reply.trim().isNotEmpty() ? reply : juce::String(); // a blank reply is no key
         auto& key = *quickKeys[i];
         key.setButtonText (keyLabel (quickReplies[i]));
         key.setEnabled (quickReplies[i].isNotEmpty());
@@ -800,6 +808,7 @@ void Iaq8Editor::refreshFromSession()
     const auto detailAvailable = proposal.has_value() || appliedBands > 0;
     if (! detailAvailable)
         screen->setDetailVisible (false);
+    screen->setCurves (iaq8Processor.getAppliedBands(), proposal);
     auto& detail = *quickKeys.back();
     detail.setEnabled (detailAvailable);
     detail.setLed (screen->isDetailVisible());
@@ -816,8 +825,6 @@ void Iaq8Editor::refreshFromSession()
     const auto dash = utf8 ("\xe2\x80\x94");
     const auto source = session.getSource();
     valueBoxes[0]->setText (source.has_value() ? Iaq8LookAndFeel::toCapitals (utf8 (assist::Session::sourceLabel (*source))) : dash);
-    const auto listened = session.getListenedSeconds();
-    valueBoxes[1]->setText (listened.has_value() ? juce::String (juce::roundToInt (*listened)) + " s" : dash);
     const auto changes = proposal.has_value() ? countActive (*proposal) : appliedBands;
     valueBoxes[2]->setText (juce::String (changes) + (changes == 1 ? " BANDA" : " BANDAS"));
     valueBoxes[3]->setText (formatLevelMatch (iaq8Processor.getCompensationDb()));
@@ -838,6 +845,60 @@ void Iaq8Editor::refreshFromSession()
     topRow->setState (top);
 
     updateScreenLines();
+    refreshMoving();
+    updateRefreshTimer();
+}
+
+void Iaq8Editor::refreshTick()
+{
+    refreshMoving();
+    updateRefreshTimer();
+}
+
+void Iaq8Editor::updateRefreshTimer()
+{
+    const auto stage = iaq8Processor.getSession().getStage();
+    const auto moving = stage == assist::Session::Stage::listening || stage == assist::Session::Stage::waiting;
+    if (moving && ! isTimerRunning())
+        startTimerHz (refreshTimerHz);
+    else if (! moving && isTimerRunning())
+        stopTimer();
+}
+
+// The listening bar, the seconds listened (the LISTENED box and the status
+// bar, from the same figure) and the status bar. Every setter compares, and
+// the values are what is shown (whole seconds, the bar's ten blocks inside
+// setListening), so a tick with nothing new rebuilds nothing.
+void Iaq8Editor::refreshMoving()
+{
+    auto& session = iaq8Processor.getSession();
+    const auto stage = session.getStage();
+    const auto dash = utf8 ("\xe2\x80\x94");
+
+    screen->setListening (stage == assist::Session::Stage::listening ? session.getListenProgress() : -1.0);
+
+    const auto listened = session.getListenedSeconds();
+    const auto seconds = listened.has_value() ? juce::String (juce::roundToInt (*listened)) : juce::String();
+    valueBoxes[1]->setText (listened.has_value() ? seconds + " s" : dash);
+
+    // Status bar (the mockup: "IAQ8 OS 1.0 · FUENTE: VOZ · ESCUCHADO: 12 S ·
+    // PROPUESTA 2 · DESPUÉS"; R11 keeps the mockup's "IAQ8 OS 1.0"). Without
+    // a proposal the last item says whether an EQ is applied.
+    const auto source = session.getSource();
+    juce::String last;
+    if (iaq8Processor.hasProposal())
+        last = "PROPUESTA " + juce::String (juce::jmax (1, session.getProposalNumber())) + utf8 (" \xc2\xb7 ")
+             + (session.getListen() == dsp::Listen::preview ? utf8 ("DESPU\xc3\x89S") : juce::String ("ANTES"));
+    else
+    {
+        const auto applied = iaq8Processor.getAppliedBands();
+        if (std::any_of (applied.begin(), applied.end(), [] (const auto& b) { return PhosphorScreen::isActiveBand (b); }))
+            last = "EQ APLICADA";
+    }
+    screen->setStatus ("IAQ8 OS 1.0",
+                       "FUENTE: " + (source.has_value() ? utf8 (assist::Session::sourceLabel (*source)) : dash),
+                       "ESCUCHADO: " + (listened.has_value() ? seconds + " S" : dash),
+                       last);
 }
 
 //==============================================================================
@@ -901,7 +962,13 @@ void Iaq8Editor::updateScreenLines()
     const auto& messages = session.getMessages();
 
     if (messages.size() < messagesSeen) // the conversation was reloaded or started over
+    {
+        // Its notices go with it, and the screen shows the new one from the
+        // end (the scroll position assumes lines that only grow).
         shownNotices.clear();
+        lastNotice.clear();
+        screen->scrollToEnd();
+    }
     messagesSeen = messages.size();
 
     const auto notice = utf8 (session.getNotice().c_str());

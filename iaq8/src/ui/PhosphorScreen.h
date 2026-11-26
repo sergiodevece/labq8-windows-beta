@@ -59,7 +59,10 @@ public:
     PhosphorScreen();
     ~PhosphorScreen() override;
 
-    void setStatus (juce::String left, juce::String middle, juce::String right);
+    // The status bar: up to four items spread across the text column as the
+    // mockup's flex bar (space-between; empty items take no room), e.g.
+    // "IAQ8 OS 1.0", "FUENTE: VOZ", "ESCUCHADO: 12 S", "PROPUESTA 2 · DESPUÉS".
+    void setStatus (juce::String first, juce::String second, juce::String third, juce::String fourth = {});
     void setLines (std::vector<Line> lines);
     void setCurves (const dsp::BandSet& applied, std::optional<dsp::BandSet> preview);
     // Shows "ESCUCHANDO" and a bar of ten blocks under the conversation;
@@ -117,7 +120,9 @@ public:
     const std::vector<CurvePoint>& getAppliedCurve() const noexcept { return appliedCurve; }
     const std::vector<CurvePoint>& getPreviewCurve() const noexcept { return previewCurve; }
     const std::vector<DetailRow>& getDetailRows() const noexcept { return detailRows; }
-    const std::array<juce::String, 3>& getStatus() const noexcept { return status; }
+    const std::array<juce::String, 4>& getStatus() const noexcept { return status; }
+    // The listening bar's progress (0..1); negative when it is hidden.
+    double getListening() const noexcept { return listening; }
     int getRepaintRequests() const noexcept { return repaintRequests; }
     LayerBuilds getLayerBuilds() const noexcept { return builds; }
 
@@ -143,7 +148,7 @@ private:
     void buildEffects (int width, int height);
     void buildScreenImage();
 
-    std::array<juce::String, 3> status;
+    std::array<juce::String, 4> status;
     std::vector<Line> lines;
     std::vector<Row> rows;
     dsp::BandSet applied {};

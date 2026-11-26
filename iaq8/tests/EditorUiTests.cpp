@@ -1726,3 +1726,65 @@ LQ_TEST ("ui session: notices, restarts and level match")
     LQ_CHECK (Iaq8Editor::formatLevelMatch (std::numeric_limits<double>::quiet_NaN()) == utf8 ("\xe2\x80\x94"), "NaN: a dash");
     LQ_CHECK (Iaq8Editor::formatLevelMatch (std::numeric_limits<double>::infinity()) == utf8 ("\xe2\x80\x94"), "inf: a dash");
 }
+
+LQ_TEST ("ui session: a replaced conversation resets notices and scroll, whatever its length")
+{
+    EditorRig rig;
+    auto& screen = rig.editor->getScreen();
+
+    // A saved project with a longer conversation (8 messages).
+    reachKeysProposal (ctx, rig);
+    rig.click (rig.editor->getQuickKey (0)); // "Menos agudos"
+    LQ_CHECK (rig.state->posts() == 2, "second request");
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 200, "{\"kind\":\"question\",\"text\":\"\\u00bfAs\\u00ed?\",\"quick_replies\":[\"S\\u00ed\"]}");
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "question");
+    const auto savedMessages = rig.s().getMessages().size();
+    juce::MemoryBlock saved;
+    rig.p->getStateInformation (saved);
+
+    // Now a shorter conversation with an offline notice, scrolled back.
+    rig.s().startOver();
+    rig.s().chooseSource (Source::other, std::string (300, 'x').replace (0, 20, "Un sintetizador raro"));
+    fillKeysCapture (*rig.p, 12.5);
+    rig.s().poll();
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 20000), "askGoal");
+    rig.click (rig.editor->getQuickKey (0));
+    LQ_CHECK (rig.state->posts() == 3, "third request");
+    if (rig.state->posts() < 3)
+        return;
+    rig.reply (2, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline");
+    const auto notice = iaq8::ui::Iaq8LookAndFeel::toCapitals (utf8 (rig.s().getNotice().c_str())).substring (0, 12);
+    LQ_CHECK (screenHasText (*rig.editor, notice), "the notice is shown");
+    LQ_CHECK (rig.s().getMessages().size() <= savedMessages,
+              str ("the project's conversation is not shorter: ", rig.s().getMessages().size(), " <= ", savedMessages));
+    screen.mouseWheelMove (mouseEventOn (screen, {}), juce::MouseWheelDetails { 0.0f, 1.0f, false, false, false });
+    LQ_CHECK (screen.getScrollRows() > 0, str ("scrolled back: ", screen.getScrollRows()));
+
+    // The host loads the project: a different conversation, as long or longer.
+    rig.p->setStateInformation (saved.getData(), (int) saved.getSize());
+    rig.s().poll();
+    pump (20);
+    LQ_CHECK (rig.s().getMessages().size() == savedMessages, "the project's conversation is restored");
+    LQ_CHECK (! screenHasText (*rig.editor, notice), "the old notice is gone");
+    LQ_CHECK (screen.getScrollRows() == 0, str ("the scroll is back at the end: ", screen.getScrollRows()));
+    LQ_CHECK (screenMatchesSession (rig) && screen.getAllRows().size() == [&]
+              {
+                  // The same lines as a fresh editor shows for this conversation.
+                  Iaq8Editor fresh (*rig.p);
+                  return fresh.getScreen().getAllRows().size();
+              }(),
+              "the screen shows exactly the restored conversation");
+
+    // startOver with no shrink is a replacement too (no stale notice).
+    rig.click (rig.editor->getQuickKey (0)); // "Sí"
+    if (rig.state->posts() < 4)
+        return;
+    rig.reply (3, 503, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::offline; }, 2000), "offline again");
+    LQ_CHECK (screenHasText (*rig.editor, notice), "a new notice");
+    rig.s().startOver();
+    LQ_CHECK (! screenHasText (*rig.editor, notice) && screen.getScrollRows() == 0, "start over: no notice, at the end");
+}

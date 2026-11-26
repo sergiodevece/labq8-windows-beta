@@ -123,6 +123,8 @@ public:
     const std::array<juce::String, 4>& getStatus() const noexcept { return status; }
     // The listening bar's progress (0..1); negative when it is hidden.
     double getListening() const noexcept { return listening; }
+    // Rows scrolled back from the end (0: the last rows are shown).
+    int getScrollRows() const noexcept { return scrollRows; }
     int getRepaintRequests() const noexcept { return repaintRequests; }
     LayerBuilds getLayerBuilds() const noexcept { return builds; }
 

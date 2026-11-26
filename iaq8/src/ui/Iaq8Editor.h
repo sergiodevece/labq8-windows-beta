@@ -223,6 +223,7 @@ private:
     std::vector<ShownNotice> shownNotices;
     juce::String lastNotice;
     size_t messagesSeen = 0;
+    std::optional<std::uint64_t> conversationSeen; // Session::getConversationNumber() last shown
     std::unique_ptr<juce::MouseListener> popupForwarder;
     int settingsMenuRequests = 0;
     std::unique_ptr<juce::AlertWindow> dialog;

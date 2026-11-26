@@ -299,6 +299,7 @@ void Session::loadFromProcessor()
     std::uint32_t loads = 0;
     const auto tree = processor.getAssistantState (loads);
     stateLoadsSeen = loads;
+    ++conversationNumber; // a restored (or fresh) conversation replaces the one shown
 
     messages.clear();
     quickReplies.clear();
@@ -783,6 +784,7 @@ void Session::startOver()
     inFlightCarriesAnalysis = false;
     requestAnswered = false;
     proposalNumber = 0;
+    ++conversationNumber;
     currentProposal.reset();
     notice.clear();
     adjustments.clear();

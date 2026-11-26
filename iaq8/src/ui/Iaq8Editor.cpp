@@ -961,7 +961,10 @@ void Iaq8Editor::updateScreenLines()
     auto& session = iaq8Processor.getSession();
     const auto& messages = session.getMessages();
 
-    if (messages.size() < messagesSeen) // the conversation was reloaded or started over
+    // The conversation was replaced (a restore or startOver, whatever its
+    // length), or it shrank.
+    const auto conversation = session.getConversationNumber();
+    if (conversation != conversationSeen.value_or (conversation) || messages.size() < messagesSeen)
     {
         // Its notices go with it, and the screen shows the new one from the
         // end (the scroll position assumes lines that only grow).
@@ -970,6 +973,7 @@ void Iaq8Editor::updateScreenLines()
         screen->scrollToEnd();
     }
     messagesSeen = messages.size();
+    conversationSeen = conversation;
 
     const auto notice = utf8 (session.getNotice().c_str());
     if (notice != lastNotice)

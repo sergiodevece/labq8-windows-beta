@@ -115,6 +115,11 @@ public:
     // n"): 0 before the first. Back to 0 after startOver and a restore (which
     // never bring back a proposal). Not saved.
     int getProposalNumber() const { return proposalNumber; }
+    // Bumped whenever the conversation is replaced rather than continued: a
+    // restore (construction, a host state load) and startOver. A view that
+    // keeps things anchored to the messages (notices, a scroll position)
+    // starts afresh when it changes. Not saved.
+    std::uint64_t getConversationNumber() const { return conversationNumber; }
     // Lines of the last sanitize() report (Spanish), for the debug editor.
     const std::vector<std::string>& getLimitAdjustments() const { return adjustments; }
 
@@ -185,6 +190,7 @@ private:
     bool inFlightCarriesAnalysis = false;
     bool requestAnswered = false; // lastRequestAnswered()
     int proposalNumber = 0;       // getProposalNumber()
+    std::uint64_t conversationNumber = 0; // getConversationNumber()
     std::optional<std::vector<ProposedBand>> currentProposal; // as previewed (sanitised)
 
     // Listening.

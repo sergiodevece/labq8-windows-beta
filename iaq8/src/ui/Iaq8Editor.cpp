@@ -628,6 +628,7 @@ void Iaq8Editor::createAssistantControls()
         {
             if (quickReplies[i].isEmpty())
                 return;
+            endSourceNote();
             iaq8Processor.getSession().say (quickReplies[i].toStdString());
             refreshFromSession();
         };
@@ -658,19 +659,23 @@ void Iaq8Editor::createAssistantControls()
         content->addAndMakeVisible (*key);
         panelKeys[(size_t) k.which] = std::move (key);
     }
+    // Any other action on the conversation leaves the "Otro" note mode.
     getPanelKey (PanelKey::listen).onClick = [this]
     {
+        endSourceNote();
         iaq8Processor.getSession().listenAgain();
         refreshFromSession();
     };
     getPanelKey (PanelKey::send).onClick = [this] { sendCommandLine(); };
     getPanelKey (PanelKey::undo).onClick = [this]
     {
+        endSourceNote();
         iaq8Processor.getSession().undo();
         refreshFromSession();
     };
     getPanelKey (PanelKey::apply).onClick = [this]
     {
+        endSourceNote();
         iaq8Processor.getSession().apply();
         refreshFromSession();
     };
@@ -679,6 +684,14 @@ void Iaq8Editor::createAssistantControls()
     commandLine = std::make_unique<CommandLine>();
     commandLine->setBounds (g::inbox.withHeight (g::inbox.getHeight() + 1.0f).toNearestInt());
     commandLine->field.onReturnKey = [this] { sendCommandLine(); };
+    // Escape leaves the "Otro" note mode (nothing is chosen; the typed text stays).
+    commandLine->field.onEscapeKey = [this]
+    {
+        if (! awaitingSourceNote)
+            return;
+        endSourceNote();
+        refreshFromSession();
+    };
     content->addAndMakeVisible (*commandLine);
 
     for (size_t i = 0; i < valueBoxes.size(); ++i)
@@ -809,15 +822,17 @@ void Iaq8Editor::refreshFromSession()
     valueBoxes[2]->setText (juce::String (changes) + (changes == 1 ? " BANDA" : " BANDAS"));
     valueBoxes[3]->setText (formatLevelMatch (iaq8Processor.getCompensationDb()));
 
-    // Top row. A pending "Otro" note ends if the source changed elsewhere
-    // (a quick key, a restore); until then the combo keeps showing Otro.
-    if (awaitingSourceNote && source != sourceWhenNoteBegan)
+    // Top row. A pending "Otro" note ends when the conversation moves on
+    // without it: the source, the stage or the messages changed (a reply,
+    // the end of a listening, a restore). Until then the combo shows Otro.
+    if (awaitingSourceNote
+        && (source != sourceWhenNoteBegan || stage != stageWhenNoteBegan || session.getMessages().size() != messagesWhenNoteBegan))
         endSourceNote();
     TopRow::State top;
     top.source = awaitingSourceNote ? std::optional<assist::Source> (assist::Source::other) : source;
     top.listen = session.getListen();
     top.canPreview = proposal.has_value();
-    top.online = session.lastRequestAnswered() && stage != assist::Session::Stage::offline;
+    top.online = session.lastRequestAnswered();
     top.listening = stage == assist::Session::Stage::listening;
     top.proposal = proposal.has_value();
     topRow->setState (top);
@@ -857,6 +872,8 @@ void Iaq8Editor::beginSourceNote()
 {
     awaitingSourceNote = true;
     sourceWhenNoteBegan = iaq8Processor.getSession().getSource();
+    stageWhenNoteBegan = iaq8Processor.getSession().getStage();
+    messagesWhenNoteBegan = iaq8Processor.getSession().getMessages().size();
     commandTextTarget = [this] (const juce::String& note)
     {
         endSourceNote();

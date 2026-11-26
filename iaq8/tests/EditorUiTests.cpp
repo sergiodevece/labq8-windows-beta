@@ -1355,7 +1355,89 @@ LQ_TEST ("ui top: lamps follow stage, listening and proposal")
     LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "question");
     editor.refreshFromSession();
     LQ_CHECK (lamps() == "100", "answered again: " + lamps());
+
+    // An error reply other than "unavailable" is still the server answering (R9).
+    rig.click (editor.getQuickKey (0)); // "Sí"
+    LQ_CHECK (rig.state->posts() == 4, "fourth request");
+    if (rig.state->posts() < 4)
+        return;
+    rig.reply (3, 429, {});
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "limit reached: back to askGoal");
+    editor.refreshFromSession();
+    LQ_CHECK (rig.s().lastRequestAnswered() && lamps() == "100", "429 answered: ONLINE stays on: " + lamps());
     rig.s().startOver();
     editor.refreshFromSession();
     LQ_CHECK (! rig.s().lastRequestAnswered() && lamps() == "000", "start over: " + lamps());
+}
+
+LQ_TEST ("ui top: the Otro note mode ends with any other action, Escape or a new turn")
+{
+    EditorRig rig;
+    auto& editor = *rig.editor;
+    auto& combo = editor.getTopRow().getSourceCombo();
+    auto& line = editor.getCommandLine();
+    const auto pickOtro = [&]
+    {
+        combo.setSelectedId (TopRow::comboIdFor (Source::other), juce::sendNotificationSync);
+        pump (20);
+        return editor.isAwaitingSourceNote();
+    };
+    const auto enter = [&] (const char* text)
+    {
+        line.insertTextAtCaret (utf8 (text));
+        line.keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+        pump (20);
+    };
+    const auto question = "{\"kind\":\"question\",\"text\":\"\\u00bfY ahora?\",\"quick_replies\":[\"Vale\"]}";
+
+    reachGoal (ctx, rig);
+    LQ_CHECK (rig.s().getSource() == Source::voice, "source Voz");
+
+    // A quick reply leaves the mode (and is said, not taken as the note).
+    LQ_CHECK (pickOtro(), "Otro: note mode");
+    rig.click (editor.getQuickKey (0));
+    LQ_CHECK (! editor.isAwaitingSourceNote() && line.getTextToShowWhenEmpty().isEmpty(), "quick key: note mode off");
+    LQ_CHECK (rig.state->posts() == 1 && rig.s().getSource() == Source::voice && rig.s().getStage() == Stage::waiting,
+              "the quick reply was sent; the source stays");
+    LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::voice), "the combo shows the real source again");
+
+    // A new turn of the conversation (the server's question) leaves it too.
+    LQ_CHECK (pickOtro(), "Otro while waiting");
+    rig.reply (0, 200, question);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "question");
+    editor.refreshFromSession();
+    LQ_CHECK (! editor.isAwaitingSourceNote() && combo.getSelectedId() == TopRow::comboIdFor (Source::voice),
+              "the answer arrived: note mode off");
+    enter ("M\xc3\xa1s brillo");
+    LQ_CHECK (rig.state->posts() == 2 && rig.s().getSource() == Source::voice
+                  && rig.s().getMessages().back().text == "M\xc3\xa1s brillo",
+              "typed text answers the question (say), not chooseSource");
+    if (rig.state->posts() < 2)
+        return;
+    rig.reply (1, 200, question);
+    LQ_CHECK (pumpUntil ([&] { return rig.s().getStage() == Stage::askGoal; }, 2000), "second question");
+    editor.refreshFromSession();
+
+    // ESCUCHAR leaves it; the next Enter goes to say.
+    LQ_CHECK (pickOtro(), "Otro again");
+    rig.click (editor.getPanelKey (PanelKey::listen));
+    LQ_CHECK (! editor.isAwaitingSourceNote() && rig.s().getStage() == Stage::listening && rig.s().getSource() == Source::voice,
+              "ESCUCHAR: note mode off, listening to Voz");
+    const auto listeningMessages = rig.s().getMessages().size();
+    enter ("Hola");
+    LQ_CHECK (rig.s().getSource() == Source::voice && rig.s().getStage() == Stage::listening
+                  && rig.s().getMessages().size() == listeningMessages,
+              "said while listening: no source change, no new listening");
+
+    // Escape cancels: nothing chosen, nothing restarted, the text stays.
+    LQ_CHECK (pickOtro(), "Otro once more");
+    line.insertTextAtCaret ("abc");
+    line.keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    pump (20);
+    LQ_CHECK (! editor.isAwaitingSourceNote() && line.getTextToShowWhenEmpty().isEmpty(), "Escape: note mode off");
+    LQ_CHECK (rig.s().getSource() == Source::voice && rig.s().getStage() == Stage::listening
+                  && rig.s().getMessages().size() == listeningMessages,
+              "Escape chose nothing and did not restart listening");
+    LQ_CHECK (combo.getSelectedId() == TopRow::comboIdFor (Source::voice), "the combo shows Voz again");
+    LQ_CHECK (line.getText() == "abc", "the typed text stays");
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assist/Session.h"
 #include "ui/Iaq8LookAndFeel.h"
 #include "ui/Iaq8Preferences.h"
 #include "ui/LevelMeterView.h"
@@ -176,9 +177,13 @@ private:
     // as the source note of "Otro" (Task 6) sets it for the next Enter.
     std::function<void (const juce::String&)> commandTextTarget;
     // The source note mode of "Otro": on until a note is sent, another source
-    // is picked, or the session's source changes by other means.
+    // is picked, Escape, any other action on the conversation (quick reply,
+    // ESCUCHAR, DESHACER, APLICAR), or the conversation moves on by itself
+    // (its source, stage or messages change).
     bool awaitingSourceNote = false;
     std::optional<assist::Source> sourceWhenNoteBegan;
+    assist::Session::Stage stageWhenNoteBegan {};
+    size_t messagesWhenNoteBegan = 0;
 
     // Session notices shown on the screen as system lines, each after the
     // messages there were when it appeared (so the lines only grow).

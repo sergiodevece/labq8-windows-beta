@@ -653,7 +653,7 @@ void Session::handleReply (std::uint64_t forGeneration, Reply reply)
 
     if (const auto* error = std::get_if<Error> (&reply))
     {
-        requestAnswered = false;
+        requestAnswered = error->kind != ErrorKind::unavailable; // other errors are the server's answer
         notice = error->userMessage;
         if (error->kind == ErrorKind::unavailable)
         {

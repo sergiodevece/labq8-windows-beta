@@ -105,10 +105,11 @@ public:
     dsp::Listen getListen() const { return listen; }
     bool canApply() const;
     bool canUndo() const;
-    // Whether the last finished request got an answer (a question
-    // or a proposal): the ONLINE lamp. False at the start, after an error
-    // (offline included), after startOver and after a restore. Kept while a
-    // new request is in flight. Not saved.
+    // Whether the server answered the last finished request (a question, a
+    // proposal, or an error reply such as no access or the limit): the ONLINE
+    // lamp. False at the start, when it was unavailable (offline), after
+    // startOver and after a restore. Kept while a new request is in flight.
+    // Not saved.
     bool lastRequestAnswered() const { return requestAnswered; }
     // Lines of the last sanitize() report (Spanish), for the debug editor.
     const std::vector<std::string>& getLimitAdjustments() const { return adjustments; }
